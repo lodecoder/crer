@@ -1,0 +1,277 @@
+# crer 仕様書
+
+## 1. 目的と範囲
+
+`crer` は Windows 11 以降で動く、Chrome for Testing (CfT) 専用の GUI ブラウザ操作
+レコーダー／プレーヤーである。利用者が CfT の画面に対して実際に行ったポインター・
+キーボード操作を記録し、レビュー可能なテキストファイルとして保存する。再生では DOM
+API の `click()`、要素への値代入、JavaScript によるフォーム送信を使用しない。CDP の
+`Input.dispatchMouseEvent`、`Input.dispatchKeyEvent`、`Input.insertText` 等を使い、
+ブラウザが受け取る入力イベントとして再現する。
+
+対象は通常の Web ページ操作（移動、クリック、スクロール、入力、キー、ドラッグ）で
+あり、OS 全体の RPA ではない。ネイティブなファイル選択ダイアログ、OS の認証 UI、
+CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
+
+## 2. 成功条件
+
+1. 記録・再生とも、普段使いの Chrome と分離された CfT プロセス／ユーザーデータ
+   ディレクトリだけを対象にする。
+2. 再生中に Windows の物理カーソル位置、物理キーボード入力、前面ウィンドウを変更
+   しない。利用者は通常どおり別アプリや通常の Chrome を操作できる。
+3. 再生用 CfT は headful（可視）で、シナリオごとに画面上の位置と内容領域サイズを
+   固定できる。
+4. URL、ウィンドウサイズ、DPI／表示倍率、ページ拡大の再現条件をシナリオに明記し、
+   不一致時は既定で開始しない。
+5. 記録ファイルは Git で差分レビューしやすい UTF-8 の YAML であり、単体／直列／
+   並列の実行を記述できる。
+
+## 3. 採用アーキテクチャ
+
+### 3.1 技術選定
+
+| 層 | 採用 | 理由 |
+| --- | --- | --- |
+| CLI・実行系 | Node.js 22 LTS + TypeScript | Windows 配布、CDP WebSocket、YAML、並行制御の実装性がよい。 |
+| ブラウザ | 固定バージョンの Chrome for Testing | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。 |
+| 再生入力 | CDP の `Input` ドメイン | OS 入力を発生させず、ブラウザに低レベル入力を配送する。 |
+| ウィンドウ | CDP `Browser.setWindowBounds` | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。 |
+| 記録入力 | Windows Raw Input（主）+ Low Level Hook（補助） | 物理入力を取得する。CDP は注入はできるが物理入力を記録する API ではない。 |
+| シナリオ | YAML + JSON Schema | 人間編集、バリデーション、将来の自動補完を両立する。 |
+
+Node 側は `ws`、`yaml`、`zod`（または JSON Schema validator）、`commander` を用いる。
+Raw Input と HWND 操作は薄い C++/Node-API アドオン `@crer/win-input` とする。PowerShell
+や AutoHotkey をランタイム依存にはしない。
+
+### 3.2 プロセス分離
+
+各再生ワーカーは次の引数で独立した CfT を起動する。
+
+```text
+chrome.exe --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 \
+  --user-data-dir=<workspace>/.crer/runs/<run-id>/profile \
+  --no-first-run --no-default-browser-check --disable-sync --new-window about:blank
+```
+
+起動時に `DevToolsActivePort` からランダムなローカル CDP ポートを取得する。CDP は
+localhost のみで待受け、ポート番号や WebSocket URL はログに秘匿情報として扱わない。
+通常 Chrome のプロファイル、既存プロセス、リモートデバッグポートには**接続しない**。
+既定では一時プロファイルを使い、`--profile-template` を指定したときのみ、停止中に複製した
+テンプレートを使う。
+
+## 4. 入力の記録と再生
+
+### 4.1 記録
+
+`crer record` は CfT を専用プロファイルで起動し、対象のトップレベル HWND と CDP target を
+対応付ける。Windows Raw Input から受けた入力について、カーソル直下の HWND が対象 CfT の
+コンテンツ領域である時だけ採用する。物理スクリーン座標は `GetClientRect`、DPI、CDP
+`Page.getLayoutMetrics` を使って CSS viewport 座標に正規化する。
+
+- `WM_INPUT` の移動、ボタン、ホイールを時間順に採取する。
+- キーは対象 CfT が前景の場合だけ採取し、Scan Code／Virtual Key／修飾キーを保存する。
+- テキストは `WM_CHAR` と IME の確定文字列を優先して 1 つの `text` ステップに畳む。
+- クリックは down/up と移動をイベントとして保持し、停止時にクリック・ドラッグ・スクロール
+  として可読なステップへ正規化する。元イベント列は `artifacts/raw-input.ndjson` に任意保存する。
+- 記録中は UI によるページ操作を妨げない。CfT 以外で行った入力は記録しない。
+
+座標のほか、CDP `DOM.getNodeForLocation` で得たタグ、アクセシブル名、CSS path、要素の
+bounding box を **locator hint** として添える。これは編集・失敗診断・将来の検証専用であり、
+既定の再生操作を DOM 操作に置換しない。クロスオリジン iframe や Shadow DOM では hint が
+欠落し得るため、座標は常に必須である。
+
+### 4.2 再生
+
+各ステップで CDP 入力メッセージを対象 page session に送る。Windows の `SendInput`、
+`SetCursorPos`、クリップボード貼り付けは使用禁止である。従って再生が利用者のマウスを動かす
+ことも、利用者の作業先にキーを入力することもない。
+
+クリックの揺らぎは再生時のみ、対象座標に適用する。`playback.jitter` はシナリオ全体の
+既定値であり、各 `click`／`double_click` ステップの `jitter` を指定した場合は、その値が
+全体設定を**完全に上書きする**。この場合、全体設定はマージも継承もしない。個別指定で
+`enabled: false` とすれば、そのクリックだけ揺らぎを無効にできる。乱数シードを記録・
+ログに残すため、同じ seed の再実行は同じ座標列になる。範囲外なら既定で失敗する（暗黙の
+clamp はしない）。
+
+```text
+base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP mouse move/down/up
+```
+
+ドラッグは始点／終点の両方に独立した揺らぎを適用し、`steps`（既定 12）で補間する。テキスト
+入力には IME を要しない `Input.insertText` を既定とし、ショートカット等は個別の key down/up を
+使う。これは DOM 値代入ではなく、CDP が提供するテキスト入力注入である。
+
+## 5. 表示の固定と可搬性
+
+画面座標の再現性は OS のスケーリングに依存する。v1 は次を再生前提とする。
+
+- 100% の Windows 表示スケーリングを推奨し、実行時に主モニター DPI と CfT の `devicePixelRatio`
+  を検査する。
+- `window.content` は CSS viewport の目標サイズ、`window.bounds` は画面上の DIP 位置である。
+  `Browser.setWindowBounds` と `Browser.setContentsSize` を順に実行し、実測値を検証する。
+- `browser_zoom` は `100` のみを v1 の厳密保証範囲とする。Chrome UI のサイト別ズームは CDP の
+  安定 API で直接固定できないためである。100% 以外を必要とする場合は、専用プロファイル
+  テンプレートに事前設定したズームを使い、`visualViewport.scale` と CSS viewport の検証を
+  `zoom_check: advisory` として行う。`Emulation.setPageScaleFactor` を Chrome の UI ズーム設定の
+  代替にはしない。
+- ページ側レイアウトの差、フォント、Cookie、A/B テスト、広告、認証状態は座標再生を壊し得る。
+  profile template、ネットワーク条件、固定 URL をシナリオで管理し、必要な `assert` を置く。
+
+## 6. シナリオ形式
+
+拡張子は `.crer.yaml`。UTF-8、改行 LF、スキーマバージョン `1` を必須とする。機密値は書かず、
+環境変数参照 `${ENV:NAME}` のみを許可する。シークレットを含むシナリオは Git にコミットしない。
+
+```yaml
+version: 1
+name: order-search
+browser:
+  chrome: chrome-for-testing@pinned
+  profile: ephemeral                 # ephemeral | template:<path>
+  initial_url: https://example.test/orders
+  window:
+    bounds: { left: 1640, top: 80, width: 1080, height: 900 } # screen DIP
+    content: { width: 1040, height: 760 }                       # CSS px
+  display:
+    expected_dpr: 1
+    browser_zoom: 100
+    zoom_check: strict                # strict | advisory | off
+playback:
+  seed: 20260816
+  speed: 1.0
+  jitter:
+    enabled: true
+    distribution: normal              # none | uniform | normal
+    radius_px: 3
+    min_distance_from_edge_px: 4
+    out_of_bounds: fail               # fail | disable-for-step
+  timeouts: { navigation_ms: 30000, action_ms: 10000 }
+steps:
+  - do: wait_for
+    url: "https://example.test/orders*"
+    state: network_idle
+  - do: click
+    at: { x: 211, y: 182 }
+    locator_hint: { role: textbox, name: Search }
+    jitter:                         # この click では playback.jitter を完全に上書き
+      enabled: true
+      distribution: uniform
+      radius_px: 1
+      min_distance_from_edge_px: 2
+      out_of_bounds: fail
+  - do: text
+    value: "${ENV:ORDER_ID}"
+  - do: key
+    key: Enter
+  - do: wait_for
+    locator_hint: { role: table, name: Results }
+    state: visible
+  - do: scroll
+    at: { x: 920, y: 620 }
+    delta: { x: 0, y: 561 }
+```
+
+許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
+`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep` である。`wait_for` と `assert` は
+ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
+
+`click` と `double_click` の `jitter` は `playback.jitter` と同じスキーマを持つ任意フィールド
+である。省略時だけ `playback.jitter` を使う。`jitter` を指定したステップに `radius_px` 等の
+フィールドがない場合はエラーとし、全体設定から補完しない。`drag` の個別揺らぎは v1 では
+未対応で、常に `playback.jitter` を使う。
+
+## 7. 実行計画（直列・並列）
+
+`.crer.plan.yaml` はシナリオを合成する。各 leaf は別 CfT プロセスなので並列枝は独立しており、
+物理マウスを奪い合わない。1 ブラウザ内での並列タブ実行は座標・フォーカスが競合するため v1
+では禁止する。
+
+```yaml
+version: 1
+name: nightly-check
+max_parallel: 2
+run:
+  serial:
+    - scenario: login.crer.yaml
+    - parallel:
+        fail_fast: false
+        jobs:
+          - scenario: sales-report.crer.yaml
+          - serial:
+              - scenario: inventory.crer.yaml
+              - scenario: logout.crer.yaml
+```
+
+`serial` は前項の成功後に次項を開始する。`parallel` は全 job の完了を待ち、失敗を集約する。
+`fail_fast: true` は未開始 job を中止し、実行中 job には CDP の graceful close を要求する。各 leaf
+に `run-id`、専用プロファイル、専用 artifacts ディレクトリを割り当てる。
+
+## 8. CLI
+
+```text
+crer doctor                         # Windows、CfT、CDP、DPI を診断
+crer browser install --channel stable --version <version>
+crer record new orders.crer.yaml --url https://example.test/orders
+crer record resume orders.crer.yaml
+crer validate orders.crer.yaml
+crer play orders.crer.yaml --position 1640,80 --seed 42
+crer run nightly.crer.plan.yaml --max-parallel 2
+crer inspect artifacts/<run-id>      # ステップ、失敗、スクリーンショットを表示
+```
+
+`record new` はテンプレートと CfT を起動し、利用者が終了コマンドを送るか CfT を閉じたときに
+正規化・検証した YAML を保存する。`play` の CLI オプションは明示的に指定した場合のみ
+front matter を上書きし、実行ログに override を記録する。`--position` は再生ウィンドウだけを
+移動する。
+
+終了コードは `0` 成功、`2` YAML/CLI 検証エラー、`3` 環境・ブラウザ不一致、`4` 操作または
+assert の失敗、`5` 中断とする。
+
+## 9. 安全性・ログ・失敗時の扱い
+
+- 初回起動時に CfT 実行ファイルのパスと SHA-256、通常 Chrome とは分離することを表示して確認する。
+- リモートデバッグは loopback 限定、run profile は終了後に既定で削除する。`--keep-artifacts` のみ
+  スクリーンショット、CDP trace、プロファイルを保持する。
+- URL は既定で `http` / `https` のみ。`file:`、拡張機能、ダウンロード、権限要求は明示フラグを
+  必要とする。
+- 各ステップに時刻、実効座標、jitter offset、CDP 応答、URL、スクリーンショットをログする。
+  入力テキストと環境変数の値は既定でマスクする。
+- 失敗時は以後の同一シナリオ手順を停止し、最終スクリーンショットと診断（viewport、DPR、URL、
+  locator hint）を artifacts に残して CfT を閉じる。
+
+## 10. 受入基準
+
+1. 通常 Chrome を開いたまま `crer play` しても、通常 Chrome のタブ、プロファイル、カーソル位置、
+   フォーカスが変化しない。
+2. 再生中にメモ帳等へ入力しても、CfT の再生ログのキーイベントは変化せず、逆に CfT のテキスト
+   ステップはメモ帳へ入らない。
+3. `--position` 指定で CfT のみが指定 DIP 位置へ移動し、viewport と DPR の検査が成功する。
+4. 同じ scenario + seed で jitter 後の座標列が一致し、異なる seed では指定半径内で変わる。
+5. YAML の `parallel` で 2 シナリオを実行してもプロファイル／CDP 接続／artifacts が混在しない。
+6. `browser_zoom: 100` 以外を `strict` 指定したとき、検証不能なら安全側に失敗する。
+
+## 11. 段階的実装
+
+1. **基盤**: TypeScript CLI、CfT のダウンロード／固定、専用起動、CDP client、`doctor`、YAML schema。
+2. **再生 MVP**: navigate/wait/click/scroll/text/key、window bounds、DPR・viewport 検証、artifacts。
+3. **記録**: Windows Raw Input アドオン、座標正規化、イベント圧縮、YAML 出力、locator hint。
+4. **合成**: plan scheduler、並列 worker、キャンセル、統合レポート。
+5. **堅牢化**: profile template、drag/IME、スクリーンショット差分、署名済み Windows 配布物。
+
+## 12. 主要な制約と設計判断
+
+- 「見える headful ブラウザ」と「物理入力に一切影響しない」は両立する。CDP 入力は OS の
+  カーソルを経由しない。ただしサイトが synthetic input の差異を検出する可能性までは排除できない。
+- CDP の tip-of-tree は互換性保証がない。実装ではインストールした CfT の `/json/protocol` を取得し、
+  対応コマンドを起動時に検査する。
+- 座標中心の方式は、DOM locator 中心のテスト自動化より画面の見た目に敏感である。これは「実際の
+  クリックを記録し、DOM 操作を使わない」という要件を優先した意図的なトレードオフである。
+- `Browser.setWindowBounds` は experimental CDP コマンドであるため、CfT バージョンを pin し、
+  `doctor` の必須検査項目にする。
+
+## 参考資料
+
+- [Chrome for Testing: reliable downloads for browser automation](https://developer.chrome.com/blog/chrome-for-testing)
+- [Chrome DevTools Protocol: Input](https://chromedevtools.github.io/devtools-protocol/tot/Input/)
+- [Chrome DevTools Protocol: Browser（window bounds）](https://chromedevtools.github.io/devtools-protocol/tot/Browser/)
+- [Chrome DevTools Protocol: Target（browser context）](https://chromedevtools.github.io/devtools-protocol/tot/Target/)
