@@ -57,7 +57,9 @@ chrome.exe --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 \
 localhost のみで待受け、ポート番号や WebSocket URL はログに秘匿情報として扱わない。
 通常 Chrome のプロファイル、既存プロセス、リモートデバッグポートには**接続しない**。
 既定では一時プロファイルを使い、`--profile-template` を指定したときのみ、停止中に複製した
-テンプレートを使う。
+テンプレートを使う。CfT プロセスは成功・失敗・中断のいずれでも、終了処理で CDP
+`Browser.close` による graceful close を要求して閉じる。CDP が応答しない場合に限り、実行
+ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。
 
 ## 4. 入力の記録と再生
 
@@ -86,7 +88,10 @@ bounding box を **locator hint** として添える。これは編集・失敗�
 `SetCursorPos`、クリップボード貼り付けは使用禁止である。従って再生が利用者のマウスを動かす
 ことも、利用者の作業先にキーを入力することもない。
 
-クリックの揺らぎは再生時のみ、対象座標に適用する。`playback.jitter` はシナリオ全体の
+クリックの揺らぎは再生時のみ、対象座標に適用する。`playback.seed` が未指定の場合、再生
+開始時に暗号学的乱数から符号なし 64 bit 整数（`uint64`）を生成して実効 seed とする。実効
+seed は artifacts の run metadata と実行ログへ必ず保存するため、後から `playback.seed` または
+CLI の `--seed` に指定して同じ座標列を再現できる。`playback.jitter` はシナリオ全体の
 既定値であり、各 `click`／`double_click` ステップの `jitter` を指定した場合は、その値が
 全体設定を**完全に上書きする**。この場合、全体設定はマージも継承もしない。個別指定で
 `enabled: false` とすれば、そのクリックだけ揺らぎを無効にできる。乱数シードを記録・
@@ -137,7 +142,7 @@ browser:
     browser_zoom: 100
     zoom_check: strict                # strict | advisory | off
 playback:
-  seed: 20260816
+  seed: 20260816                   # 任意。省略時は uint64 を暗号学的乱数で生成・記録
   speed: 1.0
   jitter:
     enabled: true
@@ -146,6 +151,12 @@ playback:
     min_distance_from_edge_px: 4
     out_of_bounds: fail               # fail | disable-for-step
   timeouts: { navigation_ms: 30000, action_ms: 10000 }
+  on_failure:                       # ステップ失敗種別ごとの既定動作
+    default: abort                   # abort | continue
+    timeout: continue
+    assertion: continue
+    action: abort
+    jitter_bounds: abort
 steps:
   - do: wait_for
     url: "https://example.test/orders*"
@@ -180,6 +191,13 @@ steps:
 フィールドがない場合はエラーとし、全体設定から補完しない。`drag` の個別揺らぎは v1 では
 未対応で、常に `playback.jitter` を使う。
 
+`playback.on_failure` は、続行可能なステップ失敗に対するポリシーである。キーは `default`、
+`navigation`、`timeout`、`action`、`assertion`、`jitter_bounds` のみを許可し、値は `abort` または
+`continue` とする。該当種別の設定を優先し、なければ `default`、さらに `default` もなければ
+`abort` を使う。`continue` の場合は失敗を artifacts と最終結果に記録した上で次のステップへ
+進む。YAML／CLI 検証エラー、実行環境不一致、CDP 接続喪失、CfT クラッシュ、利用者による中断は
+続行不能であり、この設定にかかわらず停止する。
+
 ## 7. 実行計画（直列・並列）
 
 `.crer.plan.yaml` はシナリオを合成する。各 leaf は別 CfT プロセスなので並列枝は独立しており、
@@ -190,6 +208,11 @@ steps:
 version: 1
 name: nightly-check
 max_parallel: 2
+on_failure:                         # 子 job の結果ごとの既定動作
+  default: abort                    # abort | continue
+  scenario_failure: continue
+  timeout: continue
+  environment: abort
 run:
   serial:
     - scenario: login.crer.yaml
@@ -202,9 +225,12 @@ run:
               - scenario: logout.crer.yaml
 ```
 
-`serial` は前項の成功後に次項を開始する。`parallel` は全 job の完了を待ち、失敗を集約する。
-`fail_fast: true` は未開始 job を中止し、実行中 job には CDP の graceful close を要求する。各 leaf
-に `run-id`、専用プロファイル、専用 artifacts ディレクトリを割り当てる。
+`serial` は前項の成功後に次項を開始する。子 job が失敗した場合は plan の `on_failure` に従う。
+キーは `default`、`scenario_failure`、`timeout`、`environment` で、解決規則は scenario と同じで
+ある。`continue` なら失敗を集約して次項へ進む。`parallel` は全 job の完了を待ち、失敗を集約する。
+`fail_fast: true` は未開始 job を中止し、実行中 job には CDP の graceful close を要求する。環境
+喪失など続行不能な失敗は常に当該 job を停止する。各 leaf に `run-id`、専用プロファイル、専用
+artifacts ディレクトリを割り当てる。
 
 ## 8. CLI
 
@@ -236,8 +262,9 @@ assert の失敗、`5` 中断とする。
   必要とする。
 - 各ステップに時刻、実効座標、jitter offset、CDP 応答、URL、スクリーンショットをログする。
   入力テキストと環境変数の値は既定でマスクする。
-- 失敗時は以後の同一シナリオ手順を停止し、最終スクリーンショットと診断（viewport、DPR、URL、
-  locator hint）を artifacts に残して CfT を閉じる。
+- `on_failure` が `abort` の失敗、または続行不能な失敗時は、以後の同一シナリオ手順を停止する。
+  `continue` の失敗時も、最終スクリーンショットと診断（viewport、DPR、URL、locator hint）を
+  artifacts に残して次のステップへ進む。終了時は成否を問わず CfT を graceful close する。
 
 ## 10. 受入基準
 
@@ -249,6 +276,10 @@ assert の失敗、`5` 中断とする。
 4. 同じ scenario + seed で jitter 後の座標列が一致し、異なる seed では指定半径内で変わる。
 5. YAML の `parallel` で 2 シナリオを実行してもプロファイル／CDP 接続／artifacts が混在しない。
 6. `browser_zoom: 100` 以外を `strict` 指定したとき、検証不能なら安全側に失敗する。
+7. `playback.seed` を省略した実行では uint64 の実効 seed が生成・記録され、その値を指定した
+   再実行で jitter 後の座標列が一致する。
+8. `on_failure.<kind>: continue` を指定した続行可能な失敗では、失敗が記録されつつ後続ステップ
+   または後続 job が実行される。CDP 接続喪失など続行不能な失敗では実行されない。
 
 ## 11. 段階的実装
 
