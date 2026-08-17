@@ -30,14 +30,14 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 
 ### 3.1 技術選定
 
-| 層 | 採用 | 理由 |
-| --- | --- | --- |
-| CLI・実行系 | Deno 2.8+ + TypeScript | 単一バイナリ配布、組み込み Web API、権限の明示、YAML／並行制御の実装性がよい。 |
-| ブラウザ | 固定バージョンの Chrome for Testing | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。 |
-| 再生入力 | CDP の `Input` ドメイン | OS 入力を発生させず、ブラウザに低レベル入力を配送する。 |
-| ウィンドウ | CDP `Browser.setWindowBounds` | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。 |
-| 記録入力 | Windows Raw Input（主）+ Low Level Hook（補助） | 物理入力を取得する。CDP は注入はできるが物理入力を記録する API ではない。 |
-| シナリオ | YAML + JSON Schema | 人間編集、バリデーション、将来の自動補完を両立する。 |
+| 層          | 採用                                            | 理由                                                                           |
+| ----------- | ----------------------------------------------- | ------------------------------------------------------------------------------ |
+| CLI・実行系 | Deno 2.8+ + TypeScript                          | 単一バイナリ配布、組み込み Web API、権限の明示、YAML／並行制御の実装性がよい。 |
+| ブラウザ    | 固定バージョンの Chrome for Testing             | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                   |
+| 再生入力    | CDP の `Input` ドメイン                         | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                        |
+| ウィンドウ  | CDP `Browser.setWindowBounds`                   | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                      |
+| 記録入力    | Windows Raw Input（主）+ Low Level Hook（補助） | 物理入力を取得する。CDP は注入はできるが物理入力を記録する API ではない。      |
+| シナリオ    | YAML + JSON Schema                              | 人間編集、バリデーション、将来の自動補完を両立する。                           |
 
 Deno 側は組み込みの `WebSocket`、`jsr:@std/yaml`、`jsr:@zod/zod`（または JSON Schema validator）、
 `jsr:@std/cli` を用いる。いずれも Deno で利用でき、Node.js 互換レイヤーを前提にしない。

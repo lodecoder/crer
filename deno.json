@@ -1,0 +1,14 @@
+{
+  "name": "crer",
+  "version": "0.1.0",
+  "exports": "./src/main.ts",
+  "tasks": {
+    "dev": "deno run -A src/main.ts",
+    "check": "deno check src/main.ts",
+    "fmt": "dprint fmt",
+    "test": "deno test -A"
+  },
+  "imports": {
+    "@std/yaml": "jsr:@std/yaml@^1.0.5"
+  }
+}
