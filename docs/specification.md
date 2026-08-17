@@ -45,6 +45,21 @@ Raw Input と HWND 操作は C ABI を公開する薄い C++ DLL `crer-win-input
 `Deno.dlopen()` でロードする。実行バイナリには同梱した信頼済み DLL のパスだけに
 `--allow-ffi` を許可する。PowerShell や AutoHotkey をランタイム依存にはしない。
 
+### 3.1.1 ネイティブ DLL 境界
+
+`crer-win-input.dll` は各 Deno 配布バイナリと同じアーキテクチャ（`win-x86_64` または
+`win-aarch64`）で同梱する。DLL は `crer_input_abi_version`、`crer_input_start`、
+`crer_input_stop`、`crer_input_read`、`crer_input_last_error` だけを C ABI で export する。
+イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Deno と DLL
+の間で共有しない。Deno から DLL への callback は使わず、Deno の非同期ループが
+`crer_input_read` を短い間隔で poll する。これにより DLL のスレッドから V8/Deno runtime を
+呼び出さない。
+
+DLL は専用 native thread 上の message-only window で Raw Input を受信し、時刻は
+`QueryPerformanceCounter` を単調時刻として記録する。`start` は Per-Monitor-V2 DPI awareness
+を設定済みのプロセスで一度だけ成功できる。二重起動、イベントバッファのあふれ、Windows API
+失敗は構造化した error code を返し、バッファあふれは記録を続けず `record` を失敗終了する。
+
 ### 3.2 プロセス分離
 
 各再生ワーカーは次の引数で独立した CfT を起動する。
@@ -79,6 +94,18 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
   として可読なステップへ正規化する。元イベント列は `artifacts/raw-input.ndjson` に任意保存する。
 - 記録中は UI によるページ操作を妨げない。CfT 以外で行った入力は記録しない。
 
+記録開始後の停止操作は `Ctrl+C`（1 回目は graceful stop、2 回目は強制中断）または CfT
+ウィンドウの終了とする。graceful stop では、未確定の down/up 対を `raw-input.ndjson` に残し、
+YAML へは不完全な操作を出力せず警告する。CfT が前景でない間のキー入力、Chrome のタブバー・
+アドレスバー・DevTools 上の入力、対象コンテンツ領域外のポインター入力は記録しない。
+
+座標は、Raw Input の物理 screen px を対象コンテンツ HWND の物理 client px に変換し、同時点の
+`Page.getLayoutMetrics().layoutViewport.clientWidth/clientHeight` と `GetClientRect` の幅・高さの
+比で CSS viewport px に換算する。すなわち `x = clientX * cssWidth / clientWidth`、
+`y = clientY * cssHeight / clientHeight` とする。記録中に client rect、DPR、viewport が変化した
+場合は、その直後に `viewport_changed` 境界イベントを挿入する。既定ではこのイベントをまたぐ
+記録を停止して利用者に分割を求めるため、異なる表示条件の座標を一つの scenario に混在させない。
+
 座標のほか、CDP `DOM.getNodeForLocation` で得たタグ、アクセシブル名、CSS path、要素の
 bounding box を **locator hint** として添える。これは編集・失敗診断・将来の検証専用であり、
 既定の再生操作を DOM 操作に置換しない。クロスオリジン iframe や Shadow DOM では hint が
@@ -103,6 +130,17 @@ clamp はしない）。
 ```text
 base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP mouse move/down/up
 ```
+
+実効 seed は符号なし 64 bit の**10 進文字列**で保存・指定する。YAML number は JavaScript の
+安全整数範囲を超え得るため許可しない。PRNG は `xoshiro256**`、seed 拡張は `splitmix64` とし、
+未指定 seed の生成には `crypto.getRandomValues()` を使う。`uniform` は半径内の一様な円盤分布、
+`normal` は標準偏差 `radius_px / 3` の二次元正規分布を半径内に rejection sampling した分布と
+する。`radius_px` は最大オフセット距離、`min_distance_from_edge_px` は CSS viewport の各辺から
+確保する最小距離である。最大 16 回の試行後に有効な点を作れなければ `out_of_bounds` を適用する。
+
+`click`／`double_click` に個別 `jitter` を書く場合は `enabled`、`distribution`、`radius_px`、
+`min_distance_from_edge_px`、`out_of_bounds` の全項目を必須とする。個別設定があるとき、全体設定の
+`playback.jitter` は一切参照しない。
 
 ドラッグは始点／終点の両方に独立した揺らぎを適用し、`steps`（既定 12）で補間する。テキスト
 入力には IME を要しない `Input.insertText` を既定とし、ショートカット等は個別の key down/up を
@@ -200,6 +238,14 @@ steps:
 進む。YAML／CLI 検証エラー、実行環境不一致、CDP 接続喪失、CfT クラッシュ、利用者による中断は
 続行不能であり、この設定にかかわらず停止する。
 
+失敗種別は次で固定する。`navigation` は `navigate` または URL 待機の CDP エラー、`timeout` は
+ステップの待機時間超過、`action` は CDP 入力の拒否・入力状態不整合、`assertion` は `assert` または
+`wait_for` の条件不成立、`jitter_bounds` は揺らぎ後の有効座標を得られない場合である。`continue`
+を選んだ場合は、まず未解放の mouse/key を release してから、失敗種別・step index・実効座標・
+スクリーンショットを artifacts に記録し、次のステップを開始する。続行した失敗が一件でもあれば
+scenario の最終結果は `failed`、CLI 終了コードは `4` とする。`continue` は「後続操作を試行する」
+指定であり、実行全体を成功扱いにする指定ではない。
+
 ## 7. 実行計画（直列・並列）
 
 `.crer.plan.yaml` はシナリオを合成する。各 leaf は別 CfT プロセスなので並列枝は独立しており、
@@ -210,6 +256,7 @@ steps:
 version: 1
 name: nightly-check
 max_parallel: 2
+timeouts: { worker_ms: 0 }          # 0 は無制限
 on_failure:                         # 子 job の結果ごとの既定動作
   default: abort                    # abort | continue
   scenario_failure: continue
@@ -233,6 +280,13 @@ run:
 `fail_fast: true` は未開始 job を中止し、実行中 job には CDP の graceful close を要求する。環境
 喪失など続行不能な失敗は常に当該 job を停止する。各 leaf に `run-id`、専用プロファイル、専用
 artifacts ディレクトリを割り当てる。
+
+plan の `on_failure` では、`scenario_failure` は child scenario が終了コード `4` で終わった場合、
+`environment` は child worker が起動できない・CDP が失われた・終了コード `3` の場合、`timeout`
+は plan が持つ `timeouts.worker_ms` を超えて child worker が終了しない場合を指す。`worker_ms` を
+省略した場合は `0`（無制限）であり、`timeout` は発生しない。`continue` の child があっても、
+plan は一件でも失敗を集約した場合は終了コード `4` を返す。ただし `environment` の失敗は常に
+終了コード `3` を返す。`fail_fast: true` は `on_failure: continue` より優先する。
 
 ## 8. CLI
 
