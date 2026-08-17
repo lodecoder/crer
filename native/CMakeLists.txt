@@ -1,5 +1,0 @@
-cmake_minimum_required(VERSION 3.24)
-project(crer_win_input LANGUAGES CXX)
-add_library(crer-win-input SHARED crer_win_input.cpp)
-target_compile_features(crer-win-input PRIVATE cxx_std_20)
-target_compile_definitions(crer-win-input PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)

@@ -1,6 +1,6 @@
 # Native record bridge
 
-Build with a Visual Studio 2022 C++ toolchain:
+Publish with .NET 10 Native AOT:
 
 ```text
 cmake -S native -B native/build -A x64

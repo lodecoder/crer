@@ -41,13 +41,13 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 
 Deno 側は組み込みの `WebSocket`、`jsr:@std/yaml`、`jsr:@zod/zod`（または JSON Schema validator）、
 `jsr:@std/cli` を用いる。いずれも Deno で利用でき、Node.js 互換レイヤーを前提にしない。
-Raw Input と HWND 操作は C ABI を公開する薄い C++ DLL `crer-win-input.dll` とし、
+Raw Input と HWND 操作は C ABI を公開するC# .NET 10 Native AOT DLL `crer-win-input.dll` とし、
 `Deno.dlopen()` でロードする。実行バイナリには同梱した信頼済み DLL のパスだけに
 `--allow-ffi` を許可する。PowerShell や AutoHotkey をランタイム依存にはしない。
 
 ### 3.1.1 ネイティブ DLL 境界
 
-`crer-win-input.dll` は各 Deno 配布バイナリと同じアーキテクチャ（`win-x86_64` または
+`crer-win-input.dll` は .NET Native AOT で各 Deno 配布バイナリと同じアーキテクチャ（`win-x86_64` または
 `win-aarch64`）で同梱する。DLL は `crer_input_abi_version`、`crer_input_start`、
 `crer_input_stop`、`crer_input_read`、`crer_input_last_error` だけを C ABI で export する。
 イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Deno と DLL

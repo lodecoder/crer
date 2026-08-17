@@ -3,3 +3,6 @@ dist/
 coverage/
 .crer/
 *.log
+
+native/bin/
+native/obj/

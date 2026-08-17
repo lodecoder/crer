@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework><AssemblyName>crer-win-input</AssemblyName>
+    <PublishAot>true</PublishAot><NativeLib>Shared</NativeLib><SelfContained>true</SelfContained>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+</Project>
