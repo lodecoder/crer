@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <title>crer playback fixture</title>
+  <body>
+    <label>Search <input id="search" aria-label="Search"></label>
+    <button id="submit">Submit</button>
+    <output id="result" aria-label="Result"></output>
+    <script>
+      document.querySelector('#submit').addEventListener('click', () => {
+        document.querySelector('#result').textContent = document.querySelector('#search').value;
+      });
+    </script>
+  </body>
+</html>
