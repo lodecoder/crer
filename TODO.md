@@ -12,7 +12,8 @@
 
 ## P0 — 実ブラウザ再生の結合テスト
 
-- [ ] 固定した CfT バージョンを導入する手順を確立する。
+- [x] 固定した CfT バージョンを導入する手順を確立する。
+  - `install-chrome-for-testing.ps1 -Version <version>` と `crer-chrome.json` manifest を提供。
 - [x] ローカル fixture ページに対し `play` を実行し、起動・ウィンドウ位置・入力・終了を確認する。
   - 2026-08-19: `fixtures/playback/search.crer.yaml` を CfT 152.0.7977.42 で再生し、終了コード 0 と `result.png` / `run.json` を確認。
 - [ ] OS のカーソル位置、前面ウィンドウ、通常 Chrome が変化しないことを確認する。
