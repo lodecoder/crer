@@ -1,5 +1,10 @@
 import { assertEquals } from "jsr:@std/assert@^1.0.14";
-import { normalizeRaw, screenToCss, transformFromRecordingMetadata } from "../src/normalize.ts";
+import {
+  normalizeRaw,
+  normalizeRawWithWarnings,
+  screenToCss,
+  transformFromRecordingMetadata,
+} from "../src/normalize.ts";
 
 Deno.test("converts physical screen coordinates into CSS viewport coordinates", () => {
   assertEquals(
@@ -75,6 +80,18 @@ Deno.test("applies a coordinate transform while normalizing", async () => {
       viewport: { x: 1000, y: 600 },
     });
     assertEquals(scenario.steps, [{ do: "click", at: { x: 500, y: 300 } }]);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
+Deno.test("warns and omits an incomplete mouse click", async () => {
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(path, JSON.stringify({ qpc: "1", x: 100, y: 200, kind: 2, data: 0 }));
+  try {
+    const normalized = await normalizeRawWithWarnings(path, "https://example.test", "sample");
+    assertEquals(normalized.scenario.steps, []);
+    assertEquals(normalized.warnings, ["ignored incomplete left mouse down at end of recording"]);
   } finally {
     await Deno.remove(path);
   }

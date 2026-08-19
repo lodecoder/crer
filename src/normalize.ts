@@ -6,6 +6,7 @@ type RecordingMetadata = {
   content_rect_screen_px?: { x: number; y: number; width: number; height: number };
   css_viewport?: Point;
 };
+export type NormalizedRecording = { scenario: Scenario; warnings: string[] };
 
 export function transformFromRecordingMetadata(
   metadata: RecordingMetadata,
@@ -69,10 +70,20 @@ export async function normalizeRaw(
   name: string,
   transform?: CoordinateTransform,
 ): Promise<Scenario> {
+  return (await normalizeRawWithWarnings(path, url, name, transform)).scenario;
+}
+
+export async function normalizeRawWithWarnings(
+  path: string,
+  url: string,
+  name: string,
+  transform?: CoordinateTransform,
+): Promise<NormalizedRecording> {
   const raw = (await Deno.readTextFile(path)).split(/\r?\n/).filter(Boolean).map((line) =>
     JSON.parse(line) as RawEvent
   );
   const steps: Step[] = [];
+  const warnings: string[] = [];
   let mouseDown: Point | undefined;
   let text = "";
   const flushText = () => {
@@ -106,19 +117,23 @@ export async function normalizeRaw(
     }
   }
   flushText();
+  if (mouseDown) warnings.push("ignored incomplete left mouse down at end of recording");
   return {
-    version: 1,
-    name,
-    browser: { chrome: "chrome-for-testing@pinned", profile: "ephemeral", initial_url: url },
-    playback: {
-      jitter: {
-        enabled: false,
-        distribution: "none",
-        radius_px: 0,
-        min_distance_from_edge_px: 0,
-        out_of_bounds: "fail",
+    scenario: {
+      version: 1,
+      name,
+      browser: { chrome: "chrome-for-testing@pinned", profile: "ephemeral", initial_url: url },
+      playback: {
+        jitter: {
+          enabled: false,
+          distribution: "none",
+          radius_px: 0,
+          min_distance_from_edge_px: 0,
+          out_of_bounds: "fail",
+        },
       },
+      steps,
     },
-    steps,
+    warnings,
   };
 }

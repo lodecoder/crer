@@ -1,5 +1,5 @@
 import { Cdp } from "./cdp.ts";
-import { normalizeRaw, transformFromSidecar } from "./normalize.ts";
+import { normalizeRawWithWarnings, transformFromSidecar } from "./normalize.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import type { PlanNode, Point, RunResult } from "./types.ts";
@@ -199,17 +199,16 @@ async function main() {
       );
     }
     const sidecarTransform = origin ? undefined : await transformFromSidecar(file);
-    await saveYaml(
-      output,
-      await normalizeRaw(
-        file,
-        url,
-        option("--name") ?? "recorded-scenario",
-        origin
-          ? { clientOrigin: origin, clientSize: clientSize!, viewport: viewport! }
-          : sidecarTransform,
-      ),
+    const normalized = await normalizeRawWithWarnings(
+      file,
+      url,
+      option("--name") ?? "recorded-scenario",
+      origin
+        ? { clientOrigin: origin, clientSize: clientSize!, viewport: viewport! }
+        : sidecarTransform,
     );
+    await saveYaml(output, normalized.scenario);
+    for (const warning of normalized.warnings) console.error(`Warning: ${warning}`);
     console.log(`Wrote ${output}`);
     return;
   }
