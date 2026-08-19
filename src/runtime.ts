@@ -162,6 +162,23 @@ async function waitFor(b: BrowserSession, step: Step, timeout: number) {
   }
   throw new Error("wait_for timed out");
 }
+async function assertState(b: BrowserSession, step: Step) {
+  const value = await b.cdp.call<{ result: { value?: { url: string; state: string } } }>(
+    "Runtime.evaluate",
+    { expression: "({url:location.href,state:document.readyState})", returnByValue: true },
+    b.sessionId,
+  );
+  const state = value.result.value;
+  if (step.url) {
+    const matches = new RegExp(
+      "^" + step.url.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace("*", ".*") + "$",
+    ).test(state?.url ?? "");
+    if (!matches) throw new Error(`assert URL failed: ${state?.url ?? "unknown"}`);
+  }
+  if (step.state && state?.state !== step.state) {
+    throw new Error(`assert ready state failed: ${state?.state ?? "unknown"}`);
+  }
+}
 const keys: Record<string, [string, number]> = {
   Enter: ["Enter", 13],
   Tab: ["Tab", 9],
@@ -195,6 +212,8 @@ async function act(
       return await call("Page.navigate", { url: step.url });
     case "wait_for":
       return await waitFor(b, step, timeout);
+    case "assert":
+      return await assertState(b, step);
     case "click":
     case "double_click": {
       const n = step.do === "click" ? 1 : 2;
