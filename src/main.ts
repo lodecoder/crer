@@ -1,4 +1,5 @@
 import { playScenario } from "./runtime.ts";
+import { recordRaw } from "./record.ts";
 import type { PlanNode, RunResult } from "./types.ts";
 import { loadYaml, planFrom, scenarioFrom } from "./yaml.ts";
 const [command, file, ...args] = Deno.args;
@@ -7,6 +8,9 @@ const option = (name: string) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 const chromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME") ?? "chrome.exe";
+const inputDllPath = () =>
+  option("--dll") ??
+  "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
 async function runNode(node: PlanNode, base: string): Promise<RunResult[]> {
   if ("scenario" in node) {
     return [
@@ -35,7 +39,7 @@ async function main() {
           deno: Deno.version.deno,
           os: Deno.build,
           chrome: chromePath(),
-          ffi: "native/crer-win-input.dll",
+          ffi: inputDllPath(),
         },
         null,
         2,
@@ -73,9 +77,30 @@ async function main() {
     return;
   }
   if (command === "record") {
-    throw new Error(
-      "record requires crer-win-input.dll; build native/ then invoke the packaged binary (playback MVP is available now)",
-    );
+    const runDir = `.crer/runs/${crypto.randomUUID()}`;
+    await Deno.mkdir(runDir, { recursive: true });
+    const url = option("--url") ?? "about:blank";
+    const chrome = new Deno.Command(chromePath(), {
+      args: [
+        `--user-data-dir=${runDir}/profile`,
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--new-window",
+        url,
+      ],
+      stdout: "null",
+      stderr: "null",
+    }).spawn();
+    try {
+      await recordRaw(inputDllPath(), chrome.pid, file);
+    } finally {
+      try {
+        chrome.kill("SIGTERM");
+      } catch {
+        // Chrome may already be closed by the user.
+      }
+    }
+    return;
   }
   throw new Error(`unknown command: ${command}`);
 }
