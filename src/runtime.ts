@@ -13,6 +13,7 @@ export type PlayOptions = {
 type BrowserSession = {
   cdp: Cdp;
   sessionId: string;
+  pageDebuggerUrl: string;
   windowId: number;
   process: Deno.ChildProcess;
   runDir: string;
@@ -64,7 +65,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   await cdp.open();
   const targets = await (
     await fetch(`http://127.0.0.1:${port}/json/list`)
-  ).json() as Array<{ id: string; type: string }>;
+  ).json() as Array<{ id: string; type: string; webSocketDebuggerUrl: string }>;
   const target = targets.find((candidate) => candidate.type === "page");
   if (!target) {
     p.kill("SIGTERM");
@@ -94,6 +95,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   return {
     cdp,
     sessionId: attached.sessionId,
+    pageDebuggerUrl: target.webSocketDebuggerUrl,
     windowId: window.windowId,
     process: p,
     runDir,
@@ -102,11 +104,13 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
 }
 async function capture(b: BrowserSession, name: string, required = false) {
   try {
-    const r = await b.cdp.call<{ data: string }>(
-      "Page.captureScreenshot",
-      { format: "png" },
-      b.sessionId,
-    );
+    await b.cdp.call("Page.bringToFront", {}, b.sessionId);
+    const pageCdp = new Cdp(b.pageDebuggerUrl);
+    await pageCdp.open();
+    await pageCdp.call("Page.enable");
+    await sleep(250);
+    const r = await pageCdp.call<{ data: string }>("Page.captureScreenshot", { format: "png" });
+    pageCdp.close();
     await Deno.writeFile(
       `${b.runDir}/${name}.png`,
       Uint8Array.from(atob(r.data), (x) => x.charCodeAt(0)),
