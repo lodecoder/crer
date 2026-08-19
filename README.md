@@ -14,6 +14,9 @@ Deno CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使
 screen px から CSS viewport px への正確な変換、IME を含む text
 正規化は次の実装段階です。
 
+Raw Input だけではキーボード配列や IME の確定文字列を復元できないため、現在の `record` は英数字と基本
+ショートカットのみを安全に正規化します。
+
 ## 実行
 
 Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイルを `CRER_CHROME` に設定するか
