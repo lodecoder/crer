@@ -71,6 +71,26 @@ async function recordingViewport(port: number): Promise<Point | undefined> {
   }
   return undefined;
 }
+async function closeRecordingBrowser(port: number, chrome: Deno.ChildProcess): Promise<void> {
+  let cdp: Cdp | undefined;
+  try {
+    const version = await within(
+      (async () => await (await fetch(`http://127.0.0.1:${port}/json/version`)).json())(),
+      500,
+    ) as { webSocketDebuggerUrl: string };
+    cdp = new Cdp(version.webSocketDebuggerUrl);
+    await cdp.open(500);
+    await within(cdp.call("Browser.close"), 1_000);
+  } catch {
+    try {
+      chrome.kill("SIGTERM");
+    } catch {
+      // Chrome may already be closed by the user.
+    }
+  } finally {
+    cdp?.close();
+  }
+}
 const pointOption = (name: string): Point | undefined => {
   const value = option(name);
   if (!value) return undefined;
@@ -179,11 +199,7 @@ async function main() {
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
       if (timer) clearTimeout(timer);
-      try {
-        chrome.kill("SIGTERM");
-      } catch {
-        // Chrome may already be closed by the user.
-      }
+      await closeRecordingBrowser(port, chrome);
     }
     return;
   }
