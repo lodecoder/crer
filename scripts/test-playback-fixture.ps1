@@ -26,6 +26,13 @@ try {
   Push-Location $projectRoot
   try { & deno task dev play fixtures\playback\search.crer.yaml --chrome $Chrome --keep-artifacts } finally { Pop-Location }
   if ($LASTEXITCODE -ne 0) { throw "play exited with code $LASTEXITCODE" }
+  $run = Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory |
+    Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
+  if (-not $run -or -not (Test-Path -LiteralPath (Join-Path $run.FullName 'run.json')) -or
+    -not (Test-Path -LiteralPath (Join-Path $run.FullName 'result.png'))) {
+    throw 'Playback artifacts run.json and result.png were not both created.'
+  }
+  Write-Host "Artifacts: $($run.FullName)"
   $after = [System.Windows.Forms.Cursor]::Position
   if ($before -ne $control) {
     Write-Warning "INCONCLUSIVE: cursor changed without playback ($before to $control); playback cannot be isolated in this desktop session."
