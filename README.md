@@ -8,7 +8,7 @@ Deno CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使
 
 - `.crer.yaml` の検証、CfT の隔離起動、headful な CDP 入力再生
 - click / double-click / move / drag / scroll / text / key / key_chord / navigate / wait / assert / screenshot / sleep
-- シード付きクリック揺らぎ、失敗 artifacts、YAML plan の直列・並列実行
+- シード付きクリック揺らぎ、失敗 artifacts、YAML plan の直列・並列実行（`max_parallel` 対応）
 - C# .NET 10 Native AOT の Raw Input DLL と NDJSON 記録
 
 screen px から CSS viewport px への正確な変換、IME を含む text

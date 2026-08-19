@@ -2,6 +2,7 @@ import { Cdp } from "./cdp.ts";
 import { normalizeRawWithWarnings, transformFromSidecar } from "./normalize.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
+import { mapWithConcurrency } from "./scheduler.ts";
 import type { PlanNode, Point, RunResult } from "./types.ts";
 import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
 const [command, file, ...args] = Deno.args;
@@ -98,7 +99,7 @@ const pointOption = (name: string): Point | undefined => {
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`${name} must be x,y`);
   return { x, y };
 };
-async function runNode(node: PlanNode, base: string): Promise<RunResult[]> {
+async function runNode(node: PlanNode, base: string, maxParallel: number): Promise<RunResult[]> {
   if ("scenario" in node) {
     return [
       await playScenario(scenarioFrom(await loadYaml(`${base}/${node.scenario}`)), {
@@ -108,10 +109,14 @@ async function runNode(node: PlanNode, base: string): Promise<RunResult[]> {
   }
   if ("serial" in node) {
     const out: RunResult[] = [];
-    for (const child of node.serial) out.push(...await runNode(child, base));
+    for (const child of node.serial) out.push(...await runNode(child, base, maxParallel));
     return out;
   }
-  const results = await Promise.all(node.parallel.jobs.map((x) => runNode(x, base)));
+  const results = await mapWithConcurrency(
+    node.parallel.jobs,
+    maxParallel,
+    (child) => runNode(child, base, maxParallel),
+  );
   return results.flat();
 }
 async function main() {
@@ -157,7 +162,7 @@ async function main() {
   }
   if (command === "run") {
     const p = planFrom(await loadYaml(file));
-    const results = await runNode(p.run, file.replace(/[\\/][^\\/]+$/, ""));
+    const results = await runNode(p.run, file.replace(/[\\/][^\\/]+$/, ""), p.max_parallel ?? 1);
     const code = results.some((r) => r.code === 3) ? 3 : results.some((r) => r.code !== 0) ? 4 : 0;
     console.log(JSON.stringify(results, null, 2));
     Deno.exitCode = code;
