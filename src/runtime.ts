@@ -163,9 +163,10 @@ function failureFor(step: Step, error: unknown): FailureKind {
   if (step.do === "navigate") return "navigation";
   return "action";
 }
-async function waitFor(b: BrowserSession, step: Step, timeout: number) {
+async function waitFor(b: BrowserSession, step: Step, timeout: number, signal?: AbortSignal) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw new Error("worker timed out");
     const hint = step.locator_hint;
     const expression = `(() => {
       const hint = ${JSON.stringify(hint ?? {})};
@@ -255,6 +256,7 @@ async function act(
   j: Jitter | undefined,
   rng: Random,
   timeout: number,
+  signal?: AbortSignal,
 ) {
   const at = step.at ? jitter(step.at, step.jitter ?? j, rng, b.viewport) : undefined;
   if (step.at && !at) throw new Error("jitter bounds failure");
@@ -263,7 +265,7 @@ async function act(
     case "navigate":
       return await call("Page.navigate", { url: step.url });
     case "wait_for":
-      return await waitFor(b, step, timeout);
+      return await waitFor(b, step, timeout, signal);
     case "assert":
       return await assertState(b, step);
     case "click":
@@ -431,7 +433,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     for (const [i, step] of s.steps.entries()) {
       try {
         if (options.signal?.aborted) throw new Error("worker timed out");
-        await act(b, step, s.playback?.jitter, rng, timeout);
+        await act(b, step, s.playback?.jitter, rng, timeout, options.signal);
       } catch (e) {
         const kind = failureFor(step, e);
         await capture(b, `failure-${i}`);
