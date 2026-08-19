@@ -10,7 +10,7 @@ current PowerShell session must receive CRER_CHROME immediately:
 #>
 [CmdletBinding()]
 param(
-  [string] $InstallRoot = (Join-Path (Get-Location) '.crer\browsers'),
+  [string] $InstallRoot = (Join-Path $PSScriptRoot '..\.crer\browsers'),
   [switch] $NoPersist
 )
 
@@ -38,11 +38,8 @@ if (-not $NoPersist) {
   [Environment]::SetEnvironmentVariable('CRER_CHROME', $path, 'User')
 }
 
-$versionOutput = @(& $path --version 2>&1)
-$version = ($versionOutput -join [Environment]::NewLine).Trim()
-if ([string]::IsNullOrWhiteSpace($version)) {
-  $version = 'version output unavailable'
-}
+$version = $chrome.VersionInfo.ProductVersion
+if ([string]::IsNullOrWhiteSpace($version)) { $version = 'unknown' }
 Write-Host "Installed: $version"
 Write-Host "CRER_CHROME: $path"
 if (-not $NoPersist) {

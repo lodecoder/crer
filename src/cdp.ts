@@ -26,10 +26,23 @@ export class Cdp {
     sessionId?: string,
   ): Promise<T> {
     const id = this.#next++;
-    this.#ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
-    return new Promise((resolve, reject) =>
-      this.#pending.set(id, { resolve: resolve as (v: unknown) => void, reject })
-    );
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`CDP call timed out: ${method}`));
+      }, 10_000);
+      this.#pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value as T);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
+      this.#ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+    });
   }
   close() {
     this.#ws.close();

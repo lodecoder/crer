@@ -19,22 +19,25 @@ type BrowserSession = {
   viewport: { x: number; y: number };
 };
 
-async function waitPort(file: string): Promise<[number, string]> {
+async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: string }> {
   for (let i = 0; i < 150; i++) {
     try {
-      const [port, path] = decoder.decode(await Deno.readFile(file)).trim().split(/\r?\n/);
-      if (port && path) return [Number(port), path];
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+      if (response.ok) return await response.json();
     } catch { /* wait */ }
     await sleep(100);
   }
-  throw new Error("DevToolsActivePort was not created");
+  throw new Error(`CDP endpoint on port ${port} was not available`);
 }
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
   const profile = `${runDir}/profile`;
   await Deno.mkdir(profile, { recursive: true });
+  const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (reservation.addr as Deno.NetAddr).port;
+  reservation.close();
   const p = new Deno.Command(options.chromePath, {
     args: [
-      "--remote-debugging-port=0",
+      `--remote-debugging-port=${port}`,
       "--remote-debugging-address=127.0.0.1",
       `--user-data-dir=${profile}`,
       "--no-first-run",
@@ -46,10 +49,17 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     stdout: "null",
     stderr: "piped",
   }).spawn();
-  const [port] = await waitPort(`${profile}/DevToolsActivePort`);
-  const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json() as {
-    webSocketDebuggerUrl: string;
-  };
+  let version: { webSocketDebuggerUrl: string };
+  try {
+    version = await waitEndpoint(port);
+  } catch (error) {
+    try {
+      p.kill("SIGTERM");
+    } catch {
+      // The child may have already exited.
+    }
+    throw error;
+  }
   const cdp = new Cdp(version.webSocketDebuggerUrl);
   await cdp.open();
   const target = await cdp.call<{ targetId: string }>("Target.createTarget", {
