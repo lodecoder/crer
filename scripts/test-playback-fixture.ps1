@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
   [int] $Port = 8080,
-  [string] $Chrome = $env:CRER_CHROME
+  [string] $Chrome = $env:CRER_CHROME,
+  [string] $Scenario = 'fixtures\\playback\\search.crer.yaml',
+  [int] $ExpectedExitCode = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -24,13 +26,14 @@ try {
   Start-Sleep -Seconds 1
   $control = [System.Windows.Forms.Cursor]::Position
   Push-Location $projectRoot
-  try { & deno task dev play fixtures\playback\search.crer.yaml --chrome $Chrome --keep-artifacts } finally { Pop-Location }
-  if ($LASTEXITCODE -ne 0) { throw "play exited with code $LASTEXITCODE" }
+  try { & deno task dev play $Scenario --chrome $Chrome --keep-artifacts } finally { Pop-Location }
+  if ($LASTEXITCODE -ne $ExpectedExitCode) { throw "play exited with code $LASTEXITCODE (expected $ExpectedExitCode)" }
   $run = Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory |
     Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
   if (-not $run -or -not (Test-Path -LiteralPath (Join-Path $run.FullName 'run.json')) -or
     -not (Test-Path -LiteralPath (Join-Path $run.FullName 'result.png')) -or
-    -not (Test-Path -LiteralPath (Join-Path $run.FullName 'display.json'))) {
+    -not (Test-Path -LiteralPath (Join-Path $run.FullName 'display.json')) -or
+    ($ExpectedExitCode -ne 0 -and -not (Test-Path -LiteralPath (Join-Path $run.FullName 'failure-0.png')))) {
     throw 'Playback artifacts run.json, result.png, and display.json were not all created.'
   }
   Write-Host "Artifacts: $($run.FullName)"
