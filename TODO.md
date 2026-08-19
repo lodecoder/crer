@@ -36,6 +36,7 @@
 - [x] `drag`、`assert`、`key_chord` を実装する。
 - [ ] `wait_for` の URL / locator hint / network idle を仕様どおり実装する。
 - [ ] 個別 jitter、viewport / DPR / zoom の検証を厳密化する。
+  - jitter の必須項目・型・値域検証は実装済み。viewport / DPR / zoom の実行時検証は未完了。
 
 ## P1 — plan scheduler
 
