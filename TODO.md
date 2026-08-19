@@ -39,8 +39,7 @@
 
 ## P1 — plan scheduler
 
-- [ ] `max_parallel`、`fail_fast`、worker timeout を実装する。
-  - `max_parallel` と `parallel.fail_fast` は実装済み。worker timeout は未実装。
+- [x] `max_parallel`、`fail_fast`、worker timeout を実装する。
 - [ ] scenario / plan の `on_failure` と終了コード集約を仕様どおり実装する。
 
 ## P2 — 配布と堅牢化
