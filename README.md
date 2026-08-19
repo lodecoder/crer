@@ -84,4 +84,5 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 実行 artifacts は `.crer/runs/<run-id>` に出力されます。
 
 - 仕様書: [docs/specification.md](docs/specification.md)
+- 手動結合テスト: [docs/manual-test.md](docs/manual-test.md)
 - Raw Input bridge: [native/README.md](native/README.md)
