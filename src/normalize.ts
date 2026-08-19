@@ -63,6 +63,18 @@ const keys: Record<number, string> = {
   39: "ArrowRight",
   40: "ArrowDown",
 };
+const shiftedDigits: Record<number, string> = {
+  0x30: ")",
+  0x31: "!",
+  0x32: "@",
+  0x33: "#",
+  0x34: "$",
+  0x35: "%",
+  0x36: "^",
+  0x37: "&",
+  0x38: "*",
+  0x39: "(",
+};
 
 export async function normalizeRaw(
   path: string,
@@ -123,7 +135,9 @@ export async function normalizeRawWithWarnings(
     }
     if (event.kind === 7 && printable) {
       const character = String.fromCharCode(virtualKey);
-      text += shift ? character.toUpperCase() : character.toLowerCase();
+      text += shift
+        ? (shiftedDigits[virtualKey] ?? character.toUpperCase())
+        : character.toLowerCase();
       continue;
     }
     flushText();
