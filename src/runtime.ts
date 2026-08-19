@@ -105,6 +105,10 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
 async function capture(b: BrowserSession, name: string, required = false) {
   try {
     await b.cdp.call("Page.bringToFront", {}, b.sessionId);
+    const warmupCdp = new Cdp(b.pageDebuggerUrl);
+    await warmupCdp.open();
+    await warmupCdp.call("Page.enable");
+    warmupCdp.close();
     const pageCdp = new Cdp(b.pageDebuggerUrl);
     await pageCdp.open();
     await pageCdp.call("Page.enable");
