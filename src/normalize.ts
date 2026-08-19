@@ -87,6 +87,7 @@ export async function normalizeRawWithWarnings(
   let mouseDown: Point | undefined;
   let mouseLast: Point | undefined;
   let text = "";
+  let shift = false;
   const flushText = () => {
     if (text) steps.push({ do: "text", value: text });
     text = "";
@@ -96,10 +97,15 @@ export async function normalizeRawWithWarnings(
       ? screenToCss({ x: event.x, y: event.y }, transform)
       : { x: event.x, y: event.y };
     const virtualKey = event.data >>> 16;
+    if (virtualKey === 16) {
+      shift = event.kind === 7;
+      continue;
+    }
     const printable = (virtualKey >= 0x30 && virtualKey <= 0x39)
       || (virtualKey >= 0x41 && virtualKey <= 0x5a);
     if (event.kind === 7 && printable) {
-      text += String.fromCharCode(virtualKey).toLowerCase();
+      const character = String.fromCharCode(virtualKey);
+      text += shift ? character.toUpperCase() : character.toLowerCase();
       continue;
     }
     flushText();
