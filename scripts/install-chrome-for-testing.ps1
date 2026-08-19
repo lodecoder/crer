@@ -38,7 +38,11 @@ if (-not $NoPersist) {
   [Environment]::SetEnvironmentVariable('CRER_CHROME', $path, 'User')
 }
 
-$version = (& $path --version).Trim()
+$versionOutput = @(& $path --version 2>&1)
+$version = ($versionOutput -join [Environment]::NewLine).Trim()
+if ([string]::IsNullOrWhiteSpace($version)) {
+  $version = 'version output unavailable'
+}
 Write-Host "Installed: $version"
 Write-Host "CRER_CHROME: $path"
 if (-not $NoPersist) {
