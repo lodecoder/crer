@@ -27,6 +27,13 @@ deno task dev run nightly.crer.plan.yaml
 deno task test
 ```
 
+ローカル fixture による headful 再生と物理カーソル不変の確認は次で実行できます（実行中はマウスを動かさないでください）。
+再生前の control 観測でもカーソルが動くデスクトップ環境では、スクリプトは判定不能として警告します。
+
+```powershell
+.\scripts\test-playback-fixture.ps1
+```
+
 ### 手動記録と正規化
 
 初回だけ Native AOT DLL を公開ビルドします。Visual Studio Build Tools の MSVC と Windows SDK が必要です。
