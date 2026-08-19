@@ -279,6 +279,11 @@ async function main() {
       );
     }
     const sidecarTransform = origin ? undefined : await transformFromSidecar(file);
+    if (!origin && !sidecarTransform) {
+      console.error(
+        "Warning: recording metadata is unavailable; output coordinates remain physical screen pixels.",
+      );
+    }
     const normalized = await normalizeRawWithWarnings(
       file,
       url,
