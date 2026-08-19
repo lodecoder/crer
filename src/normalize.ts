@@ -29,7 +29,12 @@ const keys: Record<number, string> = {
   40: "ArrowDown",
 };
 
-export async function normalizeRaw(path: string, url: string, name: string): Promise<Scenario> {
+export async function normalizeRaw(
+  path: string,
+  url: string,
+  name: string,
+  transform?: CoordinateTransform,
+): Promise<Scenario> {
   const raw = (await Deno.readTextFile(path)).split(/\r?\n/).filter(Boolean).map((line) =>
     JSON.parse(line) as RawEvent
   );
@@ -41,6 +46,9 @@ export async function normalizeRaw(path: string, url: string, name: string): Pro
     text = "";
   };
   for (const event of raw) {
+    const point = transform
+      ? screenToCss({ x: event.x, y: event.y }, transform)
+      : { x: event.x, y: event.y };
     const virtualKey = event.data >>> 16;
     const printable = (virtualKey >= 0x30 && virtualKey <= 0x39)
       || (virtualKey >= 0x41 && virtualKey <= 0x5a);
@@ -49,14 +57,14 @@ export async function normalizeRaw(path: string, url: string, name: string): Pro
       continue;
     }
     flushText();
-    if (event.kind === 2) mouseDown = { x: event.x, y: event.y };
+    if (event.kind === 2) mouseDown = point;
     if (event.kind === 3 && mouseDown) {
       steps.push({ do: "click", at: mouseDown });
       mouseDown = undefined;
     }
     if (event.kind === 6) {
       const delta = event.data > 0x7fff ? event.data - 0x10000 : event.data;
-      steps.push({ do: "scroll", at: { x: event.x, y: event.y }, delta: { x: 0, y: -delta } });
+      steps.push({ do: "scroll", at: point, delta: { x: 0, y: -delta } });
     }
     if (event.kind === 7) {
       const key = keys[virtualKey] ?? String.fromCharCode(virtualKey);

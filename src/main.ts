@@ -1,7 +1,7 @@
 import { normalizeRaw } from "./normalize.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
-import type { PlanNode, RunResult } from "./types.ts";
+import type { PlanNode, Point, RunResult } from "./types.ts";
 import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
 const [command, file, ...args] = Deno.args;
 const option = (name: string) => {
@@ -12,6 +12,13 @@ const chromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME") ?? "c
 const inputDllPath = () =>
   option("--dll")
     ?? "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
+const pointOption = (name: string): Point | undefined => {
+  const value = option(name);
+  if (!value) return undefined;
+  const [x, y] = value.split(",").map(Number);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`${name} must be x,y`);
+  return { x, y };
+};
 async function runNode(node: PlanNode, base: string): Promise<RunResult[]> {
   if ("scenario" in node) {
     return [
@@ -113,7 +120,23 @@ async function main() {
     if (!output || !url) {
       throw new Error("normalize requires --output <scenario.crer.yaml> and --url <URL>");
     }
-    await saveYaml(output, await normalizeRaw(file, url, option("--name") ?? "recorded-scenario"));
+    const origin = pointOption("--client-origin");
+    const clientSize = pointOption("--client-size");
+    const viewport = pointOption("--viewport");
+    if ((origin || clientSize || viewport) && !(origin && clientSize && viewport)) {
+      throw new Error(
+        "coordinate conversion requires --client-origin, --client-size, and --viewport",
+      );
+    }
+    await saveYaml(
+      output,
+      await normalizeRaw(
+        file,
+        url,
+        option("--name") ?? "recorded-scenario",
+        origin ? { clientOrigin: origin, clientSize: clientSize!, viewport: viewport! } : undefined,
+      ),
+    );
     console.log(`Wrote ${output}`);
     return;
   }
