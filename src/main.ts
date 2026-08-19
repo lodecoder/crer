@@ -3,7 +3,7 @@ import { normalizeRawWithWarnings, transformFromSidecar } from "./normalize.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
-import type { PlanNode, Point, RunResult } from "./types.ts";
+import type { FailurePolicy, PlanNode, Point, RunResult } from "./types.ts";
 import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
 const [command, file, ...args] = Deno.args;
 const option = (name: string) => {
@@ -104,6 +104,7 @@ async function runNode(
   base: string,
   maxParallel: number,
   workerMs?: number,
+  onFailure?: Record<string, FailurePolicy | undefined>,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
     const controller = new AbortController();
@@ -121,13 +122,25 @@ async function runNode(
   }
   if ("serial" in node) {
     const out: RunResult[] = [];
-    for (const child of node.serial) out.push(...await runNode(child, base, maxParallel, workerMs));
+    for (const child of node.serial) {
+      const results = await runNode(child, base, maxParallel, workerMs, onFailure);
+      out.push(...results);
+      const timeout = results.some((result) =>
+        result.failures.some((failure) => failure.includes(":timeout:"))
+      );
+      const environment = results.some((result) => result.code === 3);
+      const kind = timeout ? "timeout" : environment ? "environment" : "scenario_failure";
+      if (
+        results.some((result) => result.code !== 0)
+        && (onFailure?.[kind] ?? onFailure?.default ?? "abort") === "abort"
+      ) break;
+    }
     return out;
   }
   const results = await mapWithConcurrency(
     node.parallel.jobs,
     maxParallel,
-    (child) => runNode(child, base, maxParallel, workerMs),
+    (child) => runNode(child, base, maxParallel, workerMs, onFailure),
     node.parallel.fail_fast ? (result) => result.some((run) => run.code !== 0) : undefined,
   );
   return results.flat();
@@ -180,6 +193,7 @@ async function main() {
       file.replace(/[\\/][^\\/]+$/, ""),
       p.max_parallel ?? 1,
       p.timeouts?.worker_ms,
+      p.on_failure,
     );
     const code = results.some((r) => r.code === 3) ? 3 : results.some((r) => r.code !== 0) ? 4 : 0;
     console.log(JSON.stringify(results, null, 2));
