@@ -20,7 +20,20 @@ export async function normalizeRaw(path: string, url: string, name: string): Pro
   );
   const steps: Step[] = [];
   let mouseDown: Point | undefined;
+  let text = "";
+  const flushText = () => {
+    if (text) steps.push({ do: "text", value: text });
+    text = "";
+  };
   for (const event of raw) {
+    const virtualKey = event.data >>> 16;
+    const printable = (virtualKey >= 0x30 && virtualKey <= 0x39)
+      || (virtualKey >= 0x41 && virtualKey <= 0x5a);
+    if (event.kind === 7 && printable) {
+      text += String.fromCharCode(virtualKey).toLowerCase();
+      continue;
+    }
+    flushText();
     if (event.kind === 2) mouseDown = { x: event.x, y: event.y };
     if (event.kind === 3 && mouseDown) {
       steps.push({ do: "click", at: mouseDown });
@@ -31,10 +44,11 @@ export async function normalizeRaw(path: string, url: string, name: string): Pro
       steps.push({ do: "scroll", at: { x: event.x, y: event.y }, delta: { x: 0, y: -delta } });
     }
     if (event.kind === 7) {
-      const key = keys[event.data >>> 16] ?? String.fromCharCode(event.data >>> 16);
+      const key = keys[virtualKey] ?? String.fromCharCode(virtualKey);
       if (key) steps.push({ do: "key", key });
     }
   }
+  flushText();
   return {
     version: 1,
     name,
