@@ -103,26 +103,33 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   };
 }
 async function capture(b: BrowserSession, name: string, required = false) {
-  try {
-    await b.cdp.call("Page.bringToFront", {}, b.sessionId);
-    const warmupCdp = new Cdp(b.pageDebuggerUrl);
-    await warmupCdp.open();
-    await warmupCdp.call("Page.enable");
-    warmupCdp.close();
-    const pageCdp = new Cdp(b.pageDebuggerUrl);
-    await pageCdp.open();
-    await pageCdp.call("Page.enable");
-    await sleep(250);
-    const r = await pageCdp.call<{ data: string }>("Page.captureScreenshot", { format: "png" });
-    pageCdp.close();
-    await Deno.writeFile(
-      `${b.runDir}/${name}.png`,
-      Uint8Array.from(atob(r.data), (x) => x.charCodeAt(0)),
-    );
-  } catch (error) {
-    if (required) throw error;
-    // Diagnostics must not mask the original failure.
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let pageCdp: Cdp | undefined;
+    try {
+      await b.cdp.call("Page.bringToFront", {}, b.sessionId);
+      const warmupCdp = new Cdp(b.pageDebuggerUrl);
+      await warmupCdp.open();
+      await warmupCdp.call("Page.enable");
+      warmupCdp.close();
+      pageCdp = new Cdp(b.pageDebuggerUrl);
+      await pageCdp.open();
+      await pageCdp.call("Page.enable");
+      await sleep(250);
+      const r = await pageCdp.call<{ data: string }>("Page.captureScreenshot", { format: "png" });
+      await Deno.writeFile(
+        `${b.runDir}/${name}.png`,
+        Uint8Array.from(atob(r.data), (x) => x.charCodeAt(0)),
+      );
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(250);
+    } finally {
+      pageCdp?.close();
+    }
   }
+  if (required) throw lastError;
 }
 function failureFor(step: Step, error: unknown): FailureKind {
   const e = String(error);
