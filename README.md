@@ -52,8 +52,9 @@ deno task dev normalize .crer\raw-input.ndjson `
 
 Chrome for Testing が fixture を開いたら、検索欄への入力と Submit のクリックを行い、記録元の
 PowerShell で `Ctrl+C` を押します。結果は `.crer/fixture.raw-input.ndjson` に保存されます。
-`-Output`、`-Port`、`-Chrome` で変更できます。現段階では CSS 座標の client origin／size／viewport を
-`normalize` へ明示的に渡します。
+`-Output`、`-Port`、`-Chrome` で変更できます。記録時に有効なコンテンツ領域と CDP viewport を取得できた
+場合、`.meta.json` sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動変換します。sidecar が
+ない場合は、従来どおり `--client-origin`、`--client-size`、`--viewport` をすべて指定してください。
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
