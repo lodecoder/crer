@@ -164,6 +164,7 @@ async function main() {
   }
   if (command === "doctor") {
     const configured = configuredChromePath();
+    const ffi = inputDllPath();
     let chromeExists = false;
     if (configured) {
       try {
@@ -179,7 +180,8 @@ async function main() {
           os: Deno.build,
           chrome: configured ?? "not configured",
           chromeExists,
-          ffi: inputDllPath(),
+          ffi,
+          ffiExists: await Deno.stat(ffi).then((info) => info.isFile).catch(() => false),
         },
         null,
         2,
