@@ -36,3 +36,24 @@ Deno.test("normalizes mouse, wheel, and key events into steps", async () => {
     await Deno.remove(path);
   }
 });
+
+Deno.test("applies a coordinate transform while normalizing", async () => {
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(
+    path,
+    [
+      { qpc: "1", x: 1100, y: 700, kind: 2, data: 0 },
+      { qpc: "2", x: 1100, y: 700, kind: 3, data: 0 },
+    ].map((event) => JSON.stringify(event)).join("\n"),
+  );
+  try {
+    const scenario = await normalizeRaw(path, "https://example.test", "sample", {
+      clientOrigin: { x: 100, y: 100 },
+      clientSize: { x: 2000, y: 1200 },
+      viewport: { x: 1000, y: 600 },
+    });
+    assertEquals(scenario.steps, [{ do: "click", at: { x: 500, y: 300 } }]);
+  } finally {
+    await Deno.remove(path);
+  }
+});
