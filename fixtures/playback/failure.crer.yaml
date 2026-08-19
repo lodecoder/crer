@@ -1,0 +1,17 @@
+version: 1
+name: playback-fixture-failure
+browser:
+  chrome: chrome-for-testing@pinned
+  profile: ephemeral
+  initial_url: http://127.0.0.1:8080/index.html
+  window:
+    content: { width: 860, height: 560 }
+  display:
+    expected_dpr: 1
+    zoom_check: strict
+playback:
+  seed: "42"
+steps:
+  - do: assert
+    state: complete
+    locator_hint: { role: button, name: Missing }
