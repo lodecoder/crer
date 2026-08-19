@@ -14,3 +14,13 @@ Deno.test("limits concurrent work while preserving result order", async () => {
   assertEquals(peak, 2);
   assertEquals(result, [10, 20, 30, 40]);
 });
+
+Deno.test("stops scheduling after a fail-fast result", async () => {
+  const started: number[] = [];
+  const result = await mapWithConcurrency([1, 2, 3], 1, async (value) => {
+    started.push(value);
+    return value;
+  }, (value) => value === 1);
+  assertEquals(started, [1]);
+  assertEquals(result, [1]);
+});

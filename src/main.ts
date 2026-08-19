@@ -116,6 +116,7 @@ async function runNode(node: PlanNode, base: string, maxParallel: number): Promi
     node.parallel.jobs,
     maxParallel,
     (child) => runNode(child, base, maxParallel),
+    node.parallel.fail_fast ? (result) => result.some((run) => run.code !== 0) : undefined,
   );
   return results.flat();
 }
