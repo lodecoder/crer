@@ -29,5 +29,8 @@ steps:
     value: crer
   - do: click
     at: { x: 270, y: 28 }
+  - do: assert
+    state: complete
+    locator_hint: { role: status, name: Result }
   - do: screenshot
     name: result
