@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Installs the current Chrome for Testing Stable build for crer and stores its executable path.
+Installs a Chrome for Testing build for crer and stores its executable path.
 
 .DESCRIPTION
 Downloads Chrome for Testing under .crer/browsers with @puppeteer/browsers. The executable path is
@@ -11,6 +11,7 @@ current PowerShell session must receive CRER_CHROME immediately:
 [CmdletBinding()]
 param(
   [string] $InstallRoot = (Join-Path $PSScriptRoot '..\.crer\browsers'),
+  [string] $Version = 'stable',
   [switch] $NoPersist
 )
 
@@ -22,7 +23,7 @@ if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
 }
 
 New-Item -ItemType Directory -Force -Path $root | Out-Null
-& npx @puppeteer/browsers install chrome@stable --path $root
+& npx @puppeteer/browsers install "chrome@$Version" --path $root
 if ($LASTEXITCODE -ne 0) { throw "Chrome for Testing installation failed (exit code $LASTEXITCODE)." }
 
 $chrome = Get-ChildItem -LiteralPath $root -Recurse -File -Filter chrome.exe |
@@ -40,6 +41,8 @@ if (-not $NoPersist) {
 
 $version = $chrome.VersionInfo.ProductVersion
 if ([string]::IsNullOrWhiteSpace($version)) { $version = 'unknown' }
+@{ requested = $Version; installed = $version; chrome = $path } |
+  ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'crer-chrome.json') -Encoding utf8
 Write-Host "Installed: $version"
 Write-Host "CRER_CHROME: $path"
 if (-not $NoPersist) {

@@ -22,6 +22,9 @@ Raw Input だけではキーボード配列や IME の確定文字列を復元�
 Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイルを `CRER_CHROME` に設定するか
 `--chrome` で渡します。未指定時に通常 Chrome へフォールバックすることはありません。
 
+固定版を導入する場合は `./scripts/install-chrome-for-testing.ps1 -Version 152.0.7977.42` を実行します。
+導入結果は `.crer/browsers/crer-chrome.json` に保存されます。
+
 ```powershell
 $env:CRER_CHROME = 'C:\\path\\to\\chrome.exe'
 deno task dev validate scenario.crer.yaml
