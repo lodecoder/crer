@@ -6,14 +6,15 @@
 ## 現在の到達点
 
 - Deno CLI、YAML の基本検証、CfT の隔離起動、CDP 再生の骨格を実装済み。
-- click / double-click / move / scroll / text / key / navigate / wait / screenshot / sleep を実装済み。
+- click / double-click / move / drag / scroll / text / key / key_chord / navigate / wait / assert / screenshot / sleep を実装済み。
 - seed・jitter・artifacts の基本実装と、C# .NET 10 Native AOT の Raw Input DLL を追加済み。
-- Native AOT DLL は `win-x64` で公開ビルド済み。ただし実 CfT を通した結合テストは未実施。
+- Native AOT DLL は `win-x64` で公開ビルド済み。実 CfT fixture の再生結合テストも成功済み。
 
 ## P0 — 実ブラウザ再生の結合テスト
 
 - [ ] 固定した CfT バージョンを導入する手順を確立する。
-- [ ] ローカル fixture ページに対し `play` を実行し、起動・ウィンドウ位置・入力・終了を確認する。
+- [x] ローカル fixture ページに対し `play` を実行し、起動・ウィンドウ位置・入力・終了を確認する。
+  - 2026-08-19: `fixtures/playback/search.crer.yaml` を CfT 152.0.7977.42 で再生し、終了コード 0 と `result.png` / `run.json` を確認。
 - [ ] OS のカーソル位置、前面ウィンドウ、通常 Chrome が変化しないことを確認する。
 - [ ] 成功／失敗時の screenshot・run metadata・終了コードを自動テストする。
 
