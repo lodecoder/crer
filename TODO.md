@@ -21,22 +21,25 @@
 
 ## P0 — record から YAML への正規化
 
-- [ ] `crer record` から Native AOT DLL を起動し、`raw-input.ndjson` を取得する。
-- [ ] Raw Input の mouse / wheel / key イベントを click・scroll・key・text の steps へ正規化する。
+- [x] `crer record` から Native AOT DLL を起動し、`raw-input.ndjson` を取得する。
+- [x] Raw Input の mouse / wheel / key イベントを click・drag・scroll・key・text の steps へ正規化する。
 - [ ] screen px から CSS viewport px への座標変換と viewport 変化の検出を実装する。
-- [ ] 停止時に有効な `.crer.yaml` を保存し、不完全な down/up を警告する。
+  - 記録開始時の content bounds と CDP viewport の sidecar を取得し、完全な metadata があれば自動変換する。
+  - 記録中の viewport 変化検出は未実装。
+- [x] 停止時に有効な `.crer.yaml` を保存し、不完全な down/up を警告する。
 
 完了条件: CfT コンテンツで手動記録した検索操作を YAML 化し、同じ専用 CfT で再生できること。
 
 ## P1 — シナリオ言語を仕様へ追随
 
-- [ ] `drag`、`assert`、`key_chord` を実装する。
+- [x] `drag`、`assert`、`key_chord` を実装する。
 - [ ] `wait_for` の URL / locator hint / network idle を仕様どおり実装する。
 - [ ] 個別 jitter、viewport / DPR / zoom の検証を厳密化する。
 
 ## P1 — plan scheduler
 
 - [ ] `max_parallel`、`fail_fast`、worker timeout を実装する。
+  - `max_parallel` と `parallel.fail_fast` は実装済み。worker timeout は未実装。
 - [ ] scenario / plan の `on_failure` と終了コード集約を仕様どおり実装する。
 
 ## P2 — 配布と堅牢化
