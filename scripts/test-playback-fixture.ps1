@@ -29,8 +29,9 @@ try {
   $run = Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory |
     Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
   if (-not $run -or -not (Test-Path -LiteralPath (Join-Path $run.FullName 'run.json')) -or
-    -not (Test-Path -LiteralPath (Join-Path $run.FullName 'result.png'))) {
-    throw 'Playback artifacts run.json and result.png were not both created.'
+    -not (Test-Path -LiteralPath (Join-Path $run.FullName 'result.png')) -or
+    -not (Test-Path -LiteralPath (Join-Path $run.FullName 'display.json'))) {
+    throw 'Playback artifacts run.json, result.png, and display.json were not all created.'
   }
   Write-Host "Artifacts: $($run.FullName)"
   $after = [System.Windows.Forms.Cursor]::Position
