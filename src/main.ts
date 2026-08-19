@@ -99,23 +99,35 @@ const pointOption = (name: string): Point | undefined => {
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`${name} must be x,y`);
   return { x, y };
 };
-async function runNode(node: PlanNode, base: string, maxParallel: number): Promise<RunResult[]> {
+async function runNode(
+  node: PlanNode,
+  base: string,
+  maxParallel: number,
+  workerMs?: number,
+): Promise<RunResult[]> {
   if ("scenario" in node) {
-    return [
-      await playScenario(scenarioFrom(await loadYaml(`${base}/${node.scenario}`)), {
-        chromePath: chromePath(),
-      }),
-    ];
+    const controller = new AbortController();
+    const timer = workerMs ? setTimeout(() => controller.abort(), workerMs) : undefined;
+    try {
+      return [
+        await playScenario(scenarioFrom(await loadYaml(`${base}/${node.scenario}`)), {
+          chromePath: chromePath(),
+          signal: controller.signal,
+        }),
+      ];
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
   if ("serial" in node) {
     const out: RunResult[] = [];
-    for (const child of node.serial) out.push(...await runNode(child, base, maxParallel));
+    for (const child of node.serial) out.push(...await runNode(child, base, maxParallel, workerMs));
     return out;
   }
   const results = await mapWithConcurrency(
     node.parallel.jobs,
     maxParallel,
-    (child) => runNode(child, base, maxParallel),
+    (child) => runNode(child, base, maxParallel, workerMs),
     node.parallel.fail_fast ? (result) => result.some((run) => run.code !== 0) : undefined,
   );
   return results.flat();
@@ -163,7 +175,12 @@ async function main() {
   }
   if (command === "run") {
     const p = planFrom(await loadYaml(file));
-    const results = await runNode(p.run, file.replace(/[\\/][^\\/]+$/, ""), p.max_parallel ?? 1);
+    const results = await runNode(
+      p.run,
+      file.replace(/[\\/][^\\/]+$/, ""),
+      p.max_parallel ?? 1,
+      p.timeouts?.worker_ms,
+    );
     const code = results.some((r) => r.code === 3) ? 3 : results.some((r) => r.code !== 0) ? 4 : 0;
     console.log(JSON.stringify(results, null, 2));
     Deno.exitCode = code;

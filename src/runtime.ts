@@ -9,6 +9,7 @@ export type PlayOptions = {
   position?: { left: number; top: number };
   seed?: string;
   keepArtifacts?: boolean;
+  signal?: AbortSignal;
 };
 type BrowserSession = {
   cdp: Cdp;
@@ -409,6 +410,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     const timeout = s.playback?.timeouts?.action_ms ?? 10_000;
     for (const [i, step] of s.steps.entries()) {
       try {
+        if (options.signal?.aborted) throw new Error("worker timed out");
         await act(b, step, s.playback?.jitter, rng, timeout);
       } catch (e) {
         const kind = failureFor(step, e);
