@@ -1,4 +1,9 @@
-export async function recordRaw(dllPath: string, pid: number, output: string) {
+export async function recordRaw(
+  dllPath: string,
+  pid: number,
+  output: string,
+  signal?: AbortSignal,
+) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
     crer_input_start: { parameters: ["u32"], result: "i32" },
@@ -15,7 +20,7 @@ export async function recordRaw(dllPath: string, pid: number, output: string) {
     console.error("Recording. Press Ctrl+C to stop.");
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
-      while (true) {
+      while (!signal?.aborted) {
         const bytes = new Uint8Array(24 * 256);
         const n = lib.symbols.crer_input_read(bytes, 256);
         const view = new DataView(bytes.buffer);

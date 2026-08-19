@@ -92,9 +92,13 @@ async function main() {
       stdout: "null",
       stderr: "null",
     }).spawn();
+    const controller = new AbortController();
+    const duration = option("--duration-ms");
+    const timer = duration ? setTimeout(() => controller.abort(), Number(duration)) : undefined;
     try {
-      await recordRaw(inputDllPath(), chrome.pid, file);
+      await recordRaw(inputDllPath(), chrome.pid, file, controller.signal);
     } finally {
+      if (timer) clearTimeout(timer);
       try {
         chrome.kill("SIGTERM");
       } catch {
