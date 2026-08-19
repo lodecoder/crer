@@ -145,9 +145,23 @@ function failureFor(step: Step, error: unknown): FailureKind {
 async function waitFor(b: BrowserSession, step: Step, timeout: number) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    const value = await b.cdp.call<{ result: { value?: { url: string; state: string } } }>(
+    const hint = step.locator_hint;
+    const expression = `(() => {
+      const hint = ${JSON.stringify(hint ?? {})};
+      const elements = Array.from(document.querySelectorAll('[role]'));
+      const found = !hint.role && !hint.name || elements.some((element) => {
+        const role = element.getAttribute('role');
+        const name = element.getAttribute('aria-label') || element.textContent?.trim() || '';
+        return (!hint.role || role === hint.role) && (!hint.name || name === hint.name) &&
+          !!(element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
+      });
+      return {url: location.href, state: document.readyState, found};
+    })()`;
+    const value = await b.cdp.call<
+      { result: { value?: { url: string; state: string; found: boolean } } }
+    >(
       "Runtime.evaluate",
-      { expression: "({url:location.href,state:document.readyState})", returnByValue: true },
+      { expression, returnByValue: true },
       b.sessionId,
     );
     const state = value.result.value;
@@ -157,7 +171,7 @@ async function waitFor(b: BrowserSession, step: Step, timeout: number) {
     const stateOk = !step.state || step.state === "network_idle"
       ? state?.state === "complete"
       : true;
-    if (urlOk && stateOk) return;
+    if (urlOk && stateOk && (state?.found ?? false)) return;
     await sleep(100);
   }
   throw new Error("wait_for timed out");

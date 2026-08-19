@@ -3,9 +3,9 @@
   <meta charset="utf-8">
   <title>crer playback fixture</title>
   <body>
-    <label>Search <input id="search" aria-label="Search"></label>
-    <button id="submit">Submit</button>
-    <output id="result" aria-label="Result"></output>
+    <label>Search <input id="search" role="textbox" aria-label="Search"></label>
+    <button id="submit" role="button">Submit</button>
+    <output id="result" role="status" aria-label="Result"></output>
     <script>
       document.querySelector('#submit').addEventListener('click', () => {
         document.querySelector('#result').textContent = document.querySelector('#search').value;

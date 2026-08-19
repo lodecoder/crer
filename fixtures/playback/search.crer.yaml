@@ -22,6 +22,7 @@ playback:
 steps:
   - do: wait_for
     state: network_idle
+    locator_hint: { role: button, name: Submit }
   - do: click
     at: { x: 92, y: 28 }
   - do: text
