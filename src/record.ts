@@ -51,6 +51,9 @@ export async function recordRaw(
         ) + "\n",
       );
     }
+    if (rectStatus !== 0) {
+      console.error("Warning: CfT content bounds were unavailable; normalize may require explicit coordinate options.");
+    }
     console.error("Recording. Press Ctrl+C to stop.");
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
