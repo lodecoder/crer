@@ -44,7 +44,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       "--no-default-browser-check",
       "--disable-sync",
       "--new-window",
-      "about:blank",
+      s.browser.initial_url,
     ],
     stdout: "null",
     stderr: "piped",
@@ -62,16 +62,21 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   }
   const cdp = new Cdp(version.webSocketDebuggerUrl);
   await cdp.open();
-  const target = await cdp.call<{ targetId: string }>("Target.createTarget", {
-    url: s.browser.initial_url,
-    newWindow: true,
-  });
+  const targets = await (
+    await fetch(`http://127.0.0.1:${port}/json/list`)
+  ).json() as Array<{ id: string; type: string }>;
+  const target = targets.find((candidate) => candidate.type === "page");
+  if (!target) {
+    p.kill("SIGTERM");
+    cdp.close();
+    throw new Error("CfT did not expose a page target");
+  }
   const attached = await cdp.call<{ sessionId: string }>("Target.attachToTarget", {
-    targetId: target.targetId,
+    targetId: target.id,
     flatten: true,
   });
   const window = await cdp.call<{ windowId: number }>("Browser.getWindowForTarget", {
-    targetId: target.targetId,
+    targetId: target.id,
   });
   const bounds = { ...(s.browser.window?.bounds ?? {}), ...(options.position ?? {}) };
   if (Object.keys(bounds).length) {
@@ -95,7 +100,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     viewport: { x: viewport.width, y: viewport.height },
   };
 }
-async function capture(b: BrowserSession, name: string) {
+async function capture(b: BrowserSession, name: string, required = false) {
   try {
     const r = await b.cdp.call<{ data: string }>(
       "Page.captureScreenshot",
@@ -106,7 +111,10 @@ async function capture(b: BrowserSession, name: string) {
       `${b.runDir}/${name}.png`,
       Uint8Array.from(atob(r.data), (x) => x.charCodeAt(0)),
     );
-  } catch { /* diagnostics must not mask original failure */ }
+  } catch (error) {
+    if (required) throw error;
+    // Diagnostics must not mask the original failure.
+  }
 }
 function failureFor(step: Step, error: unknown): FailureKind {
   const e = String(error);
@@ -211,7 +219,7 @@ async function act(
     case "sleep":
       return await sleep(Number(step.ms ?? 0));
     case "screenshot":
-      return await capture(b, String(step.name ?? "screenshot"));
+      return await capture(b, String(step.name ?? "screenshot"), true);
     default:
       throw new Error(`unsupported step: ${step.do}`);
   }
