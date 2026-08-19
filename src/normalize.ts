@@ -85,6 +85,7 @@ export async function normalizeRawWithWarnings(
   const steps: Step[] = [];
   const warnings: string[] = [];
   let mouseDown: Point | undefined;
+  let mouseLast: Point | undefined;
   let text = "";
   const flushText = () => {
     if (text) steps.push({ do: "text", value: text });
@@ -102,10 +103,19 @@ export async function normalizeRawWithWarnings(
       continue;
     }
     flushText();
-    if (event.kind === 2) mouseDown = point;
+    if (event.kind === 1 && mouseDown) mouseLast = point;
+    if (event.kind === 2) {
+      mouseDown = point;
+      mouseLast = point;
+    }
     if (event.kind === 3 && mouseDown) {
-      steps.push({ do: "click", at: mouseDown });
+      if (mouseLast && (mouseLast.x !== mouseDown.x || mouseLast.y !== mouseDown.y)) {
+        steps.push({ do: "drag", from: mouseDown, to: mouseLast });
+      } else {
+        steps.push({ do: "click", at: mouseDown });
+      }
       mouseDown = undefined;
+      mouseLast = undefined;
     }
     if (event.kind === 6) {
       const delta = event.data > 0x7fff ? event.data - 0x10000 : event.data;

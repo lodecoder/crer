@@ -212,6 +212,56 @@ async function act(
     }
     case "mouse_move":
       return await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: at!.x, y: at!.y });
+    case "drag": {
+      const from = step.from as { x?: number; y?: number } | undefined;
+      const to = step.to as { x?: number; y?: number } | undefined;
+      if (
+        !from || !to || !Number.isFinite(from.x) || !Number.isFinite(from.y)
+        || !Number.isFinite(to.x) || !Number.isFinite(to.y)
+      ) {
+        throw new Error("drag requires from and to points");
+      }
+      const fromPoint = { x: from.x!, y: from.y! };
+      const toPoint = { x: to.x!, y: to.y! };
+      const jitteredFrom = jitter(fromPoint, j, rng, b.viewport);
+      if (!jitteredFrom) throw new Error("jitter bounds failure");
+      const offset = { x: jitteredFrom.x - fromPoint.x, y: jitteredFrom.y - fromPoint.y };
+      const jitteredTo = { x: toPoint.x + offset.x, y: toPoint.y + offset.y };
+      if (
+        jitteredTo.x < 0 || jitteredTo.y < 0 || jitteredTo.x > b.viewport.x
+        || jitteredTo.y > b.viewport.y
+      ) {
+        throw new Error("jitter bounds failure");
+      }
+      await call("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: jitteredFrom.x,
+        y: jitteredFrom.y,
+      });
+      await call("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: jitteredFrom.x,
+        y: jitteredFrom.y,
+        button: "left",
+        clickCount: 1,
+      });
+      for (let i = 1; i <= 10; i++) {
+        const ratio = i / 10;
+        await call("Input.dispatchMouseEvent", {
+          type: "mouseMoved",
+          x: jitteredFrom.x + (jitteredTo.x - jitteredFrom.x) * ratio,
+          y: jitteredFrom.y + (jitteredTo.y - jitteredFrom.y) * ratio,
+          buttons: 1,
+        });
+      }
+      return await call("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x: jitteredTo.x,
+        y: jitteredTo.y,
+        button: "left",
+        clickCount: 1,
+      });
+    }
     case "scroll":
       return await call("Input.dispatchMouseEvent", {
         type: "mouseWheel",

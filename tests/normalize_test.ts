@@ -96,3 +96,18 @@ Deno.test("warns and omits an incomplete mouse click", async () => {
     await Deno.remove(path);
   }
 });
+
+Deno.test("normalizes movement while pressed as a drag", async () => {
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(path, [
+    { qpc: "1", x: 100, y: 200, kind: 2, data: 0 },
+    { qpc: "2", x: 150, y: 230, kind: 1, data: 0 },
+    { qpc: "3", x: 150, y: 230, kind: 3, data: 0 },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  try {
+    const scenario = await normalizeRaw(path, "https://example.test", "sample");
+    assertEquals(scenario.steps, [{ do: "drag", from: { x: 100, y: 200 }, to: { x: 150, y: 230 } }]);
+  } finally {
+    await Deno.remove(path);
+  }
+});
