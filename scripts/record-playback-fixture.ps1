@@ -2,6 +2,7 @@
 param(
   [int] $Port = 8080,
   [string] $Output = '.crer\\fixture.raw-input.ndjson',
+  [string] $Scenario = '.crer\\fixture.recorded.crer.yaml',
   [string] $Chrome = $env:CRER_CHROME
 )
 
@@ -20,6 +21,7 @@ if (-not (Test-Path -LiteralPath $Chrome -PathType Leaf)) {
 }
 
 $outputPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Output))
+$scenarioPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Scenario))
 [System.IO.Directory]::CreateDirectory((Split-Path -Parent $outputPath)) | Out-Null
 $serverScript = Join-Path $PSScriptRoot 'serve-playback-fixture.ps1'
 $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
@@ -46,6 +48,14 @@ try {
   Push-Location $projectRoot
   try {
     & deno task dev record $outputPath --url $fixtureUrl --chrome $Chrome
+    if ($LASTEXITCODE -ne 0) {
+      throw "record exited with code $LASTEXITCODE"
+    }
+    & deno task dev normalize $outputPath --url $fixtureUrl --output $scenarioPath --name fixture-recorded
+    if ($LASTEXITCODE -ne 0) {
+      throw "normalize exited with code $LASTEXITCODE"
+    }
+    Write-Host "Wrote normalized scenario: $scenarioPath"
   } finally {
     Pop-Location
   }

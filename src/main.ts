@@ -164,6 +164,8 @@ async function main() {
       stderr: "null",
     }).spawn();
     const controller = new AbortController();
+    const onInterrupt = () => controller.abort();
+    Deno.addSignalListener("SIGINT", onInterrupt);
     const duration = option("--duration-ms");
     const timer = duration ? setTimeout(() => controller.abort(), Number(duration)) : undefined;
     try {
@@ -175,6 +177,7 @@ async function main() {
         await recordingViewport(port),
       );
     } finally {
+      Deno.removeSignalListener("SIGINT", onInterrupt);
       if (timer) clearTimeout(timer);
       try {
         chrome.kill("SIGTERM");
