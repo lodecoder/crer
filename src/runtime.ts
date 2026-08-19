@@ -177,9 +177,23 @@ async function waitFor(b: BrowserSession, step: Step, timeout: number) {
   throw new Error("wait_for timed out");
 }
 async function assertState(b: BrowserSession, step: Step) {
-  const value = await b.cdp.call<{ result: { value?: { url: string; state: string } } }>(
+  const hint = step.locator_hint;
+  const expression = `(() => {
+    const hint = ${JSON.stringify(hint ?? {})};
+    const elements = Array.from(document.querySelectorAll('[role]'));
+    const found = !hint.role && !hint.name || elements.some((element) => {
+      const role = element.getAttribute('role');
+      const name = element.getAttribute('aria-label') || element.textContent?.trim() || '';
+      return (!hint.role || role === hint.role) && (!hint.name || name === hint.name) &&
+        !!(element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
+    });
+    return {url: location.href, state: document.readyState, found};
+  })()`;
+  const value = await b.cdp.call<
+    { result: { value?: { url: string; state: string; found: boolean } } }
+  >(
     "Runtime.evaluate",
-    { expression: "({url:location.href,state:document.readyState})", returnByValue: true },
+    { expression, returnByValue: true },
     b.sessionId,
   );
   const state = value.result.value;
@@ -191,6 +205,9 @@ async function assertState(b: BrowserSession, step: Step) {
   }
   if (step.state && state?.state !== step.state) {
     throw new Error(`assert ready state failed: ${state?.state ?? "unknown"}`);
+  }
+  if (!state?.found) {
+    throw new Error("assert locator failed");
   }
 }
 const keys: Record<string, [string, number]> = {
