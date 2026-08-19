@@ -31,7 +31,7 @@ async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: strin
   }
   throw new Error(`CDP endpoint on port ${port} was not available`);
 }
-async function validateDisplay(cdp: Cdp, sessionId: string, s: Scenario) {
+async function validateDisplay(cdp: Cdp, sessionId: string, s: Scenario, runDir: string) {
   const display = s.browser.display;
   if (!display || display.zoom_check === "off") return;
   const result = await cdp.call<{ result: { value?: { dpr: number; scale: number } } }>(
@@ -43,6 +43,7 @@ async function validateDisplay(cdp: Cdp, sessionId: string, s: Scenario) {
     sessionId,
   );
   const actual = result.result.value;
+  await Deno.writeTextFile(`${runDir}/display.json`, JSON.stringify(actual ?? {}, null, 2) + "\n");
   if (display.expected_dpr !== undefined && actual?.dpr !== display.expected_dpr) {
     const message = `DPR mismatch: expected ${display.expected_dpr}, got ${actual?.dpr}`;
     if (display.zoom_check === "strict") throw new Error(message);
@@ -110,7 +111,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   }
   await cdp.call("Page.enable", {}, attached.sessionId);
   await cdp.call("Runtime.enable", {}, attached.sessionId);
-  await validateDisplay(cdp, attached.sessionId, s);
+  await validateDisplay(cdp, attached.sessionId, s, runDir);
   const viewport = s.browser.window?.content ?? { width: 1280, height: 720 };
   return {
     cdp,
