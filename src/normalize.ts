@@ -13,7 +13,7 @@ export function transformFromRecordingMetadata(
   const rect = metadata.content_rect_screen_px;
   const viewport = metadata.css_viewport;
   if (
-    !rect || !viewport || rect.width <= 0 || rect.height <= 0 || viewport.x <= 0 || viewport.y <= 0
+    !rect || !viewport || rect.width < 32 || rect.height < 32 || viewport.x <= 0 || viewport.y <= 0
   ) {
     return undefined;
   }

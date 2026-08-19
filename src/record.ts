@@ -23,7 +23,9 @@ export async function recordRaw(
     let rectStatus = 1168;
     for (let attempt = 0; attempt < 20; attempt++) {
       rectStatus = lib.symbols.crer_input_get_content_rect(rectBytes);
-      if (rectStatus === 0) break;
+      const rect = new DataView(rectBytes.buffer);
+      if (rectStatus === 0 && rect.getInt32(8, true) >= 32 && rect.getInt32(12, true) >= 32) break;
+      rectStatus = 1168;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     if (rectStatus === 0 || viewport) {

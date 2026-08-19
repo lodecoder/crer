@@ -24,6 +24,13 @@ Deno.test("uses complete recording metadata as a coordinate transform", () => {
     },
   );
   assertEquals(transformFromRecordingMetadata({ css_viewport: { x: 1000, y: 600 } }), undefined);
+  assertEquals(
+    transformFromRecordingMetadata({
+      content_rect_screen_px: { x: 100, y: 200, width: 1, height: 1 },
+      css_viewport: { x: 1000, y: 600 },
+    }),
+    undefined,
+  );
 });
 
 Deno.test("normalizes mouse, wheel, and key events into steps", async () => {

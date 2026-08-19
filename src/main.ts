@@ -31,20 +31,32 @@ async function recordingViewport(port: number): Promise<Point | undefined> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     try {
-      const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json() as Array<{
-        type: string;
+      const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json() as {
         webSocketDebuggerUrl: string;
+      };
+      const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json() as Array<{
+        id: string;
+        type: string;
       }>;
       const target = targets.find((candidate) => candidate.type === "page");
       if (!target) throw new Error("no page target");
-      const cdp = new Cdp(target.webSocketDebuggerUrl);
+      const cdp = new Cdp(version.webSocketDebuggerUrl);
       try {
         await cdp.open(250);
+        const attached = await within(
+          cdp.call<{ sessionId: string }>("Target.attachToTarget", {
+            targetId: target.id,
+            flatten: true,
+          }),
+          500,
+        );
         const metrics = await within(
           cdp.call<
             { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
           >(
             "Page.getLayoutMetrics",
+            {},
+            attached.sessionId,
           ),
           500,
         );
