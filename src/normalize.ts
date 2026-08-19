@@ -2,6 +2,40 @@ import type { Point, Scenario, Step } from "./types.ts";
 
 type RawEvent = { qpc: string; x: number; y: number; kind: number; data: number };
 export type CoordinateTransform = { clientOrigin: Point; clientSize: Point; viewport: Point };
+type RecordingMetadata = {
+  content_rect_screen_px?: { x: number; y: number; width: number; height: number };
+  css_viewport?: Point;
+};
+
+export function transformFromRecordingMetadata(
+  metadata: RecordingMetadata,
+): CoordinateTransform | undefined {
+  const rect = metadata.content_rect_screen_px;
+  const viewport = metadata.css_viewport;
+  if (
+    !rect || !viewport || rect.width <= 0 || rect.height <= 0 || viewport.x <= 0 || viewport.y <= 0
+  ) {
+    return undefined;
+  }
+  return {
+    clientOrigin: { x: rect.x, y: rect.y },
+    clientSize: { x: rect.width, y: rect.height },
+    viewport,
+  };
+}
+
+export async function transformFromSidecar(
+  rawFile: string,
+): Promise<CoordinateTransform | undefined> {
+  try {
+    return transformFromRecordingMetadata(
+      JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata,
+    );
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw new Error(`could not read recording metadata: ${error}`);
+  }
+}
 
 export function screenToCss(point: Point, transform: CoordinateTransform): Point {
   if (transform.clientSize.x <= 0 || transform.clientSize.y <= 0) {

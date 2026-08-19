@@ -1,4 +1,5 @@
-import { normalizeRaw } from "./normalize.ts";
+import { Cdp } from "./cdp.ts";
+import { normalizeRaw, transformFromSidecar } from "./normalize.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import type { PlanNode, Point, RunResult } from "./types.ts";
@@ -12,6 +13,36 @@ const chromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME") ?? "c
 const inputDllPath = () =>
   option("--dll")
     ?? "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function recordingViewport(port: number): Promise<Point | undefined> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json() as Array<{
+        type: string;
+        webSocketDebuggerUrl: string;
+      }>;
+      const target = targets.find((candidate) => candidate.type === "page");
+      if (!target) throw new Error("no page target");
+      const cdp = new Cdp(target.webSocketDebuggerUrl);
+      try {
+        await cdp.open(1_000);
+        await cdp.call("Page.enable");
+        const metrics = await cdp.call<
+          { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
+        >(
+          "Page.getLayoutMetrics",
+        );
+        const viewport = metrics.cssVisualViewport;
+        return viewport ? { x: viewport.clientWidth, y: viewport.clientHeight } : undefined;
+      } finally {
+        cdp.close();
+      }
+    } catch {
+      await sleep(100);
+    }
+  }
+  return undefined;
+}
 const pointOption = (name: string): Point | undefined => {
   const value = option(name);
   if (!value) return undefined;
@@ -88,8 +119,13 @@ async function main() {
     const runDir = `.crer/runs/${crypto.randomUUID()}`;
     await Deno.mkdir(runDir, { recursive: true });
     const url = option("--url") ?? "about:blank";
+    const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+    const port = (reservation.addr as Deno.NetAddr).port;
+    reservation.close();
     const chrome = new Deno.Command(chromePath(), {
       args: [
+        `--remote-debugging-port=${port}`,
+        "--remote-debugging-address=127.0.0.1",
         `--user-data-dir=${runDir}/profile`,
         "--no-first-run",
         "--no-default-browser-check",
@@ -103,7 +139,13 @@ async function main() {
     const duration = option("--duration-ms");
     const timer = duration ? setTimeout(() => controller.abort(), Number(duration)) : undefined;
     try {
-      await recordRaw(inputDllPath(), chrome.pid, file, controller.signal);
+      await recordRaw(
+        inputDllPath(),
+        chrome.pid,
+        file,
+        controller.signal,
+        await recordingViewport(port),
+      );
     } finally {
       if (timer) clearTimeout(timer);
       try {
@@ -128,13 +170,16 @@ async function main() {
         "coordinate conversion requires --client-origin, --client-size, and --viewport",
       );
     }
+    const sidecarTransform = origin ? undefined : await transformFromSidecar(file);
     await saveYaml(
       output,
       await normalizeRaw(
         file,
         url,
         option("--name") ?? "recorded-scenario",
-        origin ? { clientOrigin: origin, clientSize: clientSize!, viewport: viewport! } : undefined,
+        origin
+          ? { clientOrigin: origin, clientSize: clientSize!, viewport: viewport! }
+          : sidecarTransform,
       ),
     );
     console.log(`Wrote ${output}`);

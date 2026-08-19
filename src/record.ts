@@ -3,6 +3,7 @@ export async function recordRaw(
   pid: number,
   output: string,
   signal?: AbortSignal,
+  viewport?: { x: number; y: number },
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
@@ -25,18 +26,27 @@ export async function recordRaw(
       if (rectStatus === 0) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    if (rectStatus === 0) {
+    if (rectStatus === 0 || viewport) {
       const rect = new DataView(rectBytes.buffer);
       await Deno.writeTextFile(
         `${output}.meta.json`,
-        JSON.stringify({
-          content_rect_screen_px: {
-            x: rect.getInt32(0, true),
-            y: rect.getInt32(4, true),
-            width: rect.getInt32(8, true),
-            height: rect.getInt32(12, true),
+        JSON.stringify(
+          {
+            ...(rectStatus === 0
+              ? {
+                content_rect_screen_px: {
+                  x: rect.getInt32(0, true),
+                  y: rect.getInt32(4, true),
+                  width: rect.getInt32(8, true),
+                  height: rect.getInt32(12, true),
+                },
+              }
+              : {}),
+            ...(viewport ? { css_viewport: viewport } : {}),
           },
-        }, null, 2) + "\n",
+          null,
+          2,
+        ) + "\n",
       );
     }
     console.error("Recording. Press Ctrl+C to stop.");

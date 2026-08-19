@@ -6,10 +6,20 @@ export class Cdp {
   constructor(url: string) {
     this.#ws = new WebSocket(url);
   }
-  async open() {
+  async open(timeoutMs = 10_000) {
     await new Promise<void>((resolve, reject) => {
-      this.#ws.onopen = () => resolve();
-      this.#ws.onerror = () => reject(new Error("CDP WebSocket connection failed"));
+      const timer = setTimeout(
+        () => reject(new Error("CDP WebSocket connection timed out")),
+        timeoutMs,
+      );
+      this.#ws.onopen = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.#ws.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error("CDP WebSocket connection failed"));
+      };
     });
     this.#ws.onmessage = (e) => {
       const m = JSON.parse(e.data) as Reply;

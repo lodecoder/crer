@@ -1,5 +1,5 @@
 import { assertEquals } from "jsr:@std/assert@^1.0.14";
-import { normalizeRaw, screenToCss } from "../src/normalize.ts";
+import { normalizeRaw, screenToCss, transformFromRecordingMetadata } from "../src/normalize.ts";
 
 Deno.test("converts physical screen coordinates into CSS viewport coordinates", () => {
   assertEquals(
@@ -9,6 +9,21 @@ Deno.test("converts physical screen coordinates into CSS viewport coordinates", 
     ),
     { x: 500, y: 300 },
   );
+});
+
+Deno.test("uses complete recording metadata as a coordinate transform", () => {
+  assertEquals(
+    transformFromRecordingMetadata({
+      content_rect_screen_px: { x: 100, y: 200, width: 2000, height: 1200 },
+      css_viewport: { x: 1000, y: 600 },
+    }),
+    {
+      clientOrigin: { x: 100, y: 200 },
+      clientSize: { x: 2000, y: 1200 },
+      viewport: { x: 1000, y: 600 },
+    },
+  );
+  assertEquals(transformFromRecordingMetadata({ css_viewport: { x: 1000, y: 600 } }), undefined);
 });
 
 Deno.test("normalizes mouse, wheel, and key events into steps", async () => {
