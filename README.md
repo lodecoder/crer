@@ -40,6 +40,14 @@ deno task test
 .\scripts\test-playback-fixture.ps1
 ```
 
+失敗 artifacts は次で確認できます。
+
+```powershell
+.\scripts\test-playback-fixture.ps1 `
+  -Scenario fixtures\playback\failure.crer.yaml `
+  -ExpectedExitCode 4
+```
+
 ### 手動記録と正規化
 
 初回だけ Native AOT DLL を公開ビルドします。Visual Studio Build Tools の MSVC と Windows SDK が必要です。
