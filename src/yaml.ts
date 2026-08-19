@@ -34,6 +34,14 @@ export function scenarioFrom(value: unknown): Scenario {
   for (const [index, step] of v.steps.entries()) {
     const s = object(step, `steps[${index}]`);
     if (typeof s.do !== "string") throw new Error(`steps[${index}].do is required`);
+    if (s.do === "key_chord") {
+      if (
+        !Array.isArray(s.keys) || s.keys.length < 2
+        || !s.keys.every((key) => typeof key === "string")
+      ) {
+        throw new Error(`steps[${index}].keys requires at least two strings`);
+      }
+    }
     if (s.jitter) {
       for (
         const key of [

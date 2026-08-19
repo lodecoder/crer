@@ -172,7 +172,14 @@ const keys: Record<string, [string, number]> = {
   ArrowUp: ["ArrowUp", 38],
   ArrowLeft: ["ArrowLeft", 37],
   ArrowRight: ["ArrowRight", 39],
+  Control: ["Control", 17],
+  Alt: ["Alt", 18],
+  Shift: ["Shift", 16],
+  Meta: ["Meta", 91],
 };
+const modifierBits: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
+const keyInfo = (key: string): [string, number] =>
+  keys[key] ?? [key, key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0];
 async function act(
   b: BrowserSession,
   step: Step,
@@ -273,13 +280,60 @@ async function act(
     case "text":
       return await call("Input.insertText", { text: step.value ?? "" });
     case "key": {
-      const [key, vk] = keys[step.key ?? ""] ?? [step.key ?? "", (step.key ?? "").charCodeAt(0)];
+      const [key, vk] = keyInfo(step.key ?? "");
       await call("Input.dispatchKeyEvent", { type: "keyDown", key, windowsVirtualKeyCode: vk });
       return await call("Input.dispatchKeyEvent", {
         type: "keyUp",
         key,
         windowsVirtualKeyCode: vk,
       });
+    }
+    case "key_chord": {
+      const chord = step.keys;
+      if (
+        !Array.isArray(chord) || chord.length < 2 || !chord.every((key) => typeof key === "string")
+      ) {
+        throw new Error("key_chord requires keys with one or more modifiers and a final key");
+      }
+      const modifiers = chord.slice(0, -1) as string[];
+      if (!modifiers.every((key) => key in modifierBits)) {
+        throw new Error("key_chord modifiers must be Alt, Control, Meta, or Shift");
+      }
+      let mask = 0;
+      for (const modifier of modifiers) {
+        const [key, vk] = keyInfo(modifier);
+        await call("Input.dispatchKeyEvent", {
+          type: "keyDown",
+          key,
+          windowsVirtualKeyCode: vk,
+          modifiers: mask,
+        });
+        mask |= modifierBits[modifier];
+      }
+      const [key, vk] = keyInfo(chord.at(-1)! as string);
+      await call("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key,
+        windowsVirtualKeyCode: vk,
+        modifiers: mask,
+      });
+      await call("Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key,
+        windowsVirtualKeyCode: vk,
+        modifiers: mask,
+      });
+      for (const modifier of modifiers.toReversed()) {
+        mask &= ~modifierBits[modifier];
+        const [modifierKey, modifierVk] = keyInfo(modifier);
+        await call("Input.dispatchKeyEvent", {
+          type: "keyUp",
+          key: modifierKey,
+          windowsVirtualKeyCode: modifierVk,
+          modifiers: mask,
+        });
+      }
+      return;
     }
     case "sleep":
       return await sleep(Number(step.ms ?? 0));
