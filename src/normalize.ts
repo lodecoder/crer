@@ -130,6 +130,7 @@ export async function normalizeRawWithWarnings(
     flushText();
     if (event.kind === 1 && mouseDown) mouseLast = point;
     if (event.kind === 2) {
+      if (mouseDown) warnings.push("ignored incomplete left mouse down before next mouse down");
       mouseDown = point;
       mouseLast = point;
     }
