@@ -1,7 +1,8 @@
-import { playScenario } from "./runtime.ts";
+import { normalizeRaw } from "./normalize.ts";
 import { recordRaw } from "./record.ts";
+import { playScenario } from "./runtime.ts";
 import type { PlanNode, RunResult } from "./types.ts";
-import { loadYaml, planFrom, scenarioFrom } from "./yaml.ts";
+import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
 const [command, file, ...args] = Deno.args;
 const option = (name: string) => {
   const i = args.indexOf(name);
@@ -9,8 +10,8 @@ const option = (name: string) => {
 };
 const chromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME") ?? "chrome.exe";
 const inputDllPath = () =>
-  option("--dll") ??
-  "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
+  option("--dll")
+    ?? "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
 async function runNode(node: PlanNode, base: string): Promise<RunResult[]> {
   if ("scenario" in node) {
     return [
@@ -29,7 +30,7 @@ async function runNode(node: PlanNode, base: string): Promise<RunResult[]> {
 }
 async function main() {
   if (!command || command === "help") {
-    console.log("crer <doctor|validate|play|run|record> <file> [--chrome PATH] [--seed UINT64]");
+    console.log("crer <doctor|validate|play|run|record|normalize> <file> [options]");
     return;
   }
   if (command === "doctor") {
@@ -100,6 +101,16 @@ async function main() {
         // Chrome may already be closed by the user.
       }
     }
+    return;
+  }
+  if (command === "normalize") {
+    const output = option("--output");
+    const url = option("--url");
+    if (!output || !url) {
+      throw new Error("normalize requires --output <scenario.crer.yaml> and --url <URL>");
+    }
+    await saveYaml(output, await normalizeRaw(file, url, option("--name") ?? "recorded-scenario"));
+    console.log(`Wrote ${output}`);
     return;
   }
   throw new Error(`unknown command: ${command}`);

@@ -1,8 +1,12 @@
-import { parse } from "@std/yaml";
+import { parse, stringify } from "@std/yaml";
 import type { Plan, Scenario } from "./types.ts";
 
 export async function loadYaml(path: string): Promise<unknown> {
   return parse(await Deno.readTextFile(path));
+}
+
+export async function saveYaml(path: string, value: unknown): Promise<void> {
+  await Deno.writeTextFile(path, stringify(value));
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {
