@@ -40,8 +40,7 @@
 ## P1 — plan scheduler
 
 - [x] `max_parallel`、`fail_fast`、worker timeout を実装する。
-- [ ] plan の `on_failure` を並列ノードにも完全適用する。
-  - 直列ノードは `timeout` / `environment` / `scenario_failure` ごとの continue / abort に対応済み。
+- [x] plan の `on_failure` を直列・並列ノードへ適用する。
 - [ ] scenario / plan の `on_failure` と終了コード集約を仕様どおり実装する。
 
 ## P2 — 配布と堅牢化
