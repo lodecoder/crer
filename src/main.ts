@@ -163,12 +163,22 @@ async function main() {
     return;
   }
   if (command === "doctor") {
+    const configured = configuredChromePath();
+    let chromeExists = false;
+    if (configured) {
+      try {
+        chromeExists = (await Deno.stat(configured)).isFile;
+      } catch {
+        // Report the unavailable path below instead of failing the diagnostic command.
+      }
+    }
     console.log(
       JSON.stringify(
         {
           deno: Deno.version.deno,
           os: Deno.build,
-          chrome: configuredChromePath() ?? "not configured",
+          chrome: configured ?? "not configured",
+          chromeExists,
           ffi: inputDllPath(),
         },
         null,
