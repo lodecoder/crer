@@ -10,7 +10,11 @@ const option = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const chromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME") ?? "chrome.exe";
+const chromePath = () => {
+  const path = option("--chrome") ?? Deno.env.get("CRER_CHROME");
+  if (!path) throw new Error("Chrome for Testing must be specified with --chrome or CRER_CHROME");
+  return path;
+};
 const inputDllPath = () =>
   option("--dll")
     ?? "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";

@@ -20,7 +20,7 @@ Raw Input だけではキーボード配列や IME の確定文字列を復元�
 ## 実行
 
 Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイルを `CRER_CHROME` に設定するか
-`--chrome` で渡します。
+`--chrome` で渡します。未指定時に通常 Chrome へフォールバックすることはありません。
 
 ```powershell
 $env:CRER_CHROME = 'C:\\path\\to\\chrome.exe'
