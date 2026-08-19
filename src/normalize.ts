@@ -109,6 +109,7 @@ export async function normalizeRawWithWarnings(
       if (event.kind === 8) modifiers.delete(modifier);
       continue;
     }
+    if (event.kind === 8) continue;
     const printable = (virtualKey >= 0x30 && virtualKey <= 0x39)
       || (virtualKey >= 0x41 && virtualKey <= 0x5a);
     if (event.kind === 7 && modifiers.size) {

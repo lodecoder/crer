@@ -47,8 +47,10 @@ Deno.test("normalizes mouse, wheel, and key events into steps", async () => {
       { qpc: "2", x: 100, y: 200, kind: 3, data: 0 },
       { qpc: "3", x: 120, y: 220, kind: 6, data: 120 },
       { qpc: "4", x: 120, y: 220, kind: 7, data: 65 << 16 },
-      { qpc: "5", x: 120, y: 220, kind: 7, data: 66 << 16 },
-      { qpc: "6", x: 120, y: 220, kind: 7, data: 13 << 16 },
+      { qpc: "5", x: 120, y: 220, kind: 8, data: 65 << 16 },
+      { qpc: "6", x: 120, y: 220, kind: 7, data: 66 << 16 },
+      { qpc: "7", x: 120, y: 220, kind: 8, data: 66 << 16 },
+      { qpc: "8", x: 120, y: 220, kind: 7, data: 13 << 16 },
     ].map((event) => JSON.stringify(event)).join("\n"),
   );
   try {
