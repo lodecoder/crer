@@ -127,3 +127,18 @@ Deno.test("preserves Shift for recorded text", async () => {
     await Deno.remove(path);
   }
 });
+
+Deno.test("normalizes Ctrl shortcuts as key chords", async () => {
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(path, [
+    { qpc: "1", x: 0, y: 0, kind: 7, data: 17 << 16 },
+    { qpc: "2", x: 0, y: 0, kind: 7, data: 65 << 16 },
+    { qpc: "3", x: 0, y: 0, kind: 8, data: 17 << 16 },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  try {
+    const scenario = await normalizeRaw(path, "https://example.test", "sample");
+    assertEquals(scenario.steps, [{ do: "key_chord", keys: ["Control", "a"] }]);
+  } finally {
+    await Deno.remove(path);
+  }
+});

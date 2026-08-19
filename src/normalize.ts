@@ -88,6 +88,7 @@ export async function normalizeRawWithWarnings(
   let mouseLast: Point | undefined;
   let text = "";
   let shift = false;
+  const modifiers = new Set<string>();
   const flushText = () => {
     if (text) steps.push({ do: "text", value: text });
     text = "";
@@ -101,8 +102,25 @@ export async function normalizeRawWithWarnings(
       shift = event.kind === 7;
       continue;
     }
+    const modifier =
+      ({ 17: "Control", 18: "Alt", 91: "Meta", 92: "Meta" } as Record<number, string>)[virtualKey];
+    if (modifier) {
+      if (event.kind === 7) modifiers.add(modifier);
+      if (event.kind === 8) modifiers.delete(modifier);
+      continue;
+    }
     const printable = (virtualKey >= 0x30 && virtualKey <= 0x39)
       || (virtualKey >= 0x41 && virtualKey <= 0x5a);
+    if (event.kind === 7 && modifiers.size) {
+      flushText();
+      const key = printable
+        ? (shift
+          ? String.fromCharCode(virtualKey).toUpperCase()
+          : String.fromCharCode(virtualKey).toLowerCase())
+        : keys[virtualKey] ?? String.fromCharCode(virtualKey);
+      if (key) steps.push({ do: "key_chord", keys: [...modifiers, key] });
+      continue;
+    }
     if (event.kind === 7 && printable) {
       const character = String.fromCharCode(virtualKey);
       text += shift ? character.toUpperCase() : character.toLowerCase();
