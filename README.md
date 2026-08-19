@@ -44,6 +44,16 @@ deno task dev normalize .crer\raw-input.ndjson `
   --output recorded.crer.yaml
 ```
 
+ローカル fixture を使う手動 P0 テストでは、別の PowerShell で次を起動します。
+
+```powershell
+.\scripts\serve-playback-fixture.ps1
+```
+
+次に `http://127.0.0.1:8080/index.html` を `record --url` に渡して、検索欄への入力と Submit の
+クリックを記録します。現段階では CSS 座標の client origin／size／viewport を `normalize` へ明示的に
+渡します。
+
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
 実行には Deno の `-A` を使いますが、配布版は同梱 DLL のみに限定した FFI 権限を要求する予定です。
