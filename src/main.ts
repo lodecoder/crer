@@ -99,6 +99,18 @@ const pointOption = (name: string): Point | undefined => {
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`${name} must be x,y`);
   return { x, y };
 };
+function shouldAbortPlan(
+  results: RunResult[],
+  onFailure?: Record<string, FailurePolicy | undefined>,
+): boolean {
+  if (!results.some((result) => result.code !== 0)) return false;
+  const timeout = results.some((result) =>
+    result.failures.some((failure) => failure.includes(":timeout:"))
+  );
+  const environment = results.some((result) => result.code === 3);
+  const kind = timeout ? "timeout" : environment ? "environment" : "scenario_failure";
+  return (onFailure?.[kind] ?? onFailure?.default ?? "abort") === "abort";
+}
 async function runNode(
   node: PlanNode,
   base: string,
@@ -125,15 +137,7 @@ async function runNode(
     for (const child of node.serial) {
       const results = await runNode(child, base, maxParallel, workerMs, onFailure);
       out.push(...results);
-      const timeout = results.some((result) =>
-        result.failures.some((failure) => failure.includes(":timeout:"))
-      );
-      const environment = results.some((result) => result.code === 3);
-      const kind = timeout ? "timeout" : environment ? "environment" : "scenario_failure";
-      if (
-        results.some((result) => result.code !== 0)
-        && (onFailure?.[kind] ?? onFailure?.default ?? "abort") === "abort"
-      ) break;
+      if (shouldAbortPlan(results, onFailure)) break;
     }
     return out;
   }
@@ -141,7 +145,10 @@ async function runNode(
     node.parallel.jobs,
     maxParallel,
     (child) => runNode(child, base, maxParallel, workerMs, onFailure),
-    node.parallel.fail_fast ? (result) => result.some((run) => run.code !== 0) : undefined,
+    (result) =>
+      node.parallel.fail_fast
+        ? result.some((run) => run.code !== 0)
+        : shouldAbortPlan(result, onFailure),
   );
   return results.flat();
 }
