@@ -1,5 +1,15 @@
 import { assertEquals } from "jsr:@std/assert@^1.0.14";
-import { normalizeRaw } from "../src/normalize.ts";
+import { normalizeRaw, screenToCss } from "../src/normalize.ts";
+
+Deno.test("converts physical screen coordinates into CSS viewport coordinates", () => {
+  assertEquals(
+    screenToCss(
+      { x: 1100, y: 700 },
+      { clientOrigin: { x: 100, y: 100 }, clientSize: { x: 2000, y: 1200 }, viewport: { x: 1000, y: 600 } },
+    ),
+    { x: 500, y: 300 },
+  );
+});
 
 Deno.test("normalizes mouse, wheel, and key events into steps", async () => {
   const path = await Deno.makeTempFile();

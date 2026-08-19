@@ -1,6 +1,21 @@
 import type { Point, Scenario, Step } from "./types.ts";
 
 type RawEvent = { qpc: string; x: number; y: number; kind: number; data: number };
+export type CoordinateTransform = { clientOrigin: Point; clientSize: Point; viewport: Point };
+
+export function screenToCss(point: Point, transform: CoordinateTransform): Point {
+  if (transform.clientSize.x <= 0 || transform.clientSize.y <= 0) {
+    throw new Error("client dimensions must be positive");
+  }
+  return {
+    x: Math.round(
+      (point.x - transform.clientOrigin.x) * transform.viewport.x / transform.clientSize.x,
+    ),
+    y: Math.round(
+      (point.y - transform.clientOrigin.y) * transform.viewport.y / transform.clientSize.y,
+    ),
+  };
+}
 
 const keys: Record<number, string> = {
   8: "Backspace",
