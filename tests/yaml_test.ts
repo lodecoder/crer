@@ -15,3 +15,13 @@ Deno.test("validates key_chord keys", () => {
     "requires at least two strings",
   );
 });
+
+Deno.test("rejects invalid jitter settings", () => {
+  assertThrows(() => scenarioFrom({
+    version: 1,
+    name: "bad-jitter",
+    browser: { initial_url: "https://example.test" },
+    playback: { jitter: { enabled: true, distribution: "random", radius_px: -1, min_distance_from_edge_px: 0, out_of_bounds: "fail" } },
+    steps: [],
+  }), Error, "playback.jitter is invalid");
+});

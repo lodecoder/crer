@@ -15,6 +15,16 @@ function object(value: unknown, label: string): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
+function validateJitter(value: unknown, label: string) {
+  const jitter = object(value, label);
+  if (
+    typeof jitter.enabled !== "boolean"
+    || !["none", "uniform", "normal"].includes(String(jitter.distribution))
+    || typeof jitter.radius_px !== "number" || jitter.radius_px < 0
+    || typeof jitter.min_distance_from_edge_px !== "number" || jitter.min_distance_from_edge_px < 0
+    || !["fail", "disable-for-step"].includes(String(jitter.out_of_bounds))
+  ) throw new Error(`${label} is invalid`);
+}
 
 export function scenarioFrom(value: unknown): Scenario {
   const v = object(value, "scenario");
@@ -24,6 +34,7 @@ export function scenarioFrom(value: unknown): Scenario {
   const browser = object(v.browser, "browser");
   if (typeof browser.initial_url !== "string") throw new Error("browser.initial_url is required");
   const playback = v.playback ? object(v.playback, "playback") : {};
+  if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
   if (
     playback.seed !== undefined
     && (typeof playback.seed !== "string" || !/^\d+$/.test(playback.seed))
@@ -43,19 +54,7 @@ export function scenarioFrom(value: unknown): Scenario {
       }
     }
     if (s.jitter) {
-      for (
-        const key of [
-          "enabled",
-          "distribution",
-          "radius_px",
-          "min_distance_from_edge_px",
-          "out_of_bounds",
-        ]
-      ) {
-        if (!(key in object(s.jitter, `steps[${index}].jitter`))) {
-          throw new Error(`steps[${index}].jitter.${key} is required`);
-        }
-      }
+      validateJitter(s.jitter, `steps[${index}].jitter`);
     }
   }
   return v as unknown as Scenario;
