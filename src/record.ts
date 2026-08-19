@@ -9,6 +9,7 @@ export async function recordRaw(
     crer_input_start: { parameters: ["u32"], result: "i32" },
     crer_input_stop: { parameters: [], result: "i32" },
     crer_input_read: { parameters: ["buffer", "u32"], result: "u32" },
+    crer_input_get_content_rect: { parameters: ["buffer"], result: "i32" },
     crer_input_last_error: { parameters: [], result: "i32" },
   });
   try {
@@ -17,6 +18,27 @@ export async function recordRaw(
     }
     const start = lib.symbols.crer_input_start(pid);
     if (start) throw new Error(`Raw Input start failed: ${start}`);
+    const rectBytes = new Uint8Array(16);
+    let rectStatus = 1168;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      rectStatus = lib.symbols.crer_input_get_content_rect(rectBytes);
+      if (rectStatus === 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (rectStatus === 0) {
+      const rect = new DataView(rectBytes.buffer);
+      await Deno.writeTextFile(
+        `${output}.meta.json`,
+        JSON.stringify({
+          content_rect_screen_px: {
+            x: rect.getInt32(0, true),
+            y: rect.getInt32(4, true),
+            width: rect.getInt32(8, true),
+            height: rect.getInt32(12, true),
+          },
+        }, null, 2) + "\n",
+      );
+    }
     console.error("Recording. Press Ctrl+C to stop.");
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
