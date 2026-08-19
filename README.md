@@ -9,10 +9,10 @@ Deno CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使
 - `.crer.yaml` の検証、CfT の隔離起動、headful な CDP 入力再生
 - click / double-click / move / scroll / text / key / navigate / wait / screenshot / sleep
 - シード付きクリック揺らぎ、失敗 artifacts、YAML plan の直列・並列実行
-- `record` 用の C ABI と CMake DLL スタブ
+- C# .NET 10 Native AOT の Raw Input DLL と NDJSON 記録
 
-Raw Input を実際に採取する DLL 本体と、`drag` / `assert` / `key_chord` は次の実装段階です。
-`record` は DLL スタブしかない状態では明示的に失敗します。
+`drag` / `assert` / `key_chord`、screen px から CSS viewport px への正確な変換、IME を含む text
+正規化は次の実装段階です。
 
 ## 実行
 
@@ -26,6 +26,25 @@ deno task dev play scenario.crer.yaml --keep-artifacts
 deno task dev run nightly.crer.plan.yaml
 deno task test
 ```
+
+### 手動記録と正規化
+
+初回だけ Native AOT DLL を公開ビルドします。Visual Studio Build Tools の MSVC と Windows SDK が必要です。
+
+```powershell
+dotnet publish native/Crer.WinInput.csproj -c Release -r win-x64
+```
+
+CfT のコンテンツ領域で操作を記録し、`Ctrl+C` で停止します。
+
+```powershell
+deno task dev record .crer\raw-input.ndjson --url https://example.test
+deno task dev normalize .crer\raw-input.ndjson `
+  --url https://example.test `
+  --output recorded.crer.yaml
+```
+
+`record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
 実行には Deno の `-A` を使いますが、配布版は同梱 DLL のみに限定した FFI 権限を要求する予定です。
 実行 artifacts は `.crer/runs/<run-id>` に出力されます。
