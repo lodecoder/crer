@@ -4,6 +4,13 @@ import type { FailureKind, Jitter, RunResult, Scenario, Step } from "./types.ts"
 
 const decoder = new TextDecoder();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function sleepInterruptibly(ms: number, signal?: AbortSignal) {
+  if (!signal) return await sleep(ms);
+  await Promise.race([
+    sleep(ms),
+    new Promise<void>((_, reject) => signal.addEventListener("abort", () => reject(new Error("worker timed out")), { once: true })),
+  ]);
+}
 export type PlayOptions = {
   chromePath: string;
   position?: { left: number; top: number };
@@ -409,7 +416,7 @@ async function act(
       return;
     }
     case "sleep":
-      return await sleep(Number(step.ms ?? 0));
+      return await sleepInterruptibly(Number(step.ms ?? 0), signal);
     case "screenshot":
       return await capture(b, String(step.name ?? "screenshot"), true);
     default:
