@@ -10,8 +10,9 @@ const option = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
+const configuredChromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME");
 const chromePath = () => {
-  const path = option("--chrome") ?? Deno.env.get("CRER_CHROME");
+  const path = configuredChromePath();
   if (!path) throw new Error("Chrome for Testing must be specified with --chrome or CRER_CHROME");
   return path;
 };
@@ -167,7 +168,7 @@ async function main() {
         {
           deno: Deno.version.deno,
           os: Deno.build,
-          chrome: chromePath(),
+          chrome: configuredChromePath() ?? "not configured",
           ffi: inputDllPath(),
         },
         null,
