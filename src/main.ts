@@ -14,8 +14,22 @@ const inputDllPath = () =>
   option("--dll")
     ?? "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timed out")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 async function recordingViewport(port: number): Promise<Point | undefined> {
-  for (let attempt = 0; attempt < 10; attempt++) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
     try {
       const targets = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json() as Array<{
         type: string;
@@ -25,12 +39,14 @@ async function recordingViewport(port: number): Promise<Point | undefined> {
       if (!target) throw new Error("no page target");
       const cdp = new Cdp(target.webSocketDebuggerUrl);
       try {
-        await cdp.open(1_000);
-        await cdp.call("Page.enable");
-        const metrics = await cdp.call<
-          { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
-        >(
-          "Page.getLayoutMetrics",
+        await cdp.open(250);
+        const metrics = await within(
+          cdp.call<
+            { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
+          >(
+            "Page.getLayoutMetrics",
+          ),
+          500,
         );
         const viewport = metrics.cssVisualViewport;
         return viewport ? { x: viewport.clientWidth, y: viewport.clientHeight } : undefined;
@@ -38,7 +54,7 @@ async function recordingViewport(port: number): Promise<Point | undefined> {
         cdp.close();
       }
     } catch {
-      await sleep(100);
+      await sleep(50);
     }
   }
   return undefined;
