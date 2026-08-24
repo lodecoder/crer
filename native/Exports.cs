@@ -34,6 +34,7 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassNameW(IntPtr h, char[] name, int maxCount);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr h, out Rect rect);
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out Rect rect);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr h, ref Point point);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern ushort RegisterClassW(ref WndClass c);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern IntPtr CreateWindowExW(uint e,string c,string n,uint s,int x,int y,int w,int h,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
@@ -66,7 +67,7 @@ internal static class InputBridge
         var name = new char[256];
         if (GetClassNameW(h, name, name.Length) > 0 && new string(name).StartsWith("Chrome_RenderWidgetHostHWND", StringComparison.Ordinal))
         {
-            if (!GetClientRect(h, out var rect) || rect.Right - rect.Left < 32 || rect.Bottom - rect.Top < 32) return true;
+            if (!GetWindowRect(h, out var rect) || rect.Right - rect.Left < 32 || rect.Bottom - rect.Top < 32) return true;
             Marshal.WriteIntPtr(output, h);
             return false;
         }
@@ -123,10 +124,8 @@ internal static class InputBridge
             Marshal.WriteIntPtr(handle, IntPtr.Zero);
             EnumChildWindows(_target, FindContent, handle);
             var content = Marshal.ReadIntPtr(handle);
-            if (content == IntPtr.Zero || !GetClientRect(content, out var rect)) return 1169; // Content HWND not found.
-            var point = new Point { X = rect.Left, Y = rect.Top };
-            if (!ClientToScreen(content, ref point)) return Marshal.GetLastWin32Error();
-            *output = new CrerRect { X = point.X, Y = point.Y, Width = rect.Right - rect.Left, Height = rect.Bottom - rect.Top };
+            if (content == IntPtr.Zero || !GetWindowRect(content, out var rect)) return 1169; // Content HWND not found.
+            *output = new CrerRect { X = rect.Left, Y = rect.Top, Width = rect.Right - rect.Left, Height = rect.Bottom - rect.Top };
             return 0;
         }
         finally { Marshal.FreeHGlobal(handle); }
