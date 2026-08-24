@@ -33,7 +33,6 @@ internal static class InputBridge
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassNameW(IntPtr h, char[] name, int maxCount);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr h, out Rect rect);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr h, ref Point point);
-    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern ushort RegisterClassW(ref WndClass c);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern IntPtr CreateWindowExW(uint e,string c,string n,uint s,int x,int y,int w,int h,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
     [DllImport("user32.dll")] private static extern int GetMessageW(out Msg m, IntPtr h, uint min, uint max);
@@ -45,7 +44,7 @@ internal static class InputBridge
     private static bool Find(IntPtr h, IntPtr _)
     {
         GetWindowThreadProcessId(h, out var p);
-        if (p != _pid || !IsWindowVisible(h)) return true;
+        if (p != _pid) return true;
         var name = new char[256];
         if (GetClassNameW(h, name, name.Length) == 0 ||
             !new string(name).StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return true;
@@ -62,7 +61,16 @@ internal static class InputBridge
         }
         return true;
     }
-    private static bool Active(bool mouse) { if (_target==IntPtr.Zero) EnumWindows(Find,IntPtr.Zero); if (_target==IntPtr.Zero) return false; IntPtr h=mouse ? WindowFromPoint(GetPoint()) : GetForegroundWindow(); return GetAncestor(h,2)==GetAncestor(_target,2); }
+    private static bool Active(bool mouse)
+    {
+        IntPtr h = mouse ? WindowFromPoint(GetPoint()) : GetForegroundWindow();
+        var root = GetAncestor(h, 2);
+        if (root == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(root, out var p);
+        if (p != _pid) return false;
+        _target = root;
+        return true;
+    }
     private static Point GetPoint(){ GetCursorPos(out var p); return p; }
     private static void Push(uint kind,uint data=0){ if(Queue.Count>=8192){_error=111;_running=false;return;} QueryPerformanceCounter(out var q); var p=GetPoint(); Queue.Enqueue(new(){Qpc=(ulong)q,X=p.X,Y=p.Y,Kind=kind,Data=data}); }
     private static IntPtr Proc(IntPtr h,uint m,UIntPtr w,IntPtr l){ if(m!=0x00FF) return DefWindowProcW(h,m,w,l); uint size=0; GetRawInputData(l,0x10000003,IntPtr.Zero,ref size,(uint)Marshal.SizeOf<RawInputHeader>()); var mem=Marshal.AllocHGlobal((int)size); try { if(GetRawInputData(l,0x10000003,mem,ref size,(uint)Marshal.SizeOf<RawInputHeader>())!=(int)size)return IntPtr.Zero; var r=Marshal.PtrToStructure<RawInput>(mem); if(r.Header.Type==RIM_TYPEMOUSE&&Active(true)){var x=r.Mouse;if(x.LastX!=0||x.LastY!=0)Push(1);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_DOWN)!=0)Push(2);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_UP)!=0)Push(3);if((x.ButtonFlags&RI_MOUSE_WHEEL)!=0)Push(6,x.ButtonData);}else if(r.Header.Type==RIM_TYPEKEYBOARD&&Active(false))Push((r.Keyboard.Flags&1)!=0?8u:7u,((uint)r.Keyboard.VKey<<16)|r.Keyboard.MakeCode); } finally{Marshal.FreeHGlobal(mem);} return IntPtr.Zero; }

@@ -20,22 +20,17 @@ export async function recordRaw(
     const start = lib.symbols.crer_input_start(pid);
     if (start) throw new Error(`Raw Input start failed: ${start}`);
     console.error(`Recording target Chrome process: ${pid}`);
-    const rectBytes = new Uint8Array(16);
-    let rectStatus = 1168;
-    for (let attempt = 0; attempt < 20; attempt++) {
-      rectStatus = lib.symbols.crer_input_get_content_rect(rectBytes);
+    const writeMetadata = async () => {
+      const rectBytes = new Uint8Array(16);
       const rect = new DataView(rectBytes.buffer);
-      if (rectStatus === 0 && rect.getInt32(8, true) >= 32 && rect.getInt32(12, true) >= 32) break;
-      rectStatus = 1168;
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    if (rectStatus === 0 || viewport) {
-      const rect = new DataView(rectBytes.buffer);
+      const rectStatus = lib.symbols.crer_input_get_content_rect(rectBytes);
+      const validRect = rectStatus === 0 && rect.getInt32(8, true) >= 32 && rect.getInt32(12, true) >= 32;
+      if (!validRect && !viewport) return { rectStatus, validRect };
       await Deno.writeTextFile(
         `${output}.meta.json`,
         JSON.stringify(
           {
-            ...(rectStatus === 0
+            ...(validRect
               ? {
                 content_rect_screen_px: {
                   x: rect.getInt32(0, true),
@@ -51,12 +46,8 @@ export async function recordRaw(
           2,
         ) + "\n",
       );
-    }
-    if (rectStatus !== 0) {
-      console.error(
-        `Warning: CfT content bounds were unavailable (Win32 status ${rectStatus}); normalize may require explicit coordinate options.`,
-      );
-    }
+      return { rectStatus, validRect };
+    };
     console.error("Recording. Press Ctrl+C to stop, or use the caller's configured stop mechanism.");
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
@@ -79,6 +70,12 @@ export async function recordRaw(
       }
     } finally {
       file.close();
+    }
+    const metadata = await writeMetadata();
+    if (!metadata.validRect) {
+      console.error(
+        `Warning: CfT content bounds were unavailable (Win32 status ${metadata.rectStatus}); normalize may require explicit coordinate options.`,
+      );
     }
   } finally {
     lib.symbols.crer_input_stop();
