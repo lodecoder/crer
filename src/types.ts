@@ -40,6 +40,7 @@ export type Scenario = {
   playback?: {
     seed?: string;
     speed?: number;
+    step_delay_ms?: number;
     jitter?: Jitter;
     timeouts?: { navigation_ms?: number; action_ms?: number };
     on_failure?: Partial<Record<FailureKind | "default", FailurePolicy>>;

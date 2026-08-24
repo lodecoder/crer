@@ -83,6 +83,12 @@ metadata が作成され、bounds 警告がなければ再生する。
 deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts
 ```
 
+目視確認では、各操作後に 1 秒待機する。
+
+```powershell
+deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts --step-delay-ms 1000
+```
+
 報告してほしい情報:
 
 - 各コマンドの出力全体

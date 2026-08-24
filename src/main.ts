@@ -201,10 +201,16 @@ async function main() {
     return;
   }
   if (command === "play") {
+    const stepDelay = option("--step-delay-ms");
+    const stepDelayMs = stepDelay === undefined ? undefined : Number(stepDelay);
+    if (stepDelayMs !== undefined && (!Number.isFinite(stepDelayMs) || stepDelayMs < 0)) {
+      throw new Error("--step-delay-ms must be a non-negative number");
+    }
     const r = await playScenario(scenarioFrom(await loadYaml(file)), {
       chromePath: chromePath(),
       seed: option("--seed"),
       keepArtifacts: args.includes("--keep-artifacts"),
+      stepDelayMs,
     });
     console.log(JSON.stringify(r, null, 2));
     Deno.exitCode = r.code;

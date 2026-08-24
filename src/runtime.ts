@@ -16,6 +16,7 @@ export type PlayOptions = {
   position?: { left: number; top: number };
   seed?: string;
   keepArtifacts?: boolean;
+  stepDelayMs?: number;
   signal?: AbortSignal;
 };
 type BrowserSession = {
@@ -441,6 +442,10 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     b = await launch(s, options, runDir);
     const rng = new Random(BigInt(seed));
     const timeout = s.playback?.timeouts?.action_ms ?? 10_000;
+    const stepDelayMs = options.stepDelayMs ?? s.playback?.step_delay_ms ?? 0;
+    if (!Number.isFinite(stepDelayMs) || stepDelayMs < 0) {
+      throw new Error("step_delay_ms must be a non-negative number");
+    }
     for (const [i, step] of s.steps.entries()) {
       try {
         if (options.signal?.aborted) throw new Error("worker timed out");
@@ -452,6 +457,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         const policy = s.playback?.on_failure?.[kind] ?? s.playback?.on_failure?.default ?? "abort";
         if (policy === "abort") break;
       }
+      if (stepDelayMs > 0) await sleepInterruptibly(stepDelayMs, options.signal);
     }
     return { code: failures.length ? 4 : 0, failures, runDir };
   } catch (e) {

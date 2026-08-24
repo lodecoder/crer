@@ -194,6 +194,7 @@ playback:
     min_distance_from_edge_px: 4
     out_of_bounds: fail               # fail | disable-for-step
   timeouts: { navigation_ms: 30000, action_ms: 10000 }
+  step_delay_ms: 1000               # 任意。各操作後（最後の操作後を含む）の待機時間
   on_failure:                       # ステップ失敗種別ごとの既定動作
     default: abort                   # abort | continue
     timeout: continue
@@ -233,6 +234,10 @@ steps:
 である。省略時だけ `playback.jitter` を使う。`jitter` を指定したステップに `radius_px` 等の
 フィールドがない場合はエラーとし、全体設定から補完しない。`drag` の個別揺らぎは v1 では
 未対応で、常に `playback.jitter` を使う。
+
+`playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
+目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を
+その実行だけ上書きする。
 
 `playback.on_failure` は、続行可能なステップ失敗に対するポリシーである。キーは `default`、
 `navigation`、`timeout`、`action`、`assertion`、`jitter_bounds` のみを許可し、値は `abort` または

@@ -36,6 +36,11 @@ export function scenarioFrom(value: unknown): Scenario {
   const playback = v.playback ? object(v.playback, "playback") : {};
   if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
   if (
+    playback.step_delay_ms !== undefined
+    && (typeof playback.step_delay_ms !== "number" || !Number.isFinite(playback.step_delay_ms)
+      || playback.step_delay_ms < 0)
+  ) throw new Error("playback.step_delay_ms must be a non-negative number");
+  if (
     playback.seed !== undefined
     && (typeof playback.seed !== "string" || !/^\d+$/.test(playback.seed))
   ) throw new Error("playback.seed must be a uint64 decimal string");
