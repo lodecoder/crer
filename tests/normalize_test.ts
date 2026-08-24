@@ -133,9 +133,9 @@ Deno.test("normalizes movement while pressed as a drag", async () => {
 Deno.test("preserves Shift for recorded text", async () => {
   const path = await Deno.makeTempFile();
   await Deno.writeTextFile(path, [
-    { qpc: "1", x: 0, y: 0, kind: 7, data: 16 << 16 },
+    { qpc: "1", x: 0, y: 0, kind: 7, data: 160 << 16 },
     { qpc: "2", x: 0, y: 0, kind: 7, data: 65 << 16 },
-    { qpc: "3", x: 0, y: 0, kind: 8, data: 16 << 16 },
+    { qpc: "3", x: 0, y: 0, kind: 8, data: 160 << 16 },
     { qpc: "4", x: 0, y: 0, kind: 7, data: 66 << 16 },
   ].map((event) => JSON.stringify(event)).join("\n"));
   try {

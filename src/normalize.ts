@@ -98,7 +98,7 @@ export async function normalizeRawWithWarnings(
       ? screenToCss({ x: event.x, y: event.y }, transform)
       : { x: event.x, y: event.y };
     const virtualKey = event.data >>> 16;
-    if (virtualKey === 16) {
+    if (virtualKey === 16 || virtualKey === 160 || virtualKey === 161) {
       shift = event.kind === 7;
       continue;
     }
