@@ -76,7 +76,9 @@ internal static class InputBridge
     private static bool Active(bool mouse)
     {
         IntPtr h = mouse ? WindowFromPoint(GetPoint()) : GetForegroundWindow();
-        var root = GetAncestor(h, 2);
+        // A Chromium Direct3D intermediate window can be a root window but be owned by
+        // Chrome_WidgetWin_*. Include the owner chain to retain the actual browser window.
+        var root = GetAncestor(h, 3); // GA_ROOTOWNER
         if (root == IntPtr.Zero) return false;
         GetWindowThreadProcessId(root, out var p);
         if (p != _pid) return false;
