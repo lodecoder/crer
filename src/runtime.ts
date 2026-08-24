@@ -59,7 +59,7 @@ async function validateDisplay(cdp: Cdp, sessionId: string, s: Scenario, runDir:
   }
 }
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
-  const profile = `${runDir}/profile`;
+  const profile = `${await Deno.realPath(runDir)}/profile`;
   await Deno.mkdir(profile, { recursive: true });
   await Deno.mkdir(`${profile}/Default`, { recursive: true });
   await Deno.writeTextFile(
@@ -77,6 +77,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-sync",
+      "--disable-infobars",
       // Keep CSS coordinates stable even when Windows uses 125%/150%/200% display scaling.
       "--force-device-scale-factor=1",
       // A translation bubble is browser UI, not page content, and can obscure coordinate replay.

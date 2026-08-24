@@ -233,23 +233,25 @@ async function main() {
   if (command === "record") {
     const runDir = `.crer/runs/${crypto.randomUUID()}`;
     await Deno.mkdir(runDir, { recursive: true });
+    const profile = `${await Deno.realPath(runDir)}/profile`;
     const url = option("--url") ?? "about:blank";
     const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
     const port = (reservation.addr as Deno.NetAddr).port;
     reservation.close();
-    await Deno.mkdir(`${runDir}/profile/Default`, { recursive: true });
+    await Deno.mkdir(`${profile}/Default`, { recursive: true });
     await Deno.writeTextFile(
-      `${runDir}/profile/Default/Preferences`,
+      `${profile}/Default/Preferences`,
       JSON.stringify({ translate: { enabled: false } }),
     );
     const chrome = new Deno.Command(chromePath(), {
       args: [
         `--remote-debugging-port=${port}`,
         "--remote-debugging-address=127.0.0.1",
-        `--user-data-dir=${runDir}/profile`,
+        `--user-data-dir=${profile}`,
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-sync",
+        "--disable-infobars",
         "--force-device-scale-factor=1",
         "--disable-features=Translate,TranslateUI",
         "--window-size=900,700",
