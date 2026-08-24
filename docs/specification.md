@@ -36,7 +36,7 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 | ブラウザ    | 固定バージョンの Chrome for Testing             | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                   |
 | 再生入力    | CDP の `Input` ドメイン                         | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                        |
 | ウィンドウ  | CDP `Browser.setWindowBounds`                   | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                      |
-| 記録入力    | Windows Raw Input（主）+ Low Level Hook（補助） | 物理入力を取得する。CDP は注入はできるが物理入力を記録する API ではない。      |
+| 記録入力    | Windows Raw Input + Low Level Hook              | 物理入力を取得する。Chrome が Raw Input を消費する場合は Hook を使う。CDP は注入はできるが物理入力を記録する API ではない。 |
 | シナリオ    | YAML + JSON Schema                              | 人間編集、バリデーション、将来の自動補完を両立する。                           |
 
 Deno 側は組み込みの `WebSocket`、`jsr:@std/yaml`、`jsr:@zod/zod`（または JSON Schema validator）、
