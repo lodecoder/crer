@@ -148,10 +148,13 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 
 ## 5. 表示の固定と可搬性
 
-画面座標の再現性は OS のスケーリングに依存する。v1 は次を再生前提とする。
+画面座標の再現性は OS のスケーリングに依存する。v1 は CfT を
+`--force-device-scale-factor=1` で起動し、CSS 座標の `devicePixelRatio` を 1 に固定する。
+さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
+再生・記録ともに同じ起動引数を使う。v1 は次を再生前提とする。
 
-- 100% の Windows 表示スケーリングを推奨し、実行時に主モニター DPI と CfT の `devicePixelRatio`
-  を検査する。
+- Windows の表示スケーリングは任意とする。実行時に CfT の `devicePixelRatio` を検査し、strict
+  の場合は想定値と異なれば失敗にする。
 - `window.content` は CSS viewport の目標サイズ、`window.bounds` は画面上の DIP 位置である。
   `Browser.setWindowBounds` と `Browser.setContentsSize` を順に実行し、実測値を検証する。
 - `browser_zoom` は `100` のみを v1 の厳密保証範囲とする。Chrome UI のサイト別ズームは CDP の

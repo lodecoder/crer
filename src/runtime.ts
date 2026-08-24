@@ -71,6 +71,10 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-sync",
+      // Keep CSS coordinates stable even when Windows uses 125%/150%/200% display scaling.
+      "--force-device-scale-factor=1",
+      // A translation bubble is browser UI, not page content, and can obscure coordinate replay.
+      "--disable-features=Translate,TranslateUI",
       "--new-window",
       s.browser.initial_url,
     ],
