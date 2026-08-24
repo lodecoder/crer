@@ -25,12 +25,12 @@
 
 - [x] `crer record` から Native AOT DLL を起動し、`raw-input.ndjson` を取得する。
 - [x] Raw Input の mouse / wheel / key イベントを click・drag・scroll・key・text の steps へ正規化する。
-- [ ] screen px から CSS viewport px への座標変換と viewport 変化の検出を実装する。
-  - 記録開始時の content bounds と CDP viewport の sidecar を取得し、完全な metadata があれば自動変換する。
+- [x] screen px から CSS viewport px への座標変換を実装する。
+  - 記録した content bounds と CDP viewport の sidecar を取得し、完全な metadata で自動変換する。手動 record → replay で確認済み。
   - 記録中の viewport 変化検出は未実装。
 - [x] 停止時に有効な `.crer.yaml` を保存し、不完全な down/up を警告する。
 
-完了条件: CfT コンテンツで手動記録した検索操作を YAML 化し、同じ専用 CfT で再生できること。
+完了条件: CfT コンテンツで手動記録した検索操作を YAML 化し、同じ専用 CfT で再生できること。**達成済み**。
 
 ## P1 — シナリオ言語を仕様へ追随
 

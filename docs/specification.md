@@ -152,8 +152,9 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 `--force-device-scale-factor=1` で起動し、CSS 座標の `devicePixelRatio` を 1 に固定する。
 さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
 専用プロファイルの translate 設定も無効化する。プロファイルは必ず絶対パスで渡す。再生・記録ともに `--app=<URL>` を使う同じ CfT アプリ
-ウィンドウとして起動し、Chrome のタブ・アドレスバー UI をページ座標系から除外する。CfT 固有の
-「自動テスト専用」banner は Chrome の削除不可 UI であるため、座標変換ではこれを含めない content surface を使う。v1 は次を再生前提とする。
+ウィンドウとして起動し、Chrome のタブ・アドレスバー UI をページ座標系から除外する。`--disable-infobars`
+で CfT banner の抑止を要求する。CfT のバージョンまたは UI 状態によって banner が表示される場合も、
+座標変換ではこれを含めない content surface を使う。v1 は次を再生前提とする。
 
 - Windows の表示スケーリングは任意とする。実行時に CfT の `devicePixelRatio` を検査し、strict
   の場合は想定値と異なれば失敗にする。
