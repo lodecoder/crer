@@ -6,6 +6,10 @@ type RecordingMetadata = {
   content_rect_screen_px?: { x: number; y: number; width: number; height: number };
   css_viewport?: Point;
   qpc_frequency_hz?: string;
+  focus_calibration?: {
+    screenClick: Point;
+    cssRect: { x: number; y: number; width: number; height: number };
+  };
 };
 export type NormalizedRecording = { scenario: Scenario; warnings: string[] };
 
@@ -19,8 +23,21 @@ export function transformFromRecordingMetadata(
   ) {
     return undefined;
   }
+  const calibration = metadata.focus_calibration;
+  // Prefer an actual page input focus over a Chromium compositor HWND.  CfT may
+  // place its mandatory information bar in the compositor surface, but CDP input
+  // coordinates begin at the DOM viewport.
+  const clientOrigin =
+    calibration && calibration.cssRect.width > 0 && calibration.cssRect.height > 0
+      ? {
+        x: calibration.screenClick.x
+          - (calibration.cssRect.x + calibration.cssRect.width / 2) * rect.width / viewport.x,
+        y: calibration.screenClick.y
+          - (calibration.cssRect.y + calibration.cssRect.height / 2) * rect.height / viewport.y,
+      }
+      : { x: rect.x, y: rect.y };
   return {
-    clientOrigin: { x: rect.x, y: rect.y },
+    clientOrigin,
     clientSize: { x: rect.width, y: rect.height },
     viewport,
   };

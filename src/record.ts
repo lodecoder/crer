@@ -1,9 +1,17 @@
+export type FocusCalibration = {
+  screenClick: { x: number; y: number };
+  cssRect: { x: number; y: number; width: number; height: number };
+};
+
 export async function recordRaw(
   dllPath: string,
   pid: number,
   output: string,
   signal?: AbortSignal,
   viewport?: { x: number; y: number },
+  focusedElement?: () => Promise<
+    { x: number; y: number; width: number; height: number } | undefined
+  >,
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
@@ -22,11 +30,13 @@ export async function recordRaw(
     const start = lib.symbols.crer_input_start(pid);
     if (start) throw new Error(`Raw Input start failed: ${start}`);
     console.error(`Recording target Chrome process: ${pid}`);
+    let focusCalibration: FocusCalibration | undefined;
     const writeMetadata = async () => {
       const rectBytes = new Uint8Array(16);
       const rect = new DataView(rectBytes.buffer);
       const rectStatus = lib.symbols.crer_input_get_content_rect(rectBytes);
-      const validRect = rectStatus === 0 && rect.getInt32(8, true) >= 32 && rect.getInt32(12, true) >= 32;
+      const validRect = rectStatus === 0 && rect.getInt32(8, true) >= 32
+        && rect.getInt32(12, true) >= 32;
       if (!validRect && !viewport) return { rectStatus, validRect };
       await Deno.writeTextFile(
         `${output}.meta.json`,
@@ -44,6 +54,7 @@ export async function recordRaw(
               }
               : {}),
             ...(viewport ? { css_viewport: viewport } : {}),
+            ...(focusCalibration ? { focus_calibration: focusCalibration } : {}),
           },
           null,
           2,
@@ -51,7 +62,9 @@ export async function recordRaw(
       );
       return { rectStatus, validRect };
     };
-    console.error("Recording. Press Ctrl+C to stop, or use the caller's configured stop mechanism.");
+    console.error(
+      "Recording. Press Ctrl+C to stop, or use the caller's configured stop mechanism.",
+    );
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
       while (!signal?.aborted) {
@@ -68,6 +81,20 @@ export async function recordRaw(
             data: view.getUint32(o + 20, true),
           };
           await file.write(new TextEncoder().encode(JSON.stringify(event) + "\n"));
+          // A CfT information bar is browser chrome, and can make a compositor HWND
+          // larger than the DOM viewport.  An editable element that received this
+          // click gives us a reliable screen-to-CSS calibration point.
+          if (event.kind === 3 && focusedElement && viewport) {
+            try {
+              await new Promise((resolve) => setTimeout(resolve, 20));
+              const cssRect = await focusedElement();
+              if (cssRect && cssRect.width > 0 && cssRect.height > 0) {
+                focusCalibration = { screenClick: { x: event.x, y: event.y }, cssRect };
+              }
+            } catch {
+              // Recording must continue when the page navigates or CDP momentarily disconnects.
+            }
+          }
         }
         await new Promise((r) => setTimeout(r, 16));
       }

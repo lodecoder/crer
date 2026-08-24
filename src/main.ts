@@ -1,5 +1,9 @@
 import { Cdp } from "./cdp.ts";
-import { normalizeRawWithWarnings, qpcFrequencyFromSidecar, transformFromSidecar } from "./normalize.ts";
+import {
+  normalizeRawWithWarnings,
+  qpcFrequencyFromSidecar,
+  transformFromSidecar,
+} from "./normalize.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
@@ -33,7 +37,14 @@ async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     if (timer !== undefined) clearTimeout(timer);
   }
 }
-async function recordingViewport(port: number): Promise<Point | undefined> {
+type RecordingPage = {
+  viewport?: Point;
+  focusedElement: () => Promise<
+    { x: number; y: number; width: number; height: number } | undefined
+  >;
+  close: () => void;
+};
+async function recordingPage(port: number): Promise<RecordingPage | undefined> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     try {
@@ -47,30 +58,51 @@ async function recordingViewport(port: number): Promise<Point | undefined> {
       const target = targets.find((candidate) => candidate.type === "page");
       if (!target) throw new Error("no page target");
       const cdp = new Cdp(version.webSocketDebuggerUrl);
-      try {
-        await cdp.open(250);
-        const attached = await within(
-          cdp.call<{ sessionId: string }>("Target.attachToTarget", {
-            targetId: target.id,
-            flatten: true,
-          }),
-          500,
-        );
-        const metrics = await within(
-          cdp.call<
-            { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
-          >(
-            "Page.getLayoutMetrics",
-            {},
-            attached.sessionId,
-          ),
-          500,
-        );
-        const viewport = metrics.cssVisualViewport;
-        return viewport ? { x: viewport.clientWidth, y: viewport.clientHeight } : undefined;
-      } finally {
-        cdp.close();
-      }
+      await cdp.open(250);
+      const attached = await within(
+        cdp.call<{ sessionId: string }>("Target.attachToTarget", {
+          targetId: target.id,
+          flatten: true,
+        }),
+        500,
+      );
+      const metrics = await within(
+        cdp.call<
+          { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
+        >(
+          "Page.getLayoutMetrics",
+          {},
+          attached.sessionId,
+        ),
+        500,
+      );
+      const viewport = metrics.cssVisualViewport;
+      return {
+        viewport: viewport ? { x: viewport.clientWidth, y: viewport.clientHeight } : undefined,
+        focusedElement: async () => {
+          const result = await within(
+            cdp.call<{
+              result: {
+                value?: { x: number; y: number; width: number; height: number; editable: boolean };
+              };
+            }>("Runtime.evaluate", {
+              expression: `(() => {
+                const e = document.activeElement;
+                if (!e || !(e instanceof HTMLElement)) return undefined;
+                const editable = e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e.isContentEditable;
+                if (!editable) return undefined;
+                const r = e.getBoundingClientRect();
+                return {x:r.x,y:r.y,width:r.width,height:r.height,editable};
+              })()`,
+              returnByValue: true,
+            }, attached.sessionId),
+            500,
+          );
+          const value = result.result.value;
+          return value?.editable && value.width > 0 && value.height > 0 ? value : undefined;
+        },
+        close: () => cdp.close(),
+      };
     } catch {
       await sleep(50);
     }
@@ -272,22 +304,28 @@ async function main() {
           await Deno.stat(stopFile);
           controller.abort();
         } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) console.error(`Warning: could not check stop file: ${error}`);
+          if (!(error instanceof Deno.errors.NotFound)) {
+            console.error(`Warning: could not check stop file: ${error}`);
+          }
         }
       }, 100)
       : undefined;
+    let page: RecordingPage | undefined;
     try {
+      page = await recordingPage(port);
       await recordRaw(
         inputDllPath(),
         chrome.pid,
         file,
         controller.signal,
-        await recordingViewport(port),
+        page?.viewport,
+        page?.focusedElement,
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
       if (timer) clearTimeout(timer);
       if (stopFileTimer) clearInterval(stopFileTimer);
+      page?.close();
       await closeRecordingBrowser(port, chrome);
     }
     return;
