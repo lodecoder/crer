@@ -92,6 +92,8 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 - テキストは `WM_CHAR` と IME の確定文字列を優先して 1 つの `text` ステップに畳む。
 - クリックは down/up と移動をイベントとして保持し、停止時にクリック・ドラッグ・スクロール
   として可読なステップへ正規化する。元イベント列は `artifacts/raw-input.ndjson` に任意保存する。
+- Windows QPC の周波数を sidecar に保存し、連続する論理操作の間隔を `sleep` ステップとして YAML に
+  明示的に出力する。たとえば click 後 5 秒で次の click をした場合、間に `{ do: sleep, ms: 5000 }` を出力する。
 - 記録中は UI によるページ操作を妨げない。CfT 以外で行った入力は記録しない。
 
 記録開始後の停止操作は `Ctrl+C`（1 回目は graceful stop、2 回目は強制中断）または CfT
@@ -240,7 +242,7 @@ steps:
 
 `playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を
-その実行だけ上書きする。
+その実行だけ上書きする。これは記録済みの `sleep` に**追加する**目視用の固定待機である。
 
 `playback.on_failure` は、続行可能なステップ失敗に対するポリシーである。キーは `default`、
 `navigation`、`timeout`、`action`、`assertion`、`jitter_bounds` のみを許可し、値は `abort` または

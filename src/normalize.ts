@@ -5,6 +5,7 @@ export type CoordinateTransform = { clientOrigin: Point; clientSize: Point; view
 type RecordingMetadata = {
   content_rect_screen_px?: { x: number; y: number; width: number; height: number };
   css_viewport?: Point;
+  qpc_frequency_hz?: string;
 };
 export type NormalizedRecording = { scenario: Scenario; warnings: string[] };
 
@@ -32,6 +33,17 @@ export async function transformFromSidecar(
     return transformFromRecordingMetadata(
       JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata,
     );
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw new Error(`could not read recording metadata: ${error}`);
+  }
+}
+
+export async function qpcFrequencyFromSidecar(rawFile: string): Promise<bigint | undefined> {
+  try {
+    const value = (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
+      .qpc_frequency_hz;
+    return value && /^\d+$/.test(value) && BigInt(value) > 0n ? BigInt(value) : undefined;
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);
@@ -69,8 +81,9 @@ export async function normalizeRaw(
   url: string,
   name: string,
   transform?: CoordinateTransform,
+  qpcFrequencyHz?: bigint,
 ): Promise<Scenario> {
-  return (await normalizeRawWithWarnings(path, url, name, transform)).scenario;
+  return (await normalizeRawWithWarnings(path, url, name, transform, qpcFrequencyHz)).scenario;
 }
 
 export async function normalizeRawWithWarnings(
@@ -78,6 +91,7 @@ export async function normalizeRawWithWarnings(
   url: string,
   name: string,
   transform?: CoordinateTransform,
+  qpcFrequencyHz?: bigint,
 ): Promise<NormalizedRecording> {
   const raw = (await Deno.readTextFile(path)).split(/\r?\n/).filter(Boolean).map((line) =>
     JSON.parse(line) as RawEvent
@@ -87,13 +101,24 @@ export async function normalizeRawWithWarnings(
   let mouseDown: Point | undefined;
   let mouseLast: Point | undefined;
   let text = "";
+  let textQpc = 0n;
+  let lastActionQpc: bigint | undefined;
   let shift = false;
   const modifiers = new Set<string>();
+  const addStep = (step: Step, qpc: bigint) => {
+    if (qpcFrequencyHz && lastActionQpc !== undefined && qpc >= lastActionQpc) {
+      const delayMs = Number((qpc - lastActionQpc) * 1000n / qpcFrequencyHz);
+      if (delayMs > 0) steps.push({ do: "sleep", ms: delayMs });
+    }
+    steps.push(step);
+    lastActionQpc = qpc;
+  };
   const flushText = () => {
-    if (text) steps.push({ do: "text", value: text });
+    if (text) addStep({ do: "text", value: text }, textQpc);
     text = "";
   };
   for (const event of raw) {
+    const qpc = BigInt(event.qpc);
     const point = transform
       ? screenToCss({ x: event.x, y: event.y }, transform)
       : { x: event.x, y: event.y };
@@ -119,12 +144,13 @@ export async function normalizeRawWithWarnings(
           ? String.fromCharCode(virtualKey).toUpperCase()
           : String.fromCharCode(virtualKey).toLowerCase())
         : keys[virtualKey] ?? String.fromCharCode(virtualKey);
-      if (key) steps.push({ do: "key_chord", keys: [...modifiers, key] });
+      if (key) addStep({ do: "key_chord", keys: [...modifiers, key] }, qpc);
       continue;
     }
     if (event.kind === 7 && printable) {
       const character = String.fromCharCode(virtualKey);
       text += shift ? character.toUpperCase() : character.toLowerCase();
+      textQpc = qpc;
       continue;
     }
     flushText();
@@ -136,20 +162,20 @@ export async function normalizeRawWithWarnings(
     }
     if (event.kind === 3 && mouseDown) {
       if (mouseLast && (mouseLast.x !== mouseDown.x || mouseLast.y !== mouseDown.y)) {
-        steps.push({ do: "drag", from: mouseDown, to: mouseLast });
+        addStep({ do: "drag", from: mouseDown, to: mouseLast }, qpc);
       } else {
-        steps.push({ do: "click", at: mouseDown });
+        addStep({ do: "click", at: mouseDown }, qpc);
       }
       mouseDown = undefined;
       mouseLast = undefined;
     }
     if (event.kind === 6) {
       const delta = event.data > 0x7fff ? event.data - 0x10000 : event.data;
-      steps.push({ do: "scroll", at: point, delta: { x: 0, y: -delta } });
+      addStep({ do: "scroll", at: point, delta: { x: 0, y: -delta } }, qpc);
     }
     if (event.kind === 7) {
       const key = keys[virtualKey] ?? String.fromCharCode(virtualKey);
-      if (key) steps.push({ do: "key", key });
+      if (key) addStep({ do: "key", key }, qpc);
     }
   }
   flushText();

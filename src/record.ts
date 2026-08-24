@@ -7,6 +7,7 @@ export async function recordRaw(
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
+    crer_input_qpc_frequency: { parameters: [], result: "u64" },
     crer_input_start: { parameters: ["u32"], result: "i32" },
     crer_input_stop: { parameters: [], result: "i32" },
     crer_input_read: { parameters: ["buffer", "u32"], result: "u32" },
@@ -17,6 +18,7 @@ export async function recordRaw(
     if (lib.symbols.crer_input_abi_version() !== 1) {
       throw new Error("unsupported crer-win-input ABI");
     }
+    const qpcFrequencyHz = lib.symbols.crer_input_qpc_frequency().toString();
     const start = lib.symbols.crer_input_start(pid);
     if (start) throw new Error(`Raw Input start failed: ${start}`);
     console.error(`Recording target Chrome process: ${pid}`);
@@ -30,6 +32,7 @@ export async function recordRaw(
         `${output}.meta.json`,
         JSON.stringify(
           {
+            qpc_frequency_hz: qpcFrequencyHz,
             ...(validRect
               ? {
                 content_rect_screen_px: {

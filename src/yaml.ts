@@ -58,6 +58,9 @@ export function scenarioFrom(value: unknown): Scenario {
         throw new Error(`steps[${index}].keys requires at least two strings`);
       }
     }
+    if (s.do === "sleep" && (typeof s.ms !== "number" || !Number.isFinite(s.ms) || s.ms < 0)) {
+      throw new Error(`steps[${index}].ms must be a non-negative number for sleep`);
+    }
     if (s.jitter) {
       validateJitter(s.jitter, `steps[${index}].jitter`);
     }

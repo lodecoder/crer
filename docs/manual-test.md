@@ -77,13 +77,14 @@ Windows の `Ctrl+C` は PowerShell の子プロセスを強制終了して後�
 - 有効な content bounds を取得できた場合は `.crer\fixture.raw-input.ndjson.meta.json` も作成される。
 - bounds 警告が出た場合、YAML の座標は物理 screen px の可能性があるため replay は行わず、その警告文を報告する。
 
-metadata が作成され、bounds 警告がなければ再生する。
+metadata が作成され、bounds 警告がなければ再生する。記録時の操作間隔は YAML の `sleep` ステップに
+自動保存され、通常の再生ではその間隔を再現する。
 
 ```powershell
 deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts
 ```
 
-目視確認では、各操作後に 1 秒待機する。
+目視確認でさらに待機したい場合は、記録済みの `sleep` に 1 秒を追加する。
 
 ```powershell
 deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts --step-delay-ms 1000

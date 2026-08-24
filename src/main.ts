@@ -1,5 +1,5 @@
 import { Cdp } from "./cdp.ts";
-import { normalizeRawWithWarnings, transformFromSidecar } from "./normalize.ts";
+import { normalizeRawWithWarnings, qpcFrequencyFromSidecar, transformFromSidecar } from "./normalize.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
@@ -307,6 +307,7 @@ async function main() {
       );
     }
     const sidecarTransform = origin ? undefined : await transformFromSidecar(file);
+    const qpcFrequencyHz = origin ? undefined : await qpcFrequencyFromSidecar(file);
     if (!origin && !sidecarTransform) {
       console.error(
         "Warning: recording metadata is unavailable; output coordinates remain physical screen pixels.",
@@ -319,6 +320,7 @@ async function main() {
       origin
         ? { clientOrigin: origin, clientSize: clientSize!, viewport: viewport! }
         : sidecarTransform,
+      qpcFrequencyHz,
     );
     await saveYaml(output, normalized.scenario);
     for (const warning of normalized.warnings) console.error(`Warning: ${warning}`);

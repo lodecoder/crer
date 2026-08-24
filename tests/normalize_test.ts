@@ -66,6 +66,26 @@ Deno.test("normalizes mouse, wheel, and key events into steps", async () => {
   }
 });
 
+Deno.test("preserves recorded pauses between logical actions", async () => {
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(path, [
+    { qpc: "1000000", x: 10, y: 20, kind: 2, data: 0 },
+    { qpc: "1000100", x: 10, y: 20, kind: 3, data: 0 },
+    { qpc: "6000100", x: 30, y: 40, kind: 2, data: 0 },
+    { qpc: "6000200", x: 30, y: 40, kind: 3, data: 0 },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  try {
+    const scenario = await normalizeRaw(path, "https://example.test", "sample", undefined, 1_000_000n);
+    assertEquals(scenario.steps, [
+      { do: "click", at: { x: 10, y: 20 } },
+      { do: "sleep", ms: 5000 },
+      { do: "click", at: { x: 30, y: 40 } },
+    ]);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
 Deno.test("applies a coordinate transform while normalizing", async () => {
   const path = await Deno.makeTempFile();
   await Deno.writeTextFile(
