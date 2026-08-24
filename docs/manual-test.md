@@ -5,8 +5,16 @@ Windows 11 上で PowerShell を開き、リポジトリのルートへ移動し
 ```powershell
 cd C:\Users\a5\devai\crer
 $env:CRER_CHROME = 'C:\path\to\chrome.exe'
-dotnet publish native\Crer.WinInput.csproj -c Release -r win-x64
+.\scripts\build-native.ps1
 deno task dev doctor
+```
+
+`build-native.ps1` は Visual Studio 2026 の `vswhere.exe` をそのビルド処理だけ PATH に追加する。
+同じ PowerShell で直接 `dotnet publish` を実行する必要がある場合は、先に次を実行する。
+
+```powershell
+$env:Path = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:Path"
+dotnet publish native\Crer.WinInput.csproj -c Release -r win-x64
 ```
 
 `doctor` で `chromeExists: true` と `ffiExists: true` を確認する。以下のテスト中は普段使いの
