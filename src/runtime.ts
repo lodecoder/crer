@@ -61,6 +61,11 @@ async function validateDisplay(cdp: Cdp, sessionId: string, s: Scenario, runDir:
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
   const profile = `${runDir}/profile`;
   await Deno.mkdir(profile, { recursive: true });
+  await Deno.mkdir(`${profile}/Default`, { recursive: true });
+  await Deno.writeTextFile(
+    `${profile}/Default/Preferences`,
+    JSON.stringify({ translate: { enabled: false } }),
+  );
   const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const port = (reservation.addr as Deno.NetAddr).port;
   reservation.close();
@@ -76,8 +81,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       "--force-device-scale-factor=1",
       // A translation bubble is browser UI, not page content, and can obscure coordinate replay.
       "--disable-features=Translate,TranslateUI",
-      "--new-window",
-      s.browser.initial_url,
+      `--app=${s.browser.initial_url}`,
     ],
     stdout: "null",
     stderr: "piped",

@@ -237,6 +237,11 @@ async function main() {
     const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
     const port = (reservation.addr as Deno.NetAddr).port;
     reservation.close();
+    await Deno.mkdir(`${runDir}/profile/Default`, { recursive: true });
+    await Deno.writeTextFile(
+      `${runDir}/profile/Default/Preferences`,
+      JSON.stringify({ translate: { enabled: false } }),
+    );
     const chrome = new Deno.Command(chromePath(), {
       args: [
         `--remote-debugging-port=${port}`,
@@ -247,8 +252,8 @@ async function main() {
         "--disable-sync",
         "--force-device-scale-factor=1",
         "--disable-features=Translate,TranslateUI",
-        "--new-window",
-        url,
+        "--window-size=900,700",
+        `--app=${url}`,
       ],
       stdout: "null",
       stderr: "null",

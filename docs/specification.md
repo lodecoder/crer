@@ -151,7 +151,8 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 画面座標の再現性は OS のスケーリングに依存する。v1 は CfT を
 `--force-device-scale-factor=1` で起動し、CSS 座標の `devicePixelRatio` を 1 に固定する。
 さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
-再生・記録ともに同じ起動引数を使う。v1 は次を再生前提とする。
+専用プロファイルの translate 設定も無効化する。再生・記録ともに `--app=<URL>` を使う同じ CfT アプリ
+ウィンドウとして起動し、Chrome のタブ・アドレスバー UI をページ座標系から除外する。v1 は次を再生前提とする。
 
 - Windows の表示スケーリングは任意とする。実行時に CfT の `devicePixelRatio` を検査し、strict
   の場合は想定値と異なれば失敗にする。
