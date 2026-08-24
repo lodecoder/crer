@@ -22,7 +22,9 @@ if (-not (Test-Path -LiteralPath $Chrome -PathType Leaf)) {
 
 $outputPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Output))
 $scenarioPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Scenario))
+$stopPath = "$outputPath.stop"
 [System.IO.Directory]::CreateDirectory((Split-Path -Parent $outputPath)) | Out-Null
+$null = Remove-Item -LiteralPath $stopPath -Force -ErrorAction SilentlyContinue
 $serverScript = Join-Path $PSScriptRoot 'serve-playback-fixture.ps1'
 $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
 $server = Start-Process -FilePath $pwsh -ArgumentList @(
@@ -44,12 +46,18 @@ try {
   }
 
   Write-Host "A dedicated Chrome for Testing window will open at $fixtureUrl"
-  Write-Host 'Type a query, click Submit, then press Ctrl+C in this terminal to finish recording.'
+  Write-Host 'Type a query, click Submit, then return here and press Enter to finish recording.'
   Push-Location $projectRoot
+  $record = $null
   try {
-    & deno task dev record $outputPath --url $fixtureUrl --chrome $Chrome
-    if ($LASTEXITCODE -ne 0) {
-      throw "record exited with code $LASTEXITCODE"
+    $record = Start-Process -FilePath (Get-Command deno -ErrorAction Stop).Source -ArgumentList @(
+      'task', 'dev', 'record', $outputPath, '--url', $fixtureUrl, '--chrome', $Chrome, '--stop-file', $stopPath
+    ) -WorkingDirectory $projectRoot -NoNewWindow -PassThru
+    Read-Host '操作後、ここで Enter を押して記録を終了'
+    New-Item -ItemType File -Path $stopPath -Force | Out-Null
+    $record.WaitForExit()
+    if ($record.ExitCode -ne 0) {
+      throw "record exited with code $($record.ExitCode)"
     }
     & deno task dev normalize $outputPath --url $fixtureUrl --output $scenarioPath --name fixture-recorded
     if ($LASTEXITCODE -ne 0) {
@@ -57,6 +65,11 @@ try {
     }
     Write-Host "Wrote normalized scenario: $scenarioPath"
   } finally {
+    if ($record -and -not $record.HasExited) {
+      New-Item -ItemType File -Path $stopPath -Force | Out-Null
+      $record.WaitForExit()
+    }
+    Remove-Item -LiteralPath $stopPath -Force -ErrorAction SilentlyContinue
     Pop-Location
   }
 } finally {

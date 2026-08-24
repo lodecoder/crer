@@ -252,6 +252,17 @@ async function main() {
     Deno.addSignalListener("SIGINT", onInterrupt);
     const duration = option("--duration-ms");
     const timer = duration ? setTimeout(() => controller.abort(), Number(duration)) : undefined;
+    const stopFile = option("--stop-file");
+    const stopFileTimer = stopFile
+      ? setInterval(async () => {
+        try {
+          await Deno.stat(stopFile);
+          controller.abort();
+        } catch (error) {
+          if (!(error instanceof Deno.errors.NotFound)) console.error(`Warning: could not check stop file: ${error}`);
+        }
+      }, 100)
+      : undefined;
     try {
       await recordRaw(
         inputDllPath(),
@@ -263,6 +274,7 @@ async function main() {
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
       if (timer) clearTimeout(timer);
+      if (stopFileTimer) clearInterval(stopFileTimer);
       await closeRecordingBrowser(port, chrome);
     }
     return;

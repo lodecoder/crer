@@ -62,7 +62,10 @@ CfT の fixture が開いたら次を行う。
 1. Search 欄をクリックする。
 2. `Crer42` と入力する。
 3. Submit をクリックする。
-4. 記録元の PowerShell で `Ctrl+C` を一度押す。
+4. 記録元の PowerShell に戻り、Enter を一度押す。
+
+Windows の `Ctrl+C` は PowerShell の子プロセスを強制終了して後続の normalize を実行できないことがある。
+このスクリプトは Enter を受けると stop file を作成し、record に graceful close を依頼してから normalize する。
 
 期待結果:
 

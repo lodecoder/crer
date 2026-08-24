@@ -19,6 +19,7 @@ export async function recordRaw(
     }
     const start = lib.symbols.crer_input_start(pid);
     if (start) throw new Error(`Raw Input start failed: ${start}`);
+    console.error(`Recording target Chrome process: ${pid}`);
     const rectBytes = new Uint8Array(16);
     let rectStatus = 1168;
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -52,9 +53,11 @@ export async function recordRaw(
       );
     }
     if (rectStatus !== 0) {
-      console.error("Warning: CfT content bounds were unavailable; normalize may require explicit coordinate options.");
+      console.error(
+        `Warning: CfT content bounds were unavailable (Win32 status ${rectStatus}); normalize may require explicit coordinate options.`,
+      );
     }
-    console.error("Recording. Press Ctrl+C to stop.");
+    console.error("Recording. Press Ctrl+C to stop, or use the caller's configured stop mechanism.");
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
       while (!signal?.aborted) {

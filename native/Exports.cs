@@ -33,6 +33,7 @@ internal static class InputBridge
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassNameW(IntPtr h, char[] name, int maxCount);
     [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr h, out Rect rect);
     [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr h, ref Point point);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern ushort RegisterClassW(ref WndClass c);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern IntPtr CreateWindowExW(uint e,string c,string n,uint s,int x,int y,int w,int h,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
     [DllImport("user32.dll")] private static extern int GetMessageW(out Msg m, IntPtr h, uint min, uint max);
@@ -41,7 +42,16 @@ internal static class InputBridge
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] private struct WndClass { public uint Style; public WndProc Proc; public int ClsExtra, WndExtra; public IntPtr Instance, Icon, Cursor, Background; public string Name; }
     [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandleW(string? n);
     [DllImport("kernel32.dll")] private static extern bool QueryPerformanceCounter(out long n);
-    private static bool Find(IntPtr h, IntPtr _) { GetWindowThreadProcessId(h,out var p); if (p == _pid) { _target=h; return false; } return true; }
+    private static bool Find(IntPtr h, IntPtr _)
+    {
+        GetWindowThreadProcessId(h, out var p);
+        if (p != _pid || !IsWindowVisible(h)) return true;
+        var name = new char[256];
+        if (GetClassNameW(h, name, name.Length) == 0 ||
+            !new string(name).StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return true;
+        _target = h;
+        return false;
+    }
     private static bool FindContent(IntPtr h, IntPtr output)
     {
         var name = new char[256];
@@ -65,14 +75,14 @@ internal static class InputBridge
     {
         if (output == null) return 87;
         if (_target == IntPtr.Zero) EnumWindows(Find, IntPtr.Zero);
-        if (_target == IntPtr.Zero) return 1168;
+        if (_target == IntPtr.Zero) return 1168; // ERROR_NOT_FOUND: browser top-level window not found.
         var handle = Marshal.AllocHGlobal(IntPtr.Size);
         try
         {
             Marshal.WriteIntPtr(handle, IntPtr.Zero);
             EnumChildWindows(_target, FindContent, handle);
             var content = Marshal.ReadIntPtr(handle);
-            if (content == IntPtr.Zero || !GetClientRect(content, out var rect)) return 1168;
+            if (content == IntPtr.Zero || !GetClientRect(content, out var rect)) return 1169; // Content HWND not found.
             var point = new Point { X = rect.Left, Y = rect.Top };
             if (!ClientToScreen(content, ref point)) return Marshal.GetLastWin32Error();
             *output = new CrerRect { X = point.X, Y = point.Y, Width = rect.Right - rect.Left, Height = rect.Bottom - rect.Top };
