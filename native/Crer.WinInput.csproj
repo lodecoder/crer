@@ -2,6 +2,6 @@
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework><AssemblyName>crer-win-input</AssemblyName>
     <PublishAot>true</PublishAot><NativeLib>Shared</NativeLib><SelfContained>true</SelfContained>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><InvariantGlobalization>true</InvariantGlobalization><Nullable>enable</Nullable>
   </PropertyGroup>
 </Project>

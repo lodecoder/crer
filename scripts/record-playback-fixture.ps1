@@ -24,7 +24,9 @@ $outputPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Output))
 $scenarioPath = [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Scenario))
 $stopPath = "$outputPath.stop"
 [System.IO.Directory]::CreateDirectory((Split-Path -Parent $outputPath)) | Out-Null
-$null = Remove-Item -LiteralPath $stopPath -Force -ErrorAction SilentlyContinue
+@($outputPath, "$outputPath.meta.json", $scenarioPath, $stopPath) | ForEach-Object {
+  Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue
+}
 $serverScript = Join-Path $PSScriptRoot 'serve-playback-fixture.ps1'
 $pwsh = (Get-Command pwsh -ErrorAction Stop).Source
 $server = Start-Process -FilePath $pwsh -ArgumentList @(

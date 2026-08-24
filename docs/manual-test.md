@@ -57,6 +57,9 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 .\scripts\record-playback-fixture.ps1
 ```
 
+この補助スクリプトは、指定した raw NDJSON・metadata・生成 YAML を開始時に削除して、新しい記録だけを
+出力する。残したい記録には `-Output` と `-Scenario` で別のパスを指定する。
+
 CfT の fixture が開いたら次を行う。
 
 1. Search 欄をクリックする。
