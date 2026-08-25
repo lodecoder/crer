@@ -71,8 +71,9 @@ deno task dev normalize .crer\raw-input.ndjson `
 .\scripts\record-playback-fixture.ps1
 ```
 
-Chrome for Testing が fixture を開いたら、検索欄への入力と Submit のクリックを行い、記録元の
-PowerShell で `Ctrl+C` を押します。結果は `.crer/fixture.raw-input.ndjson` に保存されます。
+Chrome for Testing が fixture を開いたら、まずページ左上のマゼンタ色の 2×2 CSS px 点をクリックして
+座標を較正します。点が消えた後に検索欄への入力と Submit のクリックを行い、記録元の PowerShell で
+Enter を押します。較正クリック自体は記録されません。結果は `.crer/fixture.raw-input.ndjson` に保存されます。
 同スクリプトは続けて `.crer/fixture.recorded.crer.yaml` も生成します。`-Output`、`-Scenario`、`-Port`、
 `-Chrome` で変更できます。記録時に有効なコンテンツ領域と CDP viewport を取得できた場合、`.meta.json`
 sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動変換します。sidecar がない場合は、従来どおり

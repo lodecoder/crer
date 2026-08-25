@@ -62,10 +62,11 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 
 CfT の fixture が開いたら次を行う。
 
-1. Search 欄をクリックする。
-2. `Crer42` と入力する。
-3. Submit をクリックする。
-4. 記録元の PowerShell に戻り、Enter を一度押す。
+1. ページ左上に表示されるマゼンタ色の 2×2 CSS px 点をクリックする。点が消え、以後の操作の記録が始まる。
+2. Search 欄をクリックする。
+3. `Crer42` と入力する。
+4. Submit をクリックする。
+5. 記録元の PowerShell に戻り、Enter を一度押す。
 
 Windows の `Ctrl+C` は PowerShell の子プロセスを強制終了して後続の normalize を実行できないことがある。
 このスクリプトは Enter を受けると stop file を作成し、record に graceful close を依頼してから normalize する。
@@ -74,7 +75,7 @@ Windows の `Ctrl+C` は PowerShell の子プロセスを強制終了して後�
 
 - `.crer\fixture.raw-input.ndjson` が作成される。
 - `.crer\fixture.recorded.crer.yaml` が作成される。
-- 有効な content bounds を取得できた場合は `.crer\fixture.raw-input.ndjson.meta.json` も作成される。
+- 有効な content bounds を取得でき、較正点をクリックした場合は `.crer\fixture.raw-input.ndjson.meta.json` に `marker_calibration` が作成される。
 - bounds 警告が出た場合、YAML の座標は物理 screen px の可能性があるため replay は行わず、その警告文を報告する。
 
 metadata が作成され、bounds 警告がなければ再生する。記録時の操作間隔は YAML の `sleep` ステップに

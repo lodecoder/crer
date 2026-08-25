@@ -1,6 +1,6 @@
-export type FocusCalibration = {
+export type MarkerCalibration = {
   screenClick: { x: number; y: number };
-  cssRect: { x: number; y: number; width: number; height: number };
+  cssPoint: { x: number; y: number };
 };
 
 export async function recordRaw(
@@ -9,9 +9,7 @@ export async function recordRaw(
   output: string,
   signal?: AbortSignal,
   viewport?: { x: number; y: number },
-  focusedElement?: () => Promise<
-    { x: number; y: number; width: number; height: number } | undefined
-  >,
+  markerWasClicked?: () => Promise<boolean>,
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
@@ -30,7 +28,7 @@ export async function recordRaw(
     const start = lib.symbols.crer_input_start(pid);
     if (start) throw new Error(`Raw Input start failed: ${start}`);
     console.error(`Recording target Chrome process: ${pid}`);
-    let focusCalibration: FocusCalibration | undefined;
+    let markerCalibration: MarkerCalibration | undefined;
     const writeMetadata = async () => {
       const rectBytes = new Uint8Array(16);
       const rect = new DataView(rectBytes.buffer);
@@ -54,7 +52,7 @@ export async function recordRaw(
               }
               : {}),
             ...(viewport ? { css_viewport: viewport } : {}),
-            ...(focusCalibration ? { focus_calibration: focusCalibration } : {}),
+            ...(markerCalibration ? { marker_calibration: markerCalibration } : {}),
           },
           null,
           2,
@@ -63,7 +61,7 @@ export async function recordRaw(
       return { rectStatus, validRect };
     };
     console.error(
-      "Recording. Press Ctrl+C to stop, or use the caller's configured stop mechanism.",
+      "Click the 2x2 magenta marker at the page's upper-left corner to calibrate and begin recording.",
     );
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
@@ -80,21 +78,26 @@ export async function recordRaw(
             kind: view.getUint32(o + 16, true),
             data: view.getUint32(o + 20, true),
           };
-          await file.write(new TextEncoder().encode(JSON.stringify(event) + "\n"));
-          // A CfT information bar is browser chrome, and can make a compositor HWND
-          // larger than the DOM viewport.  An editable element that received this
-          // click gives us a reliable screen-to-CSS calibration point.
-          if (event.kind === 3 && focusedElement && viewport) {
+          if (!markerCalibration && markerWasClicked && viewport) {
             try {
-              await new Promise((resolve) => setTimeout(resolve, 20));
-              const cssRect = await focusedElement();
-              if (cssRect && cssRect.width > 0 && cssRect.height > 0) {
-                focusCalibration = { screenClick: { x: event.x, y: event.y }, cssRect };
+              if (event.kind === 3) {
+                await new Promise((resolve) => setTimeout(resolve, 20));
+                if (await markerWasClicked()) {
+                  // The marker fills CSS pixels [0, 2) in both directions; its
+                  // centre is the least-biased reference point for a physical click.
+                  markerCalibration = {
+                    screenClick: { x: event.x, y: event.y },
+                    cssPoint: { x: 1, y: 1 },
+                  };
+                  console.error("Calibration complete. Recording browser interactions now.");
+                }
               }
             } catch {
-              // Recording must continue when the page navigates or CDP momentarily disconnects.
+              // The recording can still be normalized with explicit coordinates.
             }
+            continue;
           }
+          await file.write(new TextEncoder().encode(JSON.stringify(event) + "\n"));
         }
         await new Promise((r) => setTimeout(r, 16));
       }
@@ -102,6 +105,9 @@ export async function recordRaw(
       file.close();
     }
     const metadata = await writeMetadata();
+    if (markerWasClicked && !markerCalibration) {
+      throw new Error("recording calibration marker was not clicked");
+    }
     if (!metadata.validRect) {
       console.error(
         `Warning: CfT content bounds were unavailable (Win32 status ${metadata.rectStatus}); normalize may require explicit coordinate options.`,

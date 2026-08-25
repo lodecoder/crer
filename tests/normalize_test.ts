@@ -38,18 +38,18 @@ Deno.test("uses complete recording metadata as a coordinate transform", () => {
   );
 });
 
-Deno.test("calibrates the page origin from a focused input", () => {
+Deno.test("calibrates the page origin from the recording marker", () => {
   assertEquals(
     transformFromRecordingMetadata({
       content_rect_screen_px: { x: 0, y: 16, width: 442, height: 331 },
       css_viewport: { x: 884, y: 661 },
-      focus_calibration: {
+      marker_calibration: {
         screenClick: { x: 86, y: 35 },
-        cssRect: { x: 57, y: 8, width: 187, height: 21 },
+        cssPoint: { x: 1, y: 1 },
       },
     }),
     {
-      clientOrigin: { x: 10.75, y: 25.736006051437215 },
+      clientOrigin: { x: 85.5, y: 34.49924357034796 },
       clientSize: { x: 442, y: 331 },
       viewport: { x: 884, y: 661 },
     },

@@ -39,9 +39,7 @@ async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 type RecordingPage = {
   viewport?: Point;
-  focusedElement: () => Promise<
-    { x: number; y: number; width: number; height: number } | undefined
-  >;
+  markerWasClicked: () => Promise<boolean>;
   close: () => void;
 };
 async function recordingPage(port: number): Promise<RecordingPage | undefined> {
@@ -77,29 +75,39 @@ async function recordingPage(port: number): Promise<RecordingPage | undefined> {
         500,
       );
       const viewport = metrics.cssVisualViewport;
+      await within(
+        cdp.call("Runtime.evaluate", {
+          expression: `(() => {
+            const id = "__crer_record_calibration_marker__";
+            document.getElementById(id)?.remove();
+            globalThis.__crerCalibrationClicked = false;
+            const marker = document.createElement("div");
+            marker.id = id;
+            marker.setAttribute("aria-hidden", "true");
+            marker.style.cssText = "position:fixed;left:0;top:0;width:2px;height:2px;margin:0;padding:0;border:0;background:#ff00ff;z-index:2147483647;pointer-events:auto;";
+            marker.addEventListener("pointerup", () => {
+              globalThis.__crerCalibrationClicked = true;
+              marker.remove();
+            }, { once: true });
+            document.documentElement.append(marker);
+          })()`,
+          returnByValue: true,
+        }, attached.sessionId),
+        500,
+      );
       return {
         viewport: viewport ? { x: viewport.clientWidth, y: viewport.clientHeight } : undefined,
-        focusedElement: async () => {
+        markerWasClicked: async () => {
           const result = await within(
             cdp.call<{
-              result: {
-                value?: { x: number; y: number; width: number; height: number; editable: boolean };
-              };
+              result: { value?: boolean };
             }>("Runtime.evaluate", {
-              expression: `(() => {
-                const e = document.activeElement;
-                if (!e || !(e instanceof HTMLElement)) return undefined;
-                const editable = e instanceof HTMLInputElement || e instanceof HTMLTextAreaElement || e.isContentEditable;
-                if (!editable) return undefined;
-                const r = e.getBoundingClientRect();
-                return {x:r.x,y:r.y,width:r.width,height:r.height,editable};
-              })()`,
+              expression: "Boolean(globalThis.__crerCalibrationClicked)",
               returnByValue: true,
             }, attached.sessionId),
             500,
           );
-          const value = result.result.value;
-          return value?.editable && value.width > 0 && value.height > 0 ? value : undefined;
+          return result.result.value === true;
         },
         close: () => cdp.close(),
       };
@@ -313,13 +321,17 @@ async function main() {
     let page: RecordingPage | undefined;
     try {
       page = await recordingPage(port);
+      const useMarkerCalibration = duration === undefined;
+      if (useMarkerCalibration && !page) {
+        throw new Error("could not inject the recording calibration marker into the CfT page");
+      }
       await recordRaw(
         inputDllPath(),
         chrome.pid,
         file,
         controller.signal,
         page?.viewport,
-        page?.focusedElement,
+        useMarkerCalibration ? page?.markerWasClicked : undefined,
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
