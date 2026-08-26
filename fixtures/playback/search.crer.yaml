@@ -31,6 +31,6 @@ steps:
     at: { x: 270, y: 28 }
   - do: assert
     state: complete
-    locator_hint: { role: status, name: Result }
+    locator_hint: { role: status, name: Result, text: crer }
   - do: screenshot
     name: result

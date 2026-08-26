@@ -8,7 +8,9 @@ async function sleepInterruptibly(ms: number, signal?: AbortSignal) {
   if (!signal) return await sleep(ms);
   await Promise.race([
     sleep(ms),
-    new Promise<void>((_, reject) => signal.addEventListener("abort", () => reject(new Error("worker timed out")), { once: true })),
+    new Promise<void>((_, reject) =>
+      signal.addEventListener("abort", () => reject(new Error("worker timed out")), { once: true })
+    ),
   ]);
 }
 export type PlayOptions = {
@@ -188,10 +190,11 @@ async function waitFor(b: BrowserSession, step: Step, timeout: number, signal?: 
     const expression = `(() => {
       const hint = ${JSON.stringify(hint ?? {})};
       const elements = Array.from(document.querySelectorAll('[role]'));
-      const found = !hint.role && !hint.name || elements.some((element) => {
+      const found = !hint.role && !hint.name && !hint.text || elements.some((element) => {
         const role = element.getAttribute('role');
         const name = element.getAttribute('aria-label') || element.textContent?.trim() || '';
-        return (!hint.role || role === hint.role) && (!hint.name || name === hint.name) &&
+        const text = element.textContent?.trim() || '';
+        return (!hint.role || role === hint.role) && (!hint.name || name === hint.name) && (!hint.text || text === hint.text) &&
           !!(element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
       });
       return {url: location.href, state: document.readyState, found};
@@ -220,10 +223,11 @@ async function assertState(b: BrowserSession, step: Step) {
   const expression = `(() => {
     const hint = ${JSON.stringify(hint ?? {})};
     const elements = Array.from(document.querySelectorAll('[role]'));
-    const found = !hint.role && !hint.name || elements.some((element) => {
+    const found = !hint.role && !hint.name && !hint.text || elements.some((element) => {
       const role = element.getAttribute('role');
       const name = element.getAttribute('aria-label') || element.textContent?.trim() || '';
-      return (!hint.role || role === hint.role) && (!hint.name || name === hint.name) &&
+      const text = element.textContent?.trim() || '';
+      return (!hint.role || role === hint.role) && (!hint.name || name === hint.name) && (!hint.text || text === hint.text) &&
         !!(element.getClientRects().length && getComputedStyle(element).visibility !== 'hidden');
     });
     return {url: location.href, state: document.readyState, found};

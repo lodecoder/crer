@@ -61,6 +61,14 @@ export function scenarioFrom(value: unknown): Scenario {
     if (s.do === "sleep" && (typeof s.ms !== "number" || !Number.isFinite(s.ms) || s.ms < 0)) {
       throw new Error(`steps[${index}].ms must be a non-negative number for sleep`);
     }
+    if (s.locator_hint) {
+      const hint = object(s.locator_hint, `steps[${index}].locator_hint`);
+      for (const key of ["role", "name", "text"]) {
+        if (hint[key] !== undefined && typeof hint[key] !== "string") {
+          throw new Error(`steps[${index}].locator_hint.${key} must be a string`);
+        }
+      }
+    }
     if (s.jitter) {
       validateJitter(s.jitter, `steps[${index}].jitter`);
     }

@@ -224,7 +224,7 @@ steps:
   - do: key
     key: Enter
   - do: wait_for
-    locator_hint: { role: table, name: Results }
+    locator_hint: { role: table, name: Results, text: "10 results" }
     state: visible
   - do: scroll
     at: { x: 920, y: 620 }
@@ -234,6 +234,7 @@ steps:
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
 `text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep` である。`wait_for` と `assert` は
 ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
+`locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。
 
 `click` と `double_click` の `jitter` は `playback.jitter` と同じスキーマを持つ任意フィールド
 である。省略時だけ `playback.jitter` を使う。`jitter` を指定したステップに `radius_px` 等の

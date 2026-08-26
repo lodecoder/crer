@@ -25,3 +25,18 @@ Deno.test("rejects invalid jitter settings", () => {
     steps: [],
   }), Error, "playback.jitter is invalid");
 });
+
+Deno.test("validates locator hint text", () => {
+  const scenario = {
+    version: 1,
+    name: "result",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "assert", locator_hint: { role: "status", text: "complete" } }],
+  };
+  scenarioFrom(scenario);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "assert", locator_hint: { text: 1 } }] }),
+    Error,
+    "locator_hint.text must be a string",
+  );
+});

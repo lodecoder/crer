@@ -17,7 +17,7 @@ export type Step = {
   url?: string;
   state?: string;
   jitter?: Jitter;
-  locator_hint?: { role?: string; name?: string };
+  locator_hint?: { role?: string; name?: string; text?: string };
   [key: string]: unknown;
 };
 export type Scenario = {
