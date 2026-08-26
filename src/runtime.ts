@@ -116,6 +116,40 @@ async function setContentSize(
   }
 }
 
+async function waitForStableViewport(
+  cdp: Cdp,
+  sessionId: string,
+): Promise<ViewportInfo | undefined> {
+  const deadline = Date.now() + 10_000;
+  let previous = await readViewport(cdp, sessionId);
+  let stableSince = Date.now();
+  while (Date.now() < deadline) {
+    await sleep(100);
+    const current = await readViewport(cdp, sessionId);
+    if (!current) continue;
+    if (previous && current.width === previous.width && current.height === previous.height) {
+      if (Date.now() - stableSince >= 1_000) return current;
+    } else {
+      previous = current;
+      stableSince = Date.now();
+    }
+  }
+  return previous;
+}
+
+async function waitForDocumentReady(cdp: Cdp, sessionId: string) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const state = await cdp.call<{ result: { value?: string } }>("Runtime.evaluate", {
+      expression: "document.readyState",
+      returnByValue: true,
+    }, sessionId);
+    if (state.result.value !== "loading") return;
+    await sleep(50);
+  }
+  throw new Error("CfT page did not finish loading");
+}
+
 async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: string }> {
   for (let i = 0; i < 150; i++) {
     try {
@@ -249,6 +283,10 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     if (s.browser.window?.content) {
       await setContentSize(cdp, attached.sessionId, window.windowId, s.browser.window.content);
     }
+    // A scrollbar may only appear after the initial navigation. The recorded viewport is the
+    // post-layout coordinate system, so do not validate the provisional pre-layout dimensions.
+    await waitForDocumentReady(cdp, attached.sessionId);
+    await waitForStableViewport(cdp, attached.sessionId);
     const network = new NetworkTracker(cdp, attached.sessionId);
     await cdp.call("Network.enable", {}, attached.sessionId);
     const viewport = await validateDisplay(cdp, attached.sessionId, s, runDir);
