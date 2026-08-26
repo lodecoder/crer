@@ -1,0 +1,10 @@
+version: 1
+name: continue-after-failure
+max_parallel: 1
+on_failure:
+  scenario_failure: continue
+  environment: abort
+run:
+  serial:
+    - scenario: failure.crer.yaml
+    - scenario: keyboard-submit.crer.yaml

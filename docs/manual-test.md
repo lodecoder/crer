@@ -91,6 +91,12 @@ Tab で Submit にフォーカスして Enter で実行するキー再生は、�
 .\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\keyboard-submit.crer.yaml
 ```
 
+失敗を記録したまま次の scenario を続行し、plan が code 4 に集約されることは次で確認できる。
+
+```powershell
+.\scripts\test-plan-fixture.ps1
+```
+
 目視確認でさらに待機したい場合は、記録済みの `sleep` に 1 秒を追加する。
 
 ```powershell
