@@ -11,6 +11,7 @@ export async function recordRaw(
   viewport?: { x: number; y: number },
   markerClick?: () => Promise<{ x: number; y: number } | undefined>,
   validateViewport?: () => Promise<void>,
+  windowBounds?: { left: number; top: number },
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
@@ -54,6 +55,7 @@ export async function recordRaw(
               }
               : {}),
             ...(viewport ? { css_viewport: viewport } : {}),
+            ...(windowBounds ? { window_bounds: windowBounds } : {}),
             ...(markerCalibration ? { marker_calibration: markerCalibration } : {}),
           },
           null,

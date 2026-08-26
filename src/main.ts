@@ -4,6 +4,7 @@ import {
   normalizeRawWithWarnings,
   qpcFrequencyFromSidecar,
   transformFromSidecar,
+  windowBoundsFromSidecar,
 } from "./normalize.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { recordRaw } from "./record.ts";
@@ -145,11 +146,16 @@ async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 }
 type RecordingPage = {
   viewport: Point;
+  windowBounds?: { left: number; top: number };
   markerClick: () => Promise<Point | undefined>;
   validateViewport: () => Promise<void>;
   close: () => void;
 };
-async function recordingPage(port: number, contentSize: Point): Promise<RecordingPage | undefined> {
+async function recordingPage(
+  port: number,
+  contentSize: Point,
+  position?: Point,
+): Promise<RecordingPage | undefined> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     try {
@@ -182,6 +188,15 @@ async function recordingPage(port: number, contentSize: Point): Promise<Recordin
         }),
         500,
       );
+      if (position) {
+        await within(
+          cdp.call("Browser.setWindowBounds", {
+            windowId: window.windowId,
+            bounds: { left: position.x, top: position.y },
+          }),
+          500,
+        );
+      }
       await within(
         cdp.call("Browser.setContentsSize", { windowId: window.windowId, ...contentSize }),
         500,
@@ -235,6 +250,16 @@ async function recordingPage(port: number, contentSize: Point): Promise<Recordin
           `CfT recording viewport mismatch: expected ${contentSize.x}x${contentSize.y}`,
         );
       }
+      const currentBounds = await within(
+        cdp.call<{ bounds: { left?: number; top?: number } }>("Browser.getWindowBounds", {
+          windowId: window.windowId,
+        }),
+        500,
+      );
+      const windowBounds = Number.isFinite(currentBounds.bounds.left)
+          && Number.isFinite(currentBounds.bounds.top)
+        ? { left: currentBounds.bounds.left!, top: currentBounds.bounds.top! }
+        : undefined;
       await within(
         cdp.call("Runtime.evaluate", {
           expression: `(() => {
@@ -257,6 +282,7 @@ async function recordingPage(port: number, contentSize: Point): Promise<Recordin
       );
       return {
         viewport,
+        windowBounds,
         markerClick: async () => {
           const result = await within(
             cdp.call<{
@@ -319,6 +345,16 @@ const contentSizeOption = (): Point => {
     throw new Error("--content-size must be integer width,height with both values at least 32");
   }
   return size;
+};
+const positionOption = (): Point | undefined => {
+  const position = pointOption("--position");
+  if (
+    position
+    && (!Number.isInteger(position.x) || !Number.isInteger(position.y))
+  ) {
+    throw new Error("--position must be integer left,top");
+  }
+  return position;
 };
 async function runNode(
   node: PlanNode,
@@ -446,6 +482,7 @@ async function main() {
     const profile = `${await Deno.realPath(runDir)}/profile`;
     const url = option("--url") ?? "about:blank";
     const contentSize = contentSizeOption();
+    const position = positionOption();
     const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
     const port = (reservation.addr as Deno.NetAddr).port;
     reservation.close();
@@ -490,7 +527,7 @@ async function main() {
       : undefined;
     let page: RecordingPage | undefined;
     try {
-      page = await recordingPage(port, contentSize);
+      page = await recordingPage(port, contentSize, position);
       const useMarkerCalibration = duration === undefined;
       if (useMarkerCalibration && !page) {
         throw new Error("could not inject the recording calibration marker into the CfT page");
@@ -503,6 +540,7 @@ async function main() {
         page?.viewport,
         useMarkerCalibration ? page?.markerClick : undefined,
         page?.validateViewport,
+        page?.windowBounds,
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
@@ -529,6 +567,7 @@ async function main() {
     }
     const sidecarTransform = origin ? undefined : await transformFromSidecar(file);
     const qpcFrequencyHz = origin ? undefined : await qpcFrequencyFromSidecar(file);
+    const windowBounds = origin ? undefined : await windowBoundsFromSidecar(file);
     if (!origin && !sidecarTransform) {
       console.error(
         "Warning: recording metadata is unavailable; output coordinates remain physical screen pixels.",
@@ -543,6 +582,12 @@ async function main() {
         : sidecarTransform,
       qpcFrequencyHz,
     );
+    if (windowBounds) {
+      normalized.scenario.browser.window = {
+        ...(normalized.scenario.browser.window ?? {}),
+        bounds: windowBounds,
+      };
+    }
     await saveYaml(output, normalized.scenario);
     for (const warning of normalized.warnings) console.error(`Warning: ${warning}`);
     console.log(`Wrote ${output}`);

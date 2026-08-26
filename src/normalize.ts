@@ -5,6 +5,7 @@ export type CoordinateTransform = { clientOrigin: Point; clientSize: Point; view
 type RecordingMetadata = {
   content_rect_screen_px?: { x: number; y: number; width: number; height: number };
   css_viewport?: Point;
+  window_bounds?: { left: number; top: number };
   qpc_frequency_hz?: string;
   marker_calibration?: {
     screenClick: Point;
@@ -60,6 +61,22 @@ export async function qpcFrequencyFromSidecar(rawFile: string): Promise<bigint |
     const value = (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
       .qpc_frequency_hz;
     return value && /^\d+$/.test(value) && BigInt(value) > 0n ? BigInt(value) : undefined;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw new Error(`could not read recording metadata: ${error}`);
+  }
+}
+
+export async function windowBoundsFromSidecar(
+  rawFile: string,
+): Promise<{ left: number; top: number } | undefined> {
+  try {
+    const bounds =
+      (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
+        .window_bounds;
+    return bounds && Number.isFinite(bounds.left) && Number.isFinite(bounds.top)
+      ? bounds
+      : undefined;
   } catch (error) {
     if (error instanceof Deno.errors.NotFound) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);

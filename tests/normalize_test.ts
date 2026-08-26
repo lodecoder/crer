@@ -4,6 +4,7 @@ import {
   normalizeRawWithWarnings,
   screenToCss,
   transformFromRecordingMetadata,
+  windowBoundsFromSidecar,
 } from "../src/normalize.ts";
 
 Deno.test("converts physical screen coordinates into CSS viewport coordinates", () => {
@@ -54,6 +55,17 @@ Deno.test("calibrates the page origin from the recording marker", () => {
       viewport: { x: 884, y: 661 },
     },
   );
+});
+
+Deno.test("reads the recorded window position from a sidecar", async () => {
+  const path = await Deno.makeTempFile();
+  try {
+    await Deno.writeTextFile(`${path}.meta.json`, JSON.stringify({ window_bounds: { left: -800, top: 40 } }));
+    assertEquals(await windowBoundsFromSidecar(path), { left: -800, top: 40 });
+  } finally {
+    await Deno.remove(path).catch(() => {});
+    await Deno.remove(`${path}.meta.json`).catch(() => {});
+  }
 });
 
 Deno.test("normalizes mouse, wheel, and key events into steps", async () => {

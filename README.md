@@ -67,7 +67,7 @@ dotnet publish native/Crer.WinInput.csproj -c Release -r win-x64
 CfT のコンテンツ領域で操作を記録し、`Ctrl+C` で停止します。
 
 ```powershell
-deno task dev record .crer\raw-input.ndjson --url https://example.test --content-size 860,560
+deno task dev record .crer\raw-input.ndjson --url https://example.test --content-size 860,560 --position 1200,80
 deno task dev normalize .crer\raw-input.ndjson `
   --url https://example.test `
   --output recorded.crer.yaml
@@ -90,6 +90,8 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 
 `record --content-size <width>,<height>` は録画用 CfT の CSS viewport を固定する（既定は `860,560`）。
 指定値を実測できない場合、または記録中に viewport が変化した場合は、座標が混在しないよう記録を失敗終了する。
+`record --position <left>,<top>` は録画用 CfT の画面上の位置を指定し、実測された位置を生成 YAML の
+`browser.window.bounds` に保存する。
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
