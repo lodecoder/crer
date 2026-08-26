@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+  [ValidateSet('win-x64', 'win-arm64')]
+  [string] $Runtime = 'win-x64'
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -19,7 +22,7 @@ if (($env:Path -split ';') -notcontains $vswhereDirectory) {
 
 Push-Location $repoRoot
 try {
-  dotnet publish native\Crer.WinInput.csproj -c Release -r win-x64
+  dotnet publish native\Crer.WinInput.csproj -c Release -r $Runtime
   if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
   }

@@ -93,6 +93,12 @@ $env:CRER_CHROME = 'C:\path\to\chrome.exe'
 .\dist\win-x64\crer.exe doctor
 ```
 
+ARM64 の Windows PC 向けには、ARM64 用の MSVC / Windows SDK を導入した上で次を実行します。
+
+```powershell
+.\scripts\build-release.ps1 -Runtime win-arm64
+```
+
 CfT を使う配布物の smoke test は次です。これは `crer.exe` で fixture を再生し、artifacts と物理カーソルを
 検査します。
 

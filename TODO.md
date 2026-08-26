@@ -60,3 +60,5 @@
 - [ ] CfT の固定バージョン導入、`doctor` の診断、サンプル scenario を整える。
   - `doctor` に CfT 実行ファイル・バージョン・導入 manifest の診断を追加。固定版の再導入と manifest 確認が残る。
 - [ ] Windows x64 / ARM64 のビルドと回帰テストを整備する。
+  - `build-native.ps1 -Runtime` と `build-release.ps1 -Runtime` で x64 / ARM64 を選択可能にする。ARM64 実機での
+    `test-release.ps1` 実行が残る。
