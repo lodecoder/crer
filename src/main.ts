@@ -156,7 +156,9 @@ async function recordingPage(
   contentSize: Point,
   position?: Point,
 ): Promise<RecordingPage | undefined> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 10_000;
+  const cdpWaitMs = 2_000;
+  let lastError: unknown;
   while (Date.now() < deadline) {
     try {
       const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json() as {
@@ -169,24 +171,24 @@ async function recordingPage(
       const target = targets.find((candidate) => candidate.type === "page");
       if (!target) throw new Error("no page target");
       const cdp = new Cdp(version.webSocketDebuggerUrl);
-      await cdp.open(250);
+      await cdp.open(cdpWaitMs);
       const attached = await within(
         cdp.call<{ sessionId: string }>("Target.attachToTarget", {
           targetId: target.id,
           flatten: true,
         }),
-        500,
+        cdpWaitMs,
       );
       const window = await within(
         cdp.call<{ windowId: number }>("Browser.getWindowForTarget", { targetId: target.id }),
-        500,
+        cdpWaitMs,
       );
       await within(
         cdp.call("Browser.setWindowBounds", {
           windowId: window.windowId,
           bounds: { windowState: "normal" },
         }),
-        500,
+        cdpWaitMs,
       );
       if (position) {
         await within(
@@ -194,22 +196,22 @@ async function recordingPage(
             windowId: window.windowId,
             bounds: { left: position.x, top: position.y },
           }),
-          500,
+          cdpWaitMs,
         );
       }
       await within(
         cdp.call("Browser.setContentsSize", { windowId: window.windowId, ...contentSize }),
-        500,
+        cdpWaitMs,
       );
-      await within(cdp.call("Page.enable", {}, attached.sessionId), 500);
-      const readyDeadline = Date.now() + 2_000;
+      await within(cdp.call("Page.enable", {}, attached.sessionId), cdpWaitMs);
+      const readyDeadline = Date.now() + 10_000;
       while (true) {
         const ready = await within(
           cdp.call<{ result: { value?: string } }>("Runtime.evaluate", {
             expression: "document.readyState",
             returnByValue: true,
           }, attached.sessionId),
-          500,
+          cdpWaitMs,
         );
         if (ready.result.value !== "loading") break;
         if (Date.now() >= readyDeadline) throw new Error("CfT page did not finish loading");
@@ -224,7 +226,7 @@ async function recordingPage(
             {},
             attached.sessionId,
           ),
-          500,
+          cdpWaitMs,
         );
         const viewport = metrics.cssVisualViewport;
         if (!viewport || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) {
@@ -236,7 +238,7 @@ async function recordingPage(
       for (let attempt = 0; attempt < 10; attempt++) {
         await within(
           cdp.call("Browser.setContentsSize", { windowId: window.windowId, ...contentSize }),
-          500,
+          cdpWaitMs,
         );
         await sleep(100);
         const actual = await readViewport();
@@ -254,7 +256,7 @@ async function recordingPage(
         cdp.call<{ bounds: { left?: number; top?: number } }>("Browser.getWindowBounds", {
           windowId: window.windowId,
         }),
-        500,
+        cdpWaitMs,
       );
       const windowBounds = Number.isFinite(currentBounds.bounds.left)
           && Number.isFinite(currentBounds.bounds.top)
@@ -278,7 +280,7 @@ async function recordingPage(
           })()`,
           returnByValue: true,
         }, attached.sessionId),
-        500,
+        cdpWaitMs,
       );
       return {
         viewport,
@@ -291,7 +293,7 @@ async function recordingPage(
               expression: "globalThis.__crerCalibrationPoint",
               returnByValue: true,
             }, attached.sessionId),
-            500,
+            cdpWaitMs,
           );
           const point = result.result.value;
           return point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined;
@@ -306,10 +308,12 @@ async function recordingPage(
         },
         close: () => cdp.close(),
       };
-    } catch {
+    } catch (error) {
+      lastError = error;
       await sleep(50);
     }
   }
+  if (lastError) console.error(`Warning: recording page setup failed: ${lastError}`);
   return undefined;
 }
 async function closeRecordingBrowser(port: number, chrome: Deno.ChildProcess): Promise<void> {
