@@ -40,6 +40,13 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 - 同じフォルダの `foreground.json` に `restoreStatus: 0` がある。
 - `PASS` が表示される。デスクトップ環境自体がカーソルを動かす場合は `INCONCLUSIVE` 警告でもよい。
 
+カーソルと前面ウィンドウだけを観察する場合は、5 秒間何も操作しない fixture を使う。コマンド実行後は
+マウス・キーボードへ触れずに待機する。
+
+```powershell
+.\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\cursor-idle.crer.yaml
+```
+
 ## 2. 失敗 artifacts
 
 ```powershell
