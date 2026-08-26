@@ -428,13 +428,12 @@ const keyDownEvent = (info: KeyInfo, modifiers = 0) =>
 async function act(
   b: BrowserSession,
   step: Step,
+  at: { x: number; y: number } | undefined,
   j: Jitter | undefined,
   rng: Random,
   timeout: number,
   signal?: AbortSignal,
 ) {
-  const at = step.at ? jitter(step.at, step.jitter ?? j, rng, b.viewport) : undefined;
-  if (step.at && !at) throw new Error("jitter bounds failure");
   const call = (m: string, p: Record<string, unknown>) => b.cdp.call(m, p, b.sessionId);
   switch (step.do) {
     case "navigate":
@@ -565,6 +564,18 @@ async function act(
       throw new Error(`unsupported step: ${step.do}`);
   }
 }
+async function currentUrl(b: BrowserSession): Promise<string | undefined> {
+  try {
+    const result = await b.cdp.call<{ result: { value?: string } }>(
+      "Runtime.evaluate",
+      { expression: "location.href", returnByValue: true },
+      b.sessionId,
+    );
+    return result.result.value;
+  } catch {
+    return undefined;
+  }
+}
 export async function playScenario(s: Scenario, options: PlayOptions): Promise<RunResult> {
   const runDir = `.crer/runs/${crypto.randomUUID()}`;
   await Deno.mkdir(runDir, { recursive: true });
@@ -606,12 +617,44 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     if (!Number.isFinite(stepDelayMs) || stepDelayMs < 0) {
       throw new Error("step_delay_ms must be a non-negative number");
     }
+    const appendStepLog = (entry: Record<string, unknown>) =>
+      Deno.writeTextFile(`${runDir}/steps.ndjson`, JSON.stringify(entry) + "\n", { append: true });
     for (const [i, step] of s.steps.entries()) {
+      const startedAt = new Date().toISOString();
+      let at: { x: number; y: number } | undefined;
+      let jitterOffset: { x: number; y: number } | undefined;
       try {
         if (options.signal?.aborted) throw new Error("worker timed out");
-        await act(b, step, s.playback?.jitter, rng, timeout, options.signal);
+        if (step.at) {
+          at = jitter(step.at, step.jitter ?? s.playback?.jitter, rng, b.viewport);
+          if (!at) throw new Error("jitter bounds failure");
+          jitterOffset = { x: at.x - step.at.x, y: at.y - step.at.y };
+        }
+        await act(b, step, at, s.playback?.jitter, rng, timeout, options.signal);
+        await appendStepLog({
+          index: i,
+          do: step.do,
+          startedAt,
+          completedAt: new Date().toISOString(),
+          ...(at ? { at } : {}),
+          ...(jitterOffset ? { jitterOffset } : {}),
+          url: await currentUrl(b),
+          status: "ok",
+        });
       } catch (e) {
         const kind = failureFor(step, e);
+        await appendStepLog({
+          index: i,
+          do: step.do,
+          startedAt,
+          completedAt: new Date().toISOString(),
+          ...(at ? { at } : {}),
+          ...(jitterOffset ? { jitterOffset } : {}),
+          url: await currentUrl(b),
+          status: "failed",
+          kind,
+          error: String(e),
+        });
         await capture(b, `failure-${i}`);
         failures.push(`${i}:${kind}:${e}`);
         const policy = s.playback?.on_failure?.[kind] ?? s.playback?.on_failure?.default ?? "abort";

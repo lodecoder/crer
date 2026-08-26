@@ -71,3 +71,4 @@
 
 - [x] `crer inspect` で run artifact の要約、診断 JSON、スクリーンショット一覧を表示する。
 - [x] CfT 実行ファイルの SHA-256 を manifest に保存し、`doctor` で照合する。
+- [x] 再生ステップの時刻、実効座標、jitter offset、URL、成否を `steps.ndjson` に保存する。

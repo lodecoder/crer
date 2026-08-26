@@ -114,7 +114,8 @@ CfT を使う配布物の smoke test は次です。これは `crer.exe` で fix
 .\scripts\test-release.ps1
 ```
 
-実行 artifacts は `.crer/runs/<run-id>` に出力されます。
+実行 artifacts は `.crer/runs/<run-id>` に出力されます。`steps.ndjson` には各ステップの時刻、実効座標、
+jitter offset、URL、成否が追記され、`crer inspect` で件数と失敗数を確認できます。
 
 - 仕様書: [docs/specification.md](docs/specification.md)
 - 手動結合テスト: [docs/manual-test.md](docs/manual-test.md)

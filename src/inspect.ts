@@ -9,6 +9,20 @@ async function readJson(path: string): Promise<Json | undefined> {
   }
 }
 
+async function stepSummary(path: string) {
+  try {
+    const entries = (await Deno.readTextFile(path)).trim().split("\n").filter(Boolean).map((line) =>
+      JSON.parse(line) as Json
+    );
+    return {
+      count: entries.length,
+      failed: entries.filter((entry) => entry.status === "failed").length,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function inspectRun(runDir: string) {
   const stat = await Deno.stat(runDir);
   if (!stat.isDirectory) throw new Error(`artifact directory is not a directory: ${runDir}`);
@@ -26,6 +40,7 @@ export async function inspectRun(runDir: string) {
     display: await readJson(`${runDir}/display.json`),
     foreground: await readJson(`${runDir}/foreground.json`),
     launch: await readJson(`${runDir}/launch.json`),
+    steps: await stepSummary(`${runDir}/steps.ndjson`),
     screenshots: screenshot,
     files,
   };
