@@ -214,7 +214,11 @@ async function recordingPage(
         );
       }
       await within(
-        cdp.call("Browser.setContentsSize", { windowId: window.windowId, ...contentSize }),
+        cdp.call("Browser.setContentsSize", {
+          windowId: window.windowId,
+          width: contentSize.x,
+          height: contentSize.y,
+        }),
         cdpWaitMs,
       );
       await within(cdp.call("Page.enable", {}, attached.sessionId), cdpWaitMs);
@@ -251,7 +255,11 @@ async function recordingPage(
       let viewport: Point | undefined;
       for (let attempt = 0; attempt < 10; attempt++) {
         await within(
-          cdp.call("Browser.setContentsSize", { windowId: window.windowId, ...contentSize }),
+          cdp.call("Browser.setContentsSize", {
+            windowId: window.windowId,
+            width: contentSize.x,
+            height: contentSize.y,
+          }),
           cdpWaitMs,
         );
         await sleep(100);
