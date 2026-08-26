@@ -165,6 +165,8 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
   スクロールバー等により実効 CSS viewport が異なる場合、記録は `window.viewport` に座標系を保存する。
   再生は `Browser.setWindowBounds` と `Browser.setContentsSize` を順に実行し、`window.viewport`
   （未指定時は `window.content`）との実測一致を検証する。
+- `play` / `run` の `--ignore-viewport-mismatch` 指定時は mismatch を `display.json` と標準エラーへ
+  保存して再生を継続する。この escape hatch は座標の再現性を保証しない調査用途に限定する。
 - `browser_zoom` は `100` のみを v1 の厳密保証範囲とする。Chrome UI のサイト別ズームは CDP の
   安定 API で直接固定できないためである。100% 以外を必要とする場合は、専用プロファイル
   テンプレートに事前設定したズームを使い、`visualViewport.scale` と CSS viewport の検証を

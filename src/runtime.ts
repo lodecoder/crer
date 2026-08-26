@@ -33,6 +33,7 @@ export type PlayOptions = {
   seed?: string;
   keepArtifacts?: boolean;
   stepDelayMs?: number;
+  ignoreViewportMismatch?: boolean;
   signal?: AbortSignal;
 };
 type ForegroundGuard = {
@@ -203,13 +204,18 @@ async function validateDisplay(
   sessionId: string,
   s: Scenario,
   runDir: string,
+  ignoreViewportMismatch: boolean,
 ): Promise<{ x: number; y: number }> {
   const display = s.browser.display;
   const actual = await readViewport(cdp, sessionId);
   const expectedViewport = s.browser.window?.viewport ?? s.browser.window?.content;
   await Deno.writeTextFile(
     `${runDir}/display.json`,
-    JSON.stringify({ actual: actual ?? {}, expectedViewport, display: display ?? {} }, null, 2)
+    JSON.stringify(
+      { actual: actual ?? {}, expectedViewport, display: display ?? {}, ignoreViewportMismatch },
+      null,
+      2,
+    )
       + "\n",
   );
   if (!actual || actual.width <= 0 || actual.height <= 0) {
@@ -224,9 +230,15 @@ async function validateDisplay(
     expectedViewport
     && (actual.width !== expectedViewport.width || actual.height !== expectedViewport.height)
   ) {
-    throw new Error(
-      `Viewport mismatch: expected ${expectedViewport.width}x${expectedViewport.height}, got ${actual.width}x${actual.height}`,
-    );
+    const message =
+      `Viewport mismatch: expected ${expectedViewport.width}x${expectedViewport.height}, got ${actual.width}x${actual.height}`;
+    if (ignoreViewportMismatch) {
+      console.warn(
+        `Warning: ${message}; continuing because --ignore-viewport-mismatch was specified`,
+      );
+    } else {
+      throw new Error(message);
+    }
   }
   if (!display || display.zoom_check === "off") return { x: actual.width, y: actual.height };
   if (display.expected_dpr !== undefined && actual?.dpr !== display.expected_dpr) {
@@ -325,14 +337,20 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     // space itself rather than accepting a short-lived provisional viewport.
     await waitForDocumentReady(cdp, attached.sessionId);
     const expectedViewport = s.browser.window?.viewport ?? s.browser.window?.content;
-    if (expectedViewport) {
+    if (expectedViewport && !options.ignoreViewportMismatch) {
       await waitForExpectedViewport(cdp, attached.sessionId, expectedViewport);
     } else {
       await waitForStableViewport(cdp, attached.sessionId);
     }
     const network = new NetworkTracker(cdp, attached.sessionId);
     await cdp.call("Network.enable", {}, attached.sessionId);
-    const viewport = await validateDisplay(cdp, attached.sessionId, s, runDir);
+    const viewport = await validateDisplay(
+      cdp,
+      attached.sessionId,
+      s,
+      runDir,
+      options.ignoreViewportMismatch ?? false,
+    );
     stage = "ready";
     await writeLaunchDiagnostic();
     return {

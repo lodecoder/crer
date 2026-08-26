@@ -115,6 +115,10 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
+再生時に viewport mismatch を警告だけにして続行する必要がある場合は、`play` または `run` に
+`--ignore-viewport-mismatch` を指定します。`display.json` には実測値とこの指定の有無が保存されます。
+座標操作の安全性は下がるため、画面差異を確認する調査用途に限って使用してください。
+
 ### 配布用ビルド
 
 次で `dist\win-x64\crer.exe` と同じフォルダの `crer-win-input.dll` を生成します。CfT は配布物に

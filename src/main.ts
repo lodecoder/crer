@@ -423,6 +423,7 @@ async function runNode(
   maxParallel: number,
   workerMs?: number,
   onFailure?: Record<string, FailurePolicy | undefined>,
+  ignoreViewportMismatch = false,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
     const controller = new AbortController();
@@ -438,6 +439,7 @@ async function runNode(
         chromePath: chromePath(),
         inputDllPath: inputDllPath(),
         signal: controller.signal,
+        ignoreViewportMismatch,
       });
       return timedOut
         ? [{ ...result, code: 4, failures: [...result.failures, "plan:timeout:worker_ms"] }]
@@ -449,7 +451,14 @@ async function runNode(
   if ("serial" in node) {
     const out: RunResult[] = [];
     for (const child of node.serial) {
-      const results = await runNode(child, base, maxParallel, workerMs, onFailure);
+      const results = await runNode(
+        child,
+        base,
+        maxParallel,
+        workerMs,
+        onFailure,
+        ignoreViewportMismatch,
+      );
       out.push(...results);
       if (shouldAbortPlan(results, onFailure)) break;
     }
@@ -458,7 +467,7 @@ async function runNode(
   const results = await mapWithConcurrency(
     node.parallel.jobs,
     maxParallel,
-    (child) => runNode(child, base, maxParallel, workerMs, onFailure),
+    (child) => runNode(child, base, maxParallel, workerMs, onFailure, ignoreViewportMismatch),
     (result) =>
       node.parallel.fail_fast
         ? result.some((run) => run.code !== 0)
@@ -518,6 +527,7 @@ async function main() {
       seed: option("--seed"),
       keepArtifacts: args.includes("--keep-artifacts"),
       stepDelayMs,
+      ignoreViewportMismatch: args.includes("--ignore-viewport-mismatch"),
     });
     console.log(JSON.stringify(r, null, 2));
     Deno.exitCode = r.code;
@@ -531,6 +541,7 @@ async function main() {
       p.max_parallel ?? 1,
       p.timeouts?.worker_ms,
       p.on_failure,
+      args.includes("--ignore-viewport-mismatch"),
     );
     const code = aggregatePlanExitCode(results);
     console.log(JSON.stringify(results, null, 2));
