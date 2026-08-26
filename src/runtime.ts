@@ -234,7 +234,6 @@ async function capture(b: BrowserSession, name: string, required = false) {
   for (let attempt = 0; attempt < 2; attempt++) {
     let pageCdp: Cdp | undefined;
     try {
-      await b.cdp.call("Page.bringToFront", {}, b.sessionId);
       const warmupCdp = new Cdp(b.pageDebuggerUrl);
       await warmupCdp.open();
       await warmupCdp.call("Page.enable");
