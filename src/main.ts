@@ -252,6 +252,25 @@ async function recordingPage(
         }
         return { x: viewport.clientWidth, y: viewport.clientHeight };
       };
+      const waitForStableViewport = async () => {
+        const deadline = Date.now() + 10_000;
+        let previous = await readViewport();
+        let stableSince = Date.now();
+        while (Date.now() < deadline) {
+          await sleep(100);
+          const current = await readViewport();
+          if (current.x === previous.x && current.y === previous.y) {
+            if (Date.now() - stableSince >= 1_000) return current;
+          } else {
+            previous = current;
+            stableSince = Date.now();
+          }
+        }
+        throw new Error("CfT recording viewport did not stabilize before calibration");
+      };
+      // Sites can add scrollbars after document.readyState becomes complete. Wait for that initial
+      // layout to settle, then apply the requested viewport and only then expose the marker.
+      await waitForStableViewport();
       let viewport: Point | undefined;
       for (let attempt = 0; attempt < 10; attempt++) {
         await within(

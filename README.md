@@ -80,7 +80,8 @@ deno task dev normalize .crer\raw-input.ndjson `
 `record` の主な指定:
 
 - `--content-size <width>,<height>` — 録画するページの CSS viewport。既定は `860,560`。指定値を
-  適用できない、または録画中に変化した場合は座標混在を防ぐため失敗終了する。
+  適用できない、または録画開始後に変化した場合は座標混在を防ぐため失敗終了する。初期ロードで
+  スクロールバー等が追加されるページでは、マーカー表示前に viewport の安定を待つ。
 - `--position <left>,<top>` — CfT ウィンドウの画面上の位置。負の座標も指定可能。
 
 正規化後の YAML には、実測した値が次のように保存されるため、再生時も同じ viewport と位置を使う。
