@@ -96,7 +96,7 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
   明示的に出力する。たとえば click 後 5 秒で次の click をした場合、間に `{ do: sleep, ms: 5000 }` を出力する。
 - 記録中は UI によるページ操作を妨げない。CfT 以外で行った入力は記録しない。
 
-記録開始後の停止操作は `Ctrl+C`（1 回目は graceful stop、2 回目は強制中断）または CfT
+記録開始後の停止操作は、対話的な直接起動では `Enter` または `Ctrl+C`（1 回目は graceful stop、2 回目は強制中断）、または CfT
 ウィンドウの終了とする。graceful stop では、未確定の down/up 対を `raw-input.ndjson` に残し、
 YAML へは不完全な操作を出力せず警告する。CfT が前景でない間のキー入力、Chrome のタブバー・
 アドレスバー・DevTools 上の入力、対象コンテンツ領域外のポインター入力は記録しない。

@@ -132,6 +132,25 @@ async function chromeDiagnostic(configured: string | undefined) {
   };
 }
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+function stopOnTerminalEnter(controller: AbortController): () => void {
+  const reader = Deno.stdin.readable.getReader();
+  const cancel = () => {
+    void reader.cancel().catch(() => {});
+  };
+  controller.signal.addEventListener("abort", cancel, { once: true });
+  void (async () => {
+    try {
+      const result = await reader.read();
+      if (!result.done) controller.abort();
+    } catch {
+      // Ctrl+C and teardown can cancel the terminal read; the normal stop path handles it.
+    } finally {
+      controller.signal.removeEventListener("abort", cancel);
+      reader.releaseLock();
+    }
+  })();
+  return cancel;
+}
 async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -574,6 +593,12 @@ async function main() {
         }
       }, 100)
       : undefined;
+    // The fixture script owns its terminal and uses --stop-file. A direct interactive invocation
+    // can instead finish naturally with Enter, without requiring a second shell or Ctrl+C.
+    const cancelTerminalEnter = !stopFile && duration === undefined && Deno.isatty(Deno.stdin.rid)
+      ? stopOnTerminalEnter(controller)
+      : undefined;
+    if (cancelTerminalEnter) console.error("Recording. Press Enter or Ctrl+C to stop.");
     let page: RecordingPage | undefined;
     try {
       page = await recordingPage(port, contentSize, position);
@@ -596,6 +621,7 @@ async function main() {
       Deno.removeSignalListener("SIGINT", onInterrupt);
       if (timer) clearTimeout(timer);
       if (stopFileTimer) clearInterval(stopFileTimer);
+      cancelTerminalEnter?.();
       page?.close();
       await closeRecordingBrowser(port, chrome);
     }

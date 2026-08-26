@@ -64,7 +64,8 @@ deno task test
 dotnet publish native/Crer.WinInput.csproj -c Release -r win-x64
 ```
 
-CfT のコンテンツ領域で操作を記録し、`Ctrl+C` で停止します。
+CfT のコンテンツ領域で操作を記録し、直接起動時は PowerShell で `Enter` または `Ctrl+C` を押して停止します。
+`--stop-file` を使う自動化では、指定した stop file の作成で停止します。
 
 ```powershell
 deno task dev record .crer\raw-input.ndjson `
