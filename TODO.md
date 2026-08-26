@@ -17,7 +17,9 @@
 - [x] ローカル fixture ページに対し `play` を実行し、起動・ウィンドウ位置・入力・終了を確認する。
   - 2026-08-19: `fixtures/playback/search.crer.yaml` を CfT 152.0.7977.42 で再生し、終了コード 0 と `result.png` / `run.json` を確認。
 - [ ] OS のカーソル位置、前面ウィンドウ、通常 Chrome が変化しないことを確認する。
-- [ ] 成功／失敗時の screenshot・run metadata・終了コードを自動テストする。
+- [x] 成功／失敗時の screenshot・run metadata・終了コードを自動テストする。
+  - `scripts/test-playback-fixture.ps1` が成功時の `result.png`、失敗時の `failure-0.png`、両方の
+    `run.json` / `display.json` と終了コードを検査する。
 
 完了条件: Windows 11 上で headful CfT の再生を CI 非依存で再現でき、証跡を artifacts に残せること。
 
@@ -35,7 +37,8 @@
 ## P1 — シナリオ言語を仕様へ追随
 
 - [x] `drag`、`assert`、`key_chord` を実装する。
-- [ ] `wait_for` の URL / locator hint / network idle を仕様どおり実装する。
+- [x] `wait_for` の URL / locator hint / network idle を仕様どおり実装する。
+  - URL パターン、可視 locator、CDP Network イベントに基づく 500ms の idle 判定を実装済み。
 - [ ] 個別 jitter、viewport / DPR / zoom の検証を厳密化する。
   - jitter の必須項目・型・値域検証は実装済み。viewport / DPR / zoom の実行時検証は未完了。
 
