@@ -17,7 +17,9 @@ $env:Path = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:Pat
 dotnet publish native\Crer.WinInput.csproj -c Release -r win-x64
 ```
 
-`doctor` で `chromeExists: true` と `ffiExists: true` を確認する。以下のテスト中は普段使いの
+`doctor` で `chrome.exists: true` と `ffiExists: true` を確認する。`chrome.manifest` がある場合は
+`matchesChrome: true` と `isChromeForTesting: true` も確認する。manifest がない場合、CfT かどうかは
+パスだけでは確定できないため `isChromeForTesting: "unverified"` となる。以下のテスト中は普段使いの
 Chrome を操作しない。CRER は `CRER_CHROME` または `--chrome` を明示しない限り起動しない。
 CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効で起動するため、Windows の表示倍率を
 変更する必要はない。

@@ -30,6 +30,70 @@ const inputDllPath = () => {
   }
   return "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
 };
+const parentDirectory = (path: string) => path.replace(/[\\/][^\\/]+$/, "");
+async function chromeDiagnostic(configured: string | undefined) {
+  if (!configured) return { path: "not configured", exists: false };
+  let resolved: string;
+  try {
+    resolved = await Deno.realPath(configured);
+  } catch {
+    return { path: configured, exists: false };
+  }
+  let version: string | undefined;
+  try {
+    const escapedPath = resolved.replaceAll("'", "''");
+    const output = await within(
+      new Deno.Command("powershell.exe", {
+        args: [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-Item -LiteralPath '${escapedPath}').VersionInfo.ProductVersion`,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output(),
+      3_000,
+    );
+    if (output.code === 0) {
+      const text = new TextDecoder().decode(output.stdout).trim();
+      if (text) version = text;
+    }
+  } catch {
+    // The executable existence check above is still useful when version probing is blocked.
+  }
+  let directory = parentDirectory(resolved);
+  let manifest:
+    | { path: string; requested?: string; installed?: string; matchesChrome: boolean }
+    | undefined;
+  for (let i = 0; i < 8 && directory; i++) {
+    const candidate = `${directory}\\crer-chrome.json`;
+    try {
+      const raw = JSON.parse(await Deno.readTextFile(candidate)) as {
+        requested?: unknown;
+        installed?: unknown;
+        chrome?: unknown;
+      };
+      const manifestChrome = typeof raw.chrome === "string" ? raw.chrome : undefined;
+      manifest = {
+        path: candidate,
+        ...(typeof raw.requested === "string" ? { requested: raw.requested } : {}),
+        ...(typeof raw.installed === "string" ? { installed: raw.installed } : {}),
+        matchesChrome: manifestChrome?.toLowerCase() === resolved.toLowerCase(),
+      };
+      break;
+    } catch {
+      directory = parentDirectory(directory);
+    }
+  }
+  return {
+    path: resolved,
+    exists: true,
+    version: version ?? "unavailable",
+    isChromeForTesting: manifest ? manifest.matchesChrome : "unverified",
+    manifest: manifest ?? "not found",
+  };
+}
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -221,21 +285,13 @@ async function main() {
   if (command === "doctor") {
     const configured = configuredChromePath();
     const ffi = inputDllPath();
-    let chromeExists = false;
-    if (configured) {
-      try {
-        chromeExists = (await Deno.stat(configured)).isFile;
-      } catch {
-        // Report the unavailable path below instead of failing the diagnostic command.
-      }
-    }
+    const chrome = await chromeDiagnostic(configured);
     console.log(
       JSON.stringify(
         {
           deno: Deno.version.deno,
           os: Deno.build,
-          chrome: configured ?? "not configured",
-          chromeExists,
+          chrome,
           ffi,
           ffiExists: await Deno.stat(ffi).then((info) => info.isFile).catch(() => false),
         },

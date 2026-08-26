@@ -10,12 +10,16 @@ current PowerShell session must receive CRER_CHROME immediately:
 #>
 [CmdletBinding()]
 param(
-  [string] $InstallRoot = (Join-Path $PSScriptRoot '..\.crer\browsers'),
+  [string] $InstallRoot,
   [string] $Version = 'stable',
   [switch] $NoPersist
 )
 
 $ErrorActionPreference = 'Stop'
+$repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+  $InstallRoot = Join-Path $repoRoot '.crer\browsers'
+}
 $root = [System.IO.Path]::GetFullPath($InstallRoot)
 
 if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
