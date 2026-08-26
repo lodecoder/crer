@@ -284,9 +284,9 @@ async function assertState(b: BrowserSession, step: Step) {
     throw new Error("assert locator failed");
   }
 }
-type KeyInfo = { key: string; vk: number; code: string };
+type KeyInfo = { key: string; vk: number; code: string; text?: string };
 const keys: Record<string, KeyInfo> = {
-  Enter: { key: "Enter", vk: 13, code: "Enter" },
+  Enter: { key: "Enter", vk: 13, code: "Enter", text: "\r" },
   Tab: { key: "Tab", vk: 9, code: "Tab" },
   Escape: { key: "Escape", vk: 27, code: "Escape" },
   Backspace: { key: "Backspace", vk: 8, code: "Backspace" },
@@ -311,17 +311,27 @@ const keyInfo = (key: string): KeyInfo =>
       ? `Digit${key}`
       : key,
   };
-// Non-text physical keys must begin with rawKeyDown.  keyDown is intended for a
-// DOM key event including text generation, whereas rawKeyDown lets Chromium run
-// its normal focus navigation and button activation defaults (Tab / Enter).
+// Match Chromium's keyboard protocol: non-text physical keys use rawKeyDown;
+// Enter carries CR text and must use keyDown so its native button activation runs.
 const keyEvent = (type: "rawKeyDown" | "keyUp", info: KeyInfo, modifiers?: number) => ({
   type,
   key: info.key,
   code: info.code,
   windowsVirtualKeyCode: info.vk,
-  nativeVirtualKeyCode: info.vk,
   ...(modifiers === undefined ? {} : { modifiers }),
 });
+const keyDownEvent = (info: KeyInfo, modifiers = 0) =>
+  info.text && modifiers === 0
+    ? {
+      type: "keyDown",
+      key: info.key,
+      code: info.code,
+      windowsVirtualKeyCode: info.vk,
+      text: info.text,
+      unmodifiedText: info.text,
+      modifiers,
+    }
+    : keyEvent("rawKeyDown", info, modifiers);
 async function act(
   b: BrowserSession,
   step: Step,
@@ -426,7 +436,7 @@ async function act(
       return await call("Input.insertText", { text: step.value ?? "" });
     case "key": {
       const info = keyInfo(step.key ?? "");
-      await call("Input.dispatchKeyEvent", keyEvent("rawKeyDown", info));
+      await call("Input.dispatchKeyEvent", keyDownEvent(info));
       return await call("Input.dispatchKeyEvent", keyEvent("keyUp", info));
     }
     case "key_chord": {
@@ -442,11 +452,11 @@ async function act(
       }
       let mask = 0;
       for (const modifier of modifiers) {
-        await call("Input.dispatchKeyEvent", keyEvent("rawKeyDown", keyInfo(modifier), mask));
+        await call("Input.dispatchKeyEvent", keyDownEvent(keyInfo(modifier), mask));
         mask |= modifierBits[modifier];
       }
       const info = keyInfo(chord.at(-1)! as string);
-      await call("Input.dispatchKeyEvent", keyEvent("rawKeyDown", info, mask));
+      await call("Input.dispatchKeyEvent", keyDownEvent(info, mask));
       await call("Input.dispatchKeyEvent", keyEvent("keyUp", info, mask));
       for (const modifier of modifiers.toReversed()) {
         mask &= ~modifierBits[modifier];
