@@ -39,9 +39,10 @@
 - [x] `drag`、`assert`、`key_chord` を実装する。
 - [x] `wait_for` の URL / locator hint / network idle を仕様どおり実装する。
   - URL パターン、可視 locator、CDP Network イベントに基づく 500ms の idle 判定を実装済み。
-- [ ] 個別 jitter、viewport / DPR / zoom の検証を厳密化する。
+- [x] 個別 jitter、viewport / DPR / zoom の検証を厳密化する。
   - jitter の必須項目・型・値域、`window.content` の実測 viewport、DPR、`visualViewport.scale` の実装は完了。
-    `browser_zoom` は仕様どおり 100% だけを strict に保証する。headful CfT での回帰確認が残る。
+    `browser_zoom` は仕様どおり 100% だけを strict に保証する。2026-08-26 に headful CfT の
+    `keyboard-submit` fixture で回帰確認済み。
 
 ## P1 — plan scheduler
 
