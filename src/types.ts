@@ -29,7 +29,10 @@ export type Scenario = {
     initial_url: string;
     window?: {
       bounds?: { left?: number; top?: number; width?: number; height?: number };
+      /** Requested CfT content size; scrollbars can make the CSS viewport smaller. */
       content?: { width: number; height: number };
+      /** CSS viewport used for coordinates; defaults to content for older scenarios. */
+      viewport?: { width: number; height: number };
     };
     display?: {
       expected_dpr?: number;

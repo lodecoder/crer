@@ -42,6 +42,19 @@ export function scenarioFrom(value: unknown): Scenario {
   }
   const browser = object(v.browser, "browser");
   if (typeof browser.initial_url !== "string") throw new Error("browser.initial_url is required");
+  if (browser.window !== undefined) {
+    const window = object(browser.window, "browser.window");
+    for (const name of ["content", "viewport"]) {
+      if (window[name] === undefined) continue;
+      const size = object(window[name], `browser.window.${name}`);
+      if (
+        typeof size.width !== "number" || !Number.isFinite(size.width) || size.width <= 0
+        || typeof size.height !== "number" || !Number.isFinite(size.height) || size.height <= 0
+      ) {
+        throw new Error(`browser.window.${name} requires positive width and height`);
+      }
+    }
+  }
   const playback = v.playback ? object(v.playback, "playback") : {};
   if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
   if (playback.on_failure) {

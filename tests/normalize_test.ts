@@ -4,6 +4,7 @@ import {
   normalizeRawWithWarnings,
   screenToCss,
   transformFromRecordingMetadata,
+  requestedContentFromSidecar,
   windowBoundsFromSidecar,
 } from "../src/normalize.ts";
 
@@ -62,6 +63,20 @@ Deno.test("reads the recorded window position from a sidecar", async () => {
   try {
     await Deno.writeTextFile(`${path}.meta.json`, JSON.stringify({ window_bounds: { left: -800, top: 40 } }));
     assertEquals(await windowBoundsFromSidecar(path), { left: -800, top: 40 });
+  } finally {
+    await Deno.remove(path).catch(() => {});
+    await Deno.remove(`${path}.meta.json`).catch(() => {});
+  }
+});
+
+Deno.test("reads the requested content size from a sidecar", async () => {
+  const path = await Deno.makeTempFile();
+  try {
+    await Deno.writeTextFile(
+      `${path}.meta.json`,
+      JSON.stringify({ requested_content: { width: 780, height: 1250 } }),
+    );
+    assertEquals(await requestedContentFromSidecar(path), { width: 780, height: 1250 });
   } finally {
     await Deno.remove(path).catch(() => {});
     await Deno.remove(`${path}.meta.json`).catch(() => {});

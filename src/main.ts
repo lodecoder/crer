@@ -3,6 +3,7 @@ import { inspectRun } from "./inspect.ts";
 import {
   normalizeRawWithWarnings,
   qpcFrequencyFromSidecar,
+  requestedContentFromSidecar,
   transformFromSidecar,
   windowBoundsFromSidecar,
 } from "./normalize.ts";
@@ -283,14 +284,17 @@ async function recordingPage(
         );
         await sleep(100);
         const actual = await readViewport();
-        if (actual.x === contentSize.x && actual.y === contentSize.y) {
-          viewport = actual;
-          break;
-        }
+        // setContentsSize controls the host area. A page scrollbar can make its CSS viewport
+        // smaller; that effective viewport is the coordinate space we must record.
+        viewport = actual;
+        if (actual.x === contentSize.x && actual.y === contentSize.y) break;
       }
       if (!viewport) {
-        throw new Error(
-          `CfT recording viewport mismatch: expected ${contentSize.x}x${contentSize.y}`,
+        throw new Error("CfT recording viewport was unavailable after setting the content size");
+      }
+      if (viewport.x !== contentSize.x || viewport.y !== contentSize.y) {
+        console.error(
+          `Note: page scrollbar reduced the CSS viewport to ${viewport.x}x${viewport.y}; recording that effective coordinate space.`,
         );
       }
       const currentBounds = await within(
@@ -586,6 +590,7 @@ async function main() {
         useMarkerCalibration ? page?.markerClick : undefined,
         page?.validateViewport,
         page?.windowBounds,
+        contentSize,
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
@@ -613,6 +618,7 @@ async function main() {
     const sidecarTransform = origin ? undefined : await transformFromSidecar(file);
     const qpcFrequencyHz = origin ? undefined : await qpcFrequencyFromSidecar(file);
     const windowBounds = origin ? undefined : await windowBoundsFromSidecar(file);
+    const requestedContent = origin ? undefined : await requestedContentFromSidecar(file);
     if (!origin && !sidecarTransform) {
       console.error(
         "Warning: recording metadata is unavailable; output coordinates remain physical screen pixels.",
@@ -626,6 +632,7 @@ async function main() {
         ? { clientOrigin: origin, clientSize: clientSize!, viewport: viewport! }
         : sidecarTransform,
       qpcFrequencyHz,
+      requestedContent,
     );
     if (windowBounds) {
       normalized.scenario.browser.window = {

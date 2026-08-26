@@ -134,7 +134,7 @@ async function validateDisplay(
 ): Promise<{ x: number; y: number }> {
   const display = s.browser.display;
   const actual = await readViewport(cdp, sessionId);
-  const expectedViewport = s.browser.window?.content;
+  const expectedViewport = s.browser.window?.viewport ?? s.browser.window?.content;
   await Deno.writeTextFile(
     `${runDir}/display.json`,
     JSON.stringify({ actual: actual ?? {}, expectedViewport, display: display ?? {} }, null, 2)

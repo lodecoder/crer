@@ -79,9 +79,9 @@ deno task dev normalize .crer\raw-input.ndjson `
 
 `record` の主な指定:
 
-- `--content-size <width>,<height>` — 録画するページの CSS viewport。既定は `860,560`。指定値を
-  適用できない、または録画開始後に変化した場合は座標混在を防ぐため失敗終了する。初期ロードで
-  スクロールバー等が追加されるページでは、マーカー表示前に viewport の安定を待つ。
+- `--content-size <width>,<height>` — CfT に要求する content host のサイズ。既定は `860,560`。
+  ページがスクロールバーを表示する場合、実効 CSS viewport はこれより小さくなる。記録は両方を
+  保存し、録画開始後に実効 viewport が変化した場合だけ、座標混在を防ぐため失敗終了する。
 - `--position <left>,<top>` — CfT ウィンドウの画面上の位置。負の座標も指定可能。
 
 正規化後の YAML には、実測した値が次のように保存されるため、再生時も同じ viewport と位置を使う。
@@ -90,7 +90,8 @@ deno task dev normalize .crer\raw-input.ndjson `
 browser:
   window:
     bounds: { left: 1200, top: 80 }
-    content: { width: 860, height: 560 }
+    content: { width: 860, height: 560 }  # CfT に要求するサイズ
+    viewport: { width: 845, height: 545 } # スクロールバーがある場合の実効 CSS 座標系
 ```
 
 ローカル fixture を使う手動 P0 テストは、次の補助スクリプトで一つの PowerShell から実行できます。
@@ -104,8 +105,9 @@ Chrome for Testing が fixture を開いたら、まずページ左上のマゼ�
 Enter を押します。較正クリック自体は記録されません。結果は `.crer/fixture.raw-input.ndjson` に保存されます。
 同スクリプトは続けて `.crer/fixture.recorded.crer.yaml` も生成します。`-Output`、`-Scenario`、`-Port`、
 `-Chrome` で変更できます。記録時に有効なコンテンツ領域と CDP viewport を取得できた場合、`.meta.json`
-sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動変換し、同時に記録時の CSS viewport を
-`browser.window.content` として YAML に保存します。sidecar がない場合は、従来どおり
+sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動変換します。要求サイズは
+`browser.window.content`、スクロールバーを含む実効 CSS 座標系は必要に応じて
+`browser.window.viewport` として YAML に保存します。sidecar がない場合は、従来どおり
 `--client-origin`、`--client-size`、`--viewport` をすべて指定してください。
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。

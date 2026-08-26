@@ -5,6 +5,7 @@ export type CoordinateTransform = { clientOrigin: Point; clientSize: Point; view
 type RecordingMetadata = {
   content_rect_screen_px?: { x: number; y: number; width: number; height: number };
   css_viewport?: Point;
+  requested_content?: { width: number; height: number };
   window_bounds?: { left: number; top: number };
   qpc_frequency_hz?: string;
   marker_calibration?: {
@@ -83,6 +84,23 @@ export async function windowBoundsFromSidecar(
   }
 }
 
+export async function requestedContentFromSidecar(
+  rawFile: string,
+): Promise<{ width: number; height: number } | undefined> {
+  try {
+    const content =
+      (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
+        .requested_content;
+    return content && Number.isFinite(content.width) && Number.isFinite(content.height)
+        && content.width > 0 && content.height > 0
+      ? content
+      : undefined;
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw new Error(`could not read recording metadata: ${error}`);
+  }
+}
+
 export function screenToCss(point: Point, transform: CoordinateTransform): Point {
   if (transform.clientSize.x <= 0 || transform.clientSize.y <= 0) {
     throw new Error("client dimensions must be positive");
@@ -125,6 +143,7 @@ export async function normalizeRawWithWarnings(
   name: string,
   transform?: CoordinateTransform,
   qpcFrequencyHz?: bigint,
+  requestedContent?: { width: number; height: number },
 ): Promise<NormalizedRecording> {
   const raw = (await Deno.readTextFile(path)).split(/\r?\n/).filter(Boolean).map((line) =>
     JSON.parse(line) as RawEvent
@@ -222,7 +241,15 @@ export async function normalizeRawWithWarnings(
         profile: "ephemeral",
         initial_url: url,
         ...(transform
-          ? { window: { content: { width: transform.viewport.x, height: transform.viewport.y } } }
+          ? {
+            window: {
+              content: requestedContent
+                ?? { width: transform.viewport.x, height: transform.viewport.y },
+              ...(requestedContent
+                ? { viewport: { width: transform.viewport.x, height: transform.viewport.y } }
+                : {}),
+            },
+          }
           : {}),
       },
       playback: {

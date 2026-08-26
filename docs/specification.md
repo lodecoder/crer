@@ -30,14 +30,14 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 
 ### 3.1 技術選定
 
-| 層          | 採用                                            | 理由                                                                           |
-| ----------- | ----------------------------------------------- | ------------------------------------------------------------------------------ |
-| CLI・実行系 | Deno 2.8+ + TypeScript                          | 単一バイナリ配布、組み込み Web API、権限の明示、YAML／並行制御の実装性がよい。 |
-| ブラウザ    | 固定バージョンの Chrome for Testing             | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                   |
-| 再生入力    | CDP の `Input` ドメイン                         | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                        |
-| ウィンドウ  | CDP `Browser.setWindowBounds`                   | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                      |
-| 記録入力    | Windows Raw Input + Low Level Hook              | 物理入力を取得する。Chrome が Raw Input を消費する場合は Hook を使う。CDP は注入はできるが物理入力を記録する API ではない。 |
-| シナリオ    | YAML + JSON Schema                              | 人間編集、バリデーション、将来の自動補完を両立する。                           |
+| 層          | 採用                                | 理由                                                                                                                        |
+| ----------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| CLI・実行系 | Deno 2.8+ + TypeScript              | 単一バイナリ配布、組み込み Web API、権限の明示、YAML／並行制御の実装性がよい。                                              |
+| ブラウザ    | 固定バージョンの Chrome for Testing | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                                                                |
+| 再生入力    | CDP の `Input` ドメイン             | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                                                                     |
+| ウィンドウ  | CDP `Browser.setWindowBounds`       | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                                                                   |
+| 記録入力    | Windows Raw Input + Low Level Hook  | 物理入力を取得する。Chrome が Raw Input を消費する場合は Hook を使う。CDP は注入はできるが物理入力を記録する API ではない。 |
+| シナリオ    | YAML + JSON Schema                  | 人間編集、バリデーション、将来の自動補完を両立する。                                                                        |
 
 Deno 側は組み込みの `WebSocket`、`jsr:@std/yaml`、`jsr:@zod/zod`（または JSON Schema validator）、
 `jsr:@std/cli` を用いる。いずれも Deno で利用でき、Node.js 互換レイヤーを前提にしない。
@@ -161,8 +161,10 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 
 - Windows の表示スケーリングは任意とする。実行時に CfT の `devicePixelRatio` を検査し、strict
   の場合は想定値と異なれば失敗にする。
-- `window.content` は CSS viewport の目標サイズ、`window.bounds` は画面上の DIP 位置である。
-  `Browser.setWindowBounds` と `Browser.setContentsSize` を順に実行し、実測値が異なれば常に失敗にする。
+- `window.content` は CfT に要求する content host のサイズ、`window.bounds` は画面上の DIP 位置である。
+  スクロールバー等により実効 CSS viewport が異なる場合、記録は `window.viewport` に座標系を保存する。
+  再生は `Browser.setWindowBounds` と `Browser.setContentsSize` を順に実行し、`window.viewport`
+  （未指定時は `window.content`）との実測一致を検証する。
 - `browser_zoom` は `100` のみを v1 の厳密保証範囲とする。Chrome UI のサイト別ズームは CDP の
   安定 API で直接固定できないためである。100% 以外を必要とする場合は、専用プロファイル
   テンプレートに事前設定したズームを使い、`visualViewport.scale` と CSS viewport の検証を
@@ -185,7 +187,8 @@ browser:
   initial_url: https://example.test/orders
   window:
     bounds: { left: 1640, top: 80, width: 1080, height: 900 } # screen DIP
-    content: { width: 1040, height: 760 }                       # CSS px
+    content: { width: 1040, height: 760 }                       # CfT に要求するサイズ
+    viewport: { width: 1025, height: 745 }                      # 任意: 実効 CSS 座標系
   display:
     expected_dpr: 1
     browser_zoom: 100
