@@ -93,6 +93,13 @@ $env:CRER_CHROME = 'C:\path\to\chrome.exe'
 .\dist\win-x64\crer.exe doctor
 ```
 
+CfT を使う配布物の smoke test は次です。これは `crer.exe` で fixture を再生し、artifacts と物理カーソルを
+検査します。
+
+```powershell
+.\scripts\test-release.ps1
+```
+
 実行 artifacts は `.crer/runs/<run-id>` に出力されます。
 
 - 仕様書: [docs/specification.md](docs/specification.md)

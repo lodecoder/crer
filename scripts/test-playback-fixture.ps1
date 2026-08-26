@@ -3,13 +3,17 @@ param(
   [int] $Port = 8080,
   [string] $Chrome = $env:CRER_CHROME,
   [string] $Scenario = 'fixtures\\playback\\search.crer.yaml',
-  [int] $ExpectedExitCode = 0
+  [int] $ExpectedExitCode = 0,
+  [string] $CrerExe
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($Chrome) -or -not (Test-Path -LiteralPath $Chrome -PathType Leaf)) {
   throw 'Set CRER_CHROME or pass -Chrome with the Chrome for Testing chrome.exe path.'
+}
+if (-not [string]::IsNullOrWhiteSpace($CrerExe) -and -not (Test-Path -LiteralPath $CrerExe -PathType Leaf)) {
+  throw "CRER executable was not found: $CrerExe"
 }
 Add-Type -AssemblyName System.Windows.Forms
 $server = Start-Process -FilePath (Get-Command pwsh -ErrorAction Stop).Source -ArgumentList @(
@@ -26,7 +30,13 @@ try {
   Start-Sleep -Seconds 1
   $control = [System.Windows.Forms.Cursor]::Position
   Push-Location $projectRoot
-  try { & deno task dev play $Scenario --chrome $Chrome --keep-artifacts } finally { Pop-Location }
+  try {
+    if ([string]::IsNullOrWhiteSpace($CrerExe)) {
+      & deno task dev play $Scenario --chrome $Chrome --keep-artifacts
+    } else {
+      & $CrerExe play $Scenario --chrome $Chrome --keep-artifacts
+    }
+  } finally { Pop-Location }
   if ($LASTEXITCODE -ne $ExpectedExitCode) { throw "play exited with code $LASTEXITCODE (expected $ExpectedExitCode)" }
   $run = Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory |
     Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1

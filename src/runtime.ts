@@ -4,6 +4,19 @@ import type { FailureKind, Jitter, RunResult, Scenario, Step } from "./types.ts"
 
 const decoder = new TextDecoder();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+async function fetchWithin(url: string, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fetch(url, { signal: AbortSignal.timeout(timeoutMs) }),
+      new Promise<Response>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`HTTP request timed out: ${url}`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
 async function sleepInterruptibly(ms: number, signal?: AbortSignal) {
   if (!signal) return await sleep(ms);
   await Promise.race([
@@ -60,7 +73,7 @@ class NetworkTracker {
 async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: string }> {
   for (let i = 0; i < 150; i++) {
     try {
-      const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+      const response = await fetchWithin(`http://127.0.0.1:${port}/json/version`, 1_000);
       if (response.ok) return await response.json();
     } catch { /* wait */ }
     await sleep(100);
@@ -148,10 +161,66 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     stdout: "null",
     stderr: "piped",
   }).spawn();
-  let version: { webSocketDebuggerUrl: string };
+  let cdp: Cdp | undefined;
+  let stage = "chrome_started";
+  const writeLaunchDiagnostic = async (error?: unknown) => {
+    await Deno.writeTextFile(
+      `${runDir}/launch.json`,
+      JSON.stringify({ stage, ...(error ? { error: String(error) } : {}) }, null, 2) + "\n",
+    );
+  };
   try {
-    version = await waitEndpoint(port);
+    const version = await waitEndpoint(port);
+    stage = "endpoint_ready";
+    await writeLaunchDiagnostic();
+    cdp = new Cdp(version.webSocketDebuggerUrl);
+    await cdp.open();
+    stage = "browser_websocket_open";
+    await writeLaunchDiagnostic();
+    const targets = await (
+      await fetch(`http://127.0.0.1:${port}/json/list`)
+    ).json() as Array<{ id: string; type: string; webSocketDebuggerUrl: string }>;
+    const target = targets.find((candidate) => candidate.type === "page");
+    if (!target) throw new Error("CfT did not expose a page target");
+    const attached = await cdp.call<{ sessionId: string }>("Target.attachToTarget", {
+      targetId: target.id,
+      flatten: true,
+    });
+    stage = "target_attached";
+    await writeLaunchDiagnostic();
+    const window = await cdp.call<{ windowId: number }>("Browser.getWindowForTarget", {
+      targetId: target.id,
+    });
+    const bounds = { ...(s.browser.window?.bounds ?? {}), ...(options.position ?? {}) };
+    if (Object.keys(bounds).length) {
+      await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
+    }
+    if (s.browser.window?.content) {
+      await cdp.call("Browser.setContentsSize", {
+        windowId: window.windowId,
+        ...s.browser.window.content,
+      });
+    }
+    await cdp.call("Page.enable", {}, attached.sessionId);
+    await cdp.call("Runtime.enable", {}, attached.sessionId);
+    const network = new NetworkTracker(cdp, attached.sessionId);
+    await cdp.call("Network.enable", {}, attached.sessionId);
+    const viewport = await validateDisplay(cdp, attached.sessionId, s, runDir);
+    stage = "ready";
+    await writeLaunchDiagnostic();
+    return {
+      cdp,
+      sessionId: attached.sessionId,
+      pageDebuggerUrl: target.webSocketDebuggerUrl,
+      windowId: window.windowId,
+      process: p,
+      runDir,
+      viewport,
+      network,
+    };
   } catch (error) {
+    await writeLaunchDiagnostic(error).catch(() => {});
+    cdp?.close();
     try {
       p.kill("SIGTERM");
     } catch {
@@ -159,49 +228,6 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     }
     throw error;
   }
-  const cdp = new Cdp(version.webSocketDebuggerUrl);
-  await cdp.open();
-  const targets = await (
-    await fetch(`http://127.0.0.1:${port}/json/list`)
-  ).json() as Array<{ id: string; type: string; webSocketDebuggerUrl: string }>;
-  const target = targets.find((candidate) => candidate.type === "page");
-  if (!target) {
-    p.kill("SIGTERM");
-    cdp.close();
-    throw new Error("CfT did not expose a page target");
-  }
-  const attached = await cdp.call<{ sessionId: string }>("Target.attachToTarget", {
-    targetId: target.id,
-    flatten: true,
-  });
-  const window = await cdp.call<{ windowId: number }>("Browser.getWindowForTarget", {
-    targetId: target.id,
-  });
-  const bounds = { ...(s.browser.window?.bounds ?? {}), ...(options.position ?? {}) };
-  if (Object.keys(bounds).length) {
-    await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
-  }
-  if (s.browser.window?.content) {
-    await cdp.call("Browser.setContentsSize", {
-      windowId: window.windowId,
-      ...s.browser.window.content,
-    });
-  }
-  await cdp.call("Page.enable", {}, attached.sessionId);
-  await cdp.call("Runtime.enable", {}, attached.sessionId);
-  const network = new NetworkTracker(cdp, attached.sessionId);
-  await cdp.call("Network.enable", {}, attached.sessionId);
-  const viewport = await validateDisplay(cdp, attached.sessionId, s, runDir);
-  return {
-    cdp,
-    sessionId: attached.sessionId,
-    pageDebuggerUrl: target.webSocketDebuggerUrl,
-    windowId: window.windowId,
-    process: p,
-    runDir,
-    viewport,
-    network,
-  };
 }
 async function capture(b: BrowserSession, name: string, required = false) {
   let lastError: unknown;
