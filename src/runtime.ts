@@ -284,24 +284,41 @@ async function assertState(b: BrowserSession, step: Step) {
     throw new Error("assert locator failed");
   }
 }
-const keys: Record<string, [string, number]> = {
-  Enter: ["Enter", 13],
-  Tab: ["Tab", 9],
-  Escape: ["Escape", 27],
-  Backspace: ["Backspace", 8],
-  Delete: ["Delete", 46],
-  ArrowDown: ["ArrowDown", 40],
-  ArrowUp: ["ArrowUp", 38],
-  ArrowLeft: ["ArrowLeft", 37],
-  ArrowRight: ["ArrowRight", 39],
-  Control: ["Control", 17],
-  Alt: ["Alt", 18],
-  Shift: ["Shift", 16],
-  Meta: ["Meta", 91],
+type KeyInfo = { key: string; vk: number; code: string };
+const keys: Record<string, KeyInfo> = {
+  Enter: { key: "Enter", vk: 13, code: "Enter" },
+  Tab: { key: "Tab", vk: 9, code: "Tab" },
+  Escape: { key: "Escape", vk: 27, code: "Escape" },
+  Backspace: { key: "Backspace", vk: 8, code: "Backspace" },
+  Delete: { key: "Delete", vk: 46, code: "Delete" },
+  ArrowDown: { key: "ArrowDown", vk: 40, code: "ArrowDown" },
+  ArrowUp: { key: "ArrowUp", vk: 38, code: "ArrowUp" },
+  ArrowLeft: { key: "ArrowLeft", vk: 37, code: "ArrowLeft" },
+  ArrowRight: { key: "ArrowRight", vk: 39, code: "ArrowRight" },
+  Control: { key: "Control", vk: 17, code: "ControlLeft" },
+  Alt: { key: "Alt", vk: 18, code: "AltLeft" },
+  Shift: { key: "Shift", vk: 16, code: "ShiftLeft" },
+  Meta: { key: "Meta", vk: 91, code: "MetaLeft" },
 };
 const modifierBits: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
-const keyInfo = (key: string): [string, number] =>
-  keys[key] ?? [key, key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0];
+const keyInfo = (key: string): KeyInfo =>
+  keys[key] ?? {
+    key,
+    vk: key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0,
+    code: key.length === 1 && /^[a-z]$/i.test(key)
+      ? `Key${key.toUpperCase()}`
+      : key.length === 1 && /^\d$/.test(key)
+      ? `Digit${key}`
+      : key,
+  };
+const keyEvent = (type: "keyDown" | "keyUp", info: KeyInfo, modifiers?: number) => ({
+  type,
+  key: info.key,
+  code: info.code,
+  windowsVirtualKeyCode: info.vk,
+  nativeVirtualKeyCode: info.vk,
+  ...(modifiers === undefined ? {} : { modifiers }),
+});
 async function act(
   b: BrowserSession,
   step: Step,
@@ -405,13 +422,9 @@ async function act(
     case "text":
       return await call("Input.insertText", { text: step.value ?? "" });
     case "key": {
-      const [key, vk] = keyInfo(step.key ?? "");
-      await call("Input.dispatchKeyEvent", { type: "keyDown", key, windowsVirtualKeyCode: vk });
-      return await call("Input.dispatchKeyEvent", {
-        type: "keyUp",
-        key,
-        windowsVirtualKeyCode: vk,
-      });
+      const info = keyInfo(step.key ?? "");
+      await call("Input.dispatchKeyEvent", keyEvent("keyDown", info));
+      return await call("Input.dispatchKeyEvent", keyEvent("keyUp", info));
     }
     case "key_chord": {
       const chord = step.keys;
@@ -426,37 +439,15 @@ async function act(
       }
       let mask = 0;
       for (const modifier of modifiers) {
-        const [key, vk] = keyInfo(modifier);
-        await call("Input.dispatchKeyEvent", {
-          type: "keyDown",
-          key,
-          windowsVirtualKeyCode: vk,
-          modifiers: mask,
-        });
+        await call("Input.dispatchKeyEvent", keyEvent("keyDown", keyInfo(modifier), mask));
         mask |= modifierBits[modifier];
       }
-      const [key, vk] = keyInfo(chord.at(-1)! as string);
-      await call("Input.dispatchKeyEvent", {
-        type: "keyDown",
-        key,
-        windowsVirtualKeyCode: vk,
-        modifiers: mask,
-      });
-      await call("Input.dispatchKeyEvent", {
-        type: "keyUp",
-        key,
-        windowsVirtualKeyCode: vk,
-        modifiers: mask,
-      });
+      const info = keyInfo(chord.at(-1)! as string);
+      await call("Input.dispatchKeyEvent", keyEvent("keyDown", info, mask));
+      await call("Input.dispatchKeyEvent", keyEvent("keyUp", info, mask));
       for (const modifier of modifiers.toReversed()) {
         mask &= ~modifierBits[modifier];
-        const [modifierKey, modifierVk] = keyInfo(modifier);
-        await call("Input.dispatchKeyEvent", {
-          type: "keyUp",
-          key: modifierKey,
-          windowsVirtualKeyCode: modifierVk,
-          modifiers: mask,
-        });
+        await call("Input.dispatchKeyEvent", keyEvent("keyUp", keyInfo(modifier), mask));
       }
       return;
     }

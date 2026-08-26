@@ -62,7 +62,7 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 
 CfT の fixture が開いたら次を行う。
 
-1. ページ左上に表示されるマゼンタ色の 4×4 CSS px 点をクリックする。点が消え、以後の操作の記録が始まる。
+1. ページ左上に表示されるマゼンタ色の 8×8 CSS px 点をクリックする。点が消え、以後の操作の記録が始まる。
 2. Search 欄をクリックする。
 3. `Crer42` と入力する。
 4. Submit をクリックする。
@@ -83,6 +83,12 @@ metadata が作成され、bounds 警告がなければ再生する。記録時�
 
 ```powershell
 deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts
+```
+
+Tab で Submit にフォーカスして Enter で実行するキー再生は、次の fixture で確認できる。
+
+```powershell
+.\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\keyboard-submit.crer.yaml
 ```
 
 目視確認でさらに待機したい場合は、記録済みの `sleep` に 1 秒を追加する。
