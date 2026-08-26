@@ -67,10 +67,29 @@ dotnet publish native/Crer.WinInput.csproj -c Release -r win-x64
 CfT のコンテンツ領域で操作を記録し、`Ctrl+C` で停止します。
 
 ```powershell
-deno task dev record .crer\raw-input.ndjson --url https://example.test --content-size 860,560 --position 1200,80
+deno task dev record .crer\raw-input.ndjson `
+  --url 'https://example.test' `
+  --content-size 860,560 `
+  --position 1200,80
 deno task dev normalize .crer\raw-input.ndjson `
-  --url https://example.test `
-  --output recorded.crer.yaml
+  --url 'https://example.test' `
+  --output recorded.crer.yaml `
+  --name example-recording
+```
+
+`record` の主な指定:
+
+- `--content-size <width>,<height>` — 録画するページの CSS viewport。既定は `860,560`。指定値を
+  適用できない、または録画中に変化した場合は座標混在を防ぐため失敗終了する。
+- `--position <left>,<top>` — CfT ウィンドウの画面上の位置。負の座標も指定可能。
+
+正規化後の YAML には、実測した値が次のように保存されるため、再生時も同じ viewport と位置を使う。
+
+```yaml
+browser:
+  window:
+    bounds: { left: 1200, top: 80 }
+    content: { width: 860, height: 560 }
 ```
 
 ローカル fixture を使う手動 P0 テストは、次の補助スクリプトで一つの PowerShell から実行できます。
@@ -87,11 +106,6 @@ Enter を押します。較正クリック自体は記録されません。結�
 sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動変換し、同時に記録時の CSS viewport を
 `browser.window.content` として YAML に保存します。sidecar がない場合は、従来どおり
 `--client-origin`、`--client-size`、`--viewport` をすべて指定してください。
-
-`record --content-size <width>,<height>` は録画用 CfT の CSS viewport を固定する（既定は `860,560`）。
-指定値を実測できない場合、または記録中に viewport が変化した場合は、座標が混在しないよう記録を失敗終了する。
-`record --position <left>,<top>` は録画用 CfT の画面上の位置を指定し、実測された位置を生成 YAML の
-`browser.window.bounds` に保存する。
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
