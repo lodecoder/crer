@@ -311,7 +311,10 @@ const keyInfo = (key: string): KeyInfo =>
       ? `Digit${key}`
       : key,
   };
-const keyEvent = (type: "keyDown" | "keyUp", info: KeyInfo, modifiers?: number) => ({
+// Non-text physical keys must begin with rawKeyDown.  keyDown is intended for a
+// DOM key event including text generation, whereas rawKeyDown lets Chromium run
+// its normal focus navigation and button activation defaults (Tab / Enter).
+const keyEvent = (type: "rawKeyDown" | "keyUp", info: KeyInfo, modifiers?: number) => ({
   type,
   key: info.key,
   code: info.code,
@@ -423,7 +426,7 @@ async function act(
       return await call("Input.insertText", { text: step.value ?? "" });
     case "key": {
       const info = keyInfo(step.key ?? "");
-      await call("Input.dispatchKeyEvent", keyEvent("keyDown", info));
+      await call("Input.dispatchKeyEvent", keyEvent("rawKeyDown", info));
       return await call("Input.dispatchKeyEvent", keyEvent("keyUp", info));
     }
     case "key_chord": {
@@ -439,11 +442,11 @@ async function act(
       }
       let mask = 0;
       for (const modifier of modifiers) {
-        await call("Input.dispatchKeyEvent", keyEvent("keyDown", keyInfo(modifier), mask));
+        await call("Input.dispatchKeyEvent", keyEvent("rawKeyDown", keyInfo(modifier), mask));
         mask |= modifierBits[modifier];
       }
       const info = keyInfo(chord.at(-1)! as string);
-      await call("Input.dispatchKeyEvent", keyEvent("keyDown", info, mask));
+      await call("Input.dispatchKeyEvent", keyEvent("rawKeyDown", info, mask));
       await call("Input.dispatchKeyEvent", keyEvent("keyUp", info, mask));
       for (const modifier of modifiers.toReversed()) {
         mask &= ~modifierBits[modifier];
