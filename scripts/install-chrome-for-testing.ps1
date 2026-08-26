@@ -7,11 +7,14 @@ Downloads Chrome for Testing under .crer/browsers with @puppeteer/browsers. The 
 persisted in the current user's CRER_CHROME environment variable. Dot-source this script when the
 current PowerShell session must receive CRER_CHROME immediately:
   . .\scripts\install-chrome-for-testing.ps1
+
+Use -ChromePath to register an already-downloaded CfT executable without downloading it again.
 #>
 [CmdletBinding()]
 param(
   [string] $InstallRoot,
   [string] $Version = 'stable',
+  [string] $ChromePath,
   [switch] $NoPersist
 )
 
@@ -22,33 +25,41 @@ if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
 }
 $root = [System.IO.Path]::GetFullPath($InstallRoot)
 
-if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
-  throw 'npx was not found. Install a supported Node.js distribution, then run this script again.'
+New-Item -ItemType Directory -Force -Path $root | Out-Null
+if ([string]::IsNullOrWhiteSpace($ChromePath)) {
+  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
+    throw 'npx was not found. Install a supported Node.js distribution, then run this script again.'
+  }
+  & npx @puppeteer/browsers install "chrome@$Version" --path $root
+  if ($LASTEXITCODE -ne 0) { throw "Chrome for Testing installation failed (exit code $LASTEXITCODE)." }
+  $chrome = Get-ChildItem -LiteralPath $root -Recurse -File -Filter chrome.exe |
+    Where-Object { $_.FullName -match 'chrome-win64' } |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+} else {
+  $chrome = Get-Item -LiteralPath $ChromePath -ErrorAction Stop
 }
 
-New-Item -ItemType Directory -Force -Path $root | Out-Null
-& npx @puppeteer/browsers install "chrome@$Version" --path $root
-if ($LASTEXITCODE -ne 0) { throw "Chrome for Testing installation failed (exit code $LASTEXITCODE)." }
-
-$chrome = Get-ChildItem -LiteralPath $root -Recurse -File -Filter chrome.exe |
-  Where-Object { $_.FullName -match 'chrome-win64' } |
-  Sort-Object LastWriteTimeUtc -Descending |
-  Select-Object -First 1
-
-if (-not $chrome) { throw "chrome.exe was not found below $root after installation." }
+if (-not $chrome -or $chrome.PSIsContainer -or $chrome.Name -ne 'chrome.exe') {
+  throw "chrome.exe was not found at '$ChromePath'."
+}
 
 $path = $chrome.FullName
 $env:CRER_CHROME = $path
+$manifestPath = Join-Path $root 'crer-chrome.json'
+$env:CRER_CHROME_MANIFEST = $manifestPath
 if (-not $NoPersist) {
   [Environment]::SetEnvironmentVariable('CRER_CHROME', $path, 'User')
+  [Environment]::SetEnvironmentVariable('CRER_CHROME_MANIFEST', $manifestPath, 'User')
 }
 
 $version = $chrome.VersionInfo.ProductVersion
 if ([string]::IsNullOrWhiteSpace($version)) { $version = 'unknown' }
 @{ requested = $Version; installed = $version; chrome = $path } |
-  ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'crer-chrome.json') -Encoding utf8
-Write-Host "Installed: $version"
+  ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
+Write-Host "Registered: $version"
 Write-Host "CRER_CHROME: $path"
+Write-Host "CRER_CHROME_MANIFEST: $manifestPath"
 if (-not $NoPersist) {
   Write-Host 'The user environment variable was updated. Open a new PowerShell, or dot-source this script, to use it in another current session.'
 }

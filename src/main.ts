@@ -62,12 +62,19 @@ async function chromeDiagnostic(configured: string | undefined) {
   } catch {
     // The executable existence check above is still useful when version probing is blocked.
   }
-  let directory = parentDirectory(resolved);
   let manifest:
     | { path: string; requested?: string; installed?: string; matchesChrome: boolean }
     | undefined;
+  const candidates: string[] = [];
+  const configuredManifest = Deno.env.get("CRER_CHROME_MANIFEST");
+  if (configuredManifest) candidates.push(configuredManifest);
+  candidates.push(`${Deno.cwd()}\\.crer\\browsers\\crer-chrome.json`);
+  let directory = parentDirectory(resolved);
   for (let i = 0; i < 8 && directory; i++) {
-    const candidate = `${directory}\\crer-chrome.json`;
+    candidates.push(`${directory}\\crer-chrome.json`);
+    directory = parentDirectory(directory);
+  }
+  for (const candidate of candidates) {
     try {
       const raw = JSON.parse(await Deno.readTextFile(candidate)) as {
         requested?: unknown;
@@ -83,7 +90,7 @@ async function chromeDiagnostic(configured: string | undefined) {
       };
       break;
     } catch {
-      directory = parentDirectory(directory);
+      // Try the next configured or ancestor manifest.
     }
   }
   return {

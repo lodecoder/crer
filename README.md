@@ -25,6 +25,13 @@ Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイル�
 固定版を導入する場合は `./scripts/install-chrome-for-testing.ps1 -Version 152.0.7977.42` を実行します。
 導入結果は `.crer/browsers/crer-chrome.json` に保存されます。
 
+すでに CfT を導入済みの場合は、ダウンロードせず manifest に登録できます。
+
+```powershell
+. .\scripts\install-chrome-for-testing.ps1 -ChromePath $env:CRER_CHROME -Version 152.0.7977.42
+deno task dev doctor
+```
+
 ```powershell
 $env:CRER_CHROME = 'C:\\path\\to\\chrome.exe'
 deno task dev validate scenario.crer.yaml
