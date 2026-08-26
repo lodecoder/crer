@@ -91,16 +91,30 @@ class NetworkTracker {
 
 type ViewportInfo = { dpr: number; scale: number; width: number; height: number };
 async function readViewport(cdp: Cdp, sessionId: string): Promise<ViewportInfo | undefined> {
-  const result = await cdp.call<{ result: { value?: ViewportInfo } }>(
-    "Runtime.evaluate",
-    {
-      expression:
-        "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1,width:innerWidth,height:innerHeight})",
-      returnByValue: true,
-    },
-    sessionId,
-  );
-  return result.result.value;
+  const [layout, display] = await Promise.all([
+    cdp.call<{ cssVisualViewport?: { clientWidth: number; clientHeight: number } }>(
+      "Page.getLayoutMetrics",
+      {},
+      sessionId,
+    ),
+    cdp.call<{ result: { value?: { dpr: number; scale: number } } }>(
+      "Runtime.evaluate",
+      {
+        expression: "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1})",
+        returnByValue: true,
+      },
+      sessionId,
+    ),
+  ]);
+  const viewport = layout.cssVisualViewport;
+  const metrics = display.result.value;
+  if (!viewport || !metrics) return undefined;
+  return {
+    dpr: metrics.dpr,
+    scale: metrics.scale,
+    width: viewport.clientWidth,
+    height: viewport.clientHeight,
+  };
 }
 async function setContentSize(
   cdp: Cdp,
