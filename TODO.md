@@ -65,4 +65,8 @@
     CfT 152.0.7977.42 を manifest 登録し、`isChromeForTesting: true` と `matchesChrome: true` を確認済み。
 - [ ] Windows x64 / ARM64 のビルドと回帰テストを整備する。
   - `build-native.ps1 -Runtime` と `build-release.ps1 -Runtime` で x64 / ARM64 を選択可能にする。ARM64 実機での
-    `test-release.ps1` 実行が残る。
+    `test-release.ps1` 実行が残る（ARM64 環境がないため保留）。
+
+## P3 — 運用性
+
+- [x] `crer inspect` で run artifact の要約、診断 JSON、スクリーンショット一覧を表示する。

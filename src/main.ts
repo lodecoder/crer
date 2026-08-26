@@ -1,4 +1,5 @@
 import { Cdp } from "./cdp.ts";
+import { inspectRun } from "./inspect.ts";
 import {
   normalizeRawWithWarnings,
   qpcFrequencyFromSidecar,
@@ -287,7 +288,7 @@ async function runNode(
 }
 async function main() {
   if (!command || command === "help") {
-    console.log("crer <doctor|validate|play|run|record|normalize> <file> [options]");
+    console.log("crer <doctor|inspect|validate|play|run|record|normalize> <file> [options]");
     return;
   }
   if (command === "doctor") {
@@ -307,6 +308,11 @@ async function main() {
         2,
       ),
     );
+    return;
+  }
+  if (command === "inspect") {
+    if (!file) throw new Error("artifact directory is required");
+    console.log(JSON.stringify(await inspectRun(file), null, 2));
     return;
   }
   if (!file) throw new Error("scenario or plan path is required");

@@ -37,6 +37,7 @@ $env:CRER_CHROME = 'C:\\path\\to\\chrome.exe'
 deno task dev validate scenario.crer.yaml
 deno task dev play scenario.crer.yaml --keep-artifacts
 deno task dev run nightly.crer.plan.yaml
+deno task dev inspect .crer\runs\<run-id>
 deno task test
 ```
 
