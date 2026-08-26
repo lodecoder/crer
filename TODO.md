@@ -48,7 +48,9 @@
 
 - [x] `max_parallel`、`fail_fast`、worker timeout を実装する。
 - [x] plan の `on_failure` を直列・並列ノードへ適用する。
-- [ ] scenario / plan の `on_failure` と終了コード集約を仕様どおり実装する。
+- [x] scenario / plan の `on_failure` と終了コード集約を仕様どおり実装する。
+  - 2026-08-26: `continue-after-failure` plan fixture で、失敗 artifact を残して後続 scenario を
+    実行し、plan 全体が code 4 になることを headful CfT で確認済み。
 
 ## P2 — 配布と堅牢化
 
