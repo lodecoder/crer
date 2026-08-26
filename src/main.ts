@@ -144,11 +144,12 @@ async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   }
 }
 type RecordingPage = {
-  viewport?: Point;
+  viewport: Point;
   markerClick: () => Promise<Point | undefined>;
+  validateViewport: () => Promise<void>;
   close: () => void;
 };
-async function recordingPage(port: number): Promise<RecordingPage | undefined> {
+async function recordingPage(port: number, contentSize: Point): Promise<RecordingPage | undefined> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     try {
@@ -170,6 +171,22 @@ async function recordingPage(port: number): Promise<RecordingPage | undefined> {
         }),
         500,
       );
+      const window = await within(
+        cdp.call<{ windowId: number }>("Browser.getWindowForTarget", { targetId: target.id }),
+        500,
+      );
+      await within(
+        cdp.call("Browser.setWindowBounds", {
+          windowId: window.windowId,
+          bounds: { windowState: "normal" },
+        }),
+        500,
+      );
+      await within(
+        cdp.call("Browser.setContentsSize", { windowId: window.windowId, ...contentSize }),
+        500,
+      );
+      await within(cdp.call("Page.enable", {}, attached.sessionId), 500);
       const readyDeadline = Date.now() + 2_000;
       while (true) {
         const ready = await within(
@@ -183,17 +200,41 @@ async function recordingPage(port: number): Promise<RecordingPage | undefined> {
         if (Date.now() >= readyDeadline) throw new Error("CfT page did not finish loading");
         await sleep(50);
       }
-      const metrics = await within(
-        cdp.call<
-          { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
-        >(
-          "Page.getLayoutMetrics",
-          {},
-          attached.sessionId,
-        ),
-        500,
-      );
-      const viewport = metrics.cssVisualViewport;
+      const readViewport = async () => {
+        const metrics = await within(
+          cdp.call<
+            { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
+          >(
+            "Page.getLayoutMetrics",
+            {},
+            attached.sessionId,
+          ),
+          500,
+        );
+        const viewport = metrics.cssVisualViewport;
+        if (!viewport || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) {
+          throw new Error("CfT recording viewport was unavailable");
+        }
+        return { x: viewport.clientWidth, y: viewport.clientHeight };
+      };
+      let viewport: Point | undefined;
+      for (let attempt = 0; attempt < 10; attempt++) {
+        await within(
+          cdp.call("Browser.setContentsSize", { windowId: window.windowId, ...contentSize }),
+          500,
+        );
+        await sleep(100);
+        const actual = await readViewport();
+        if (actual.x === contentSize.x && actual.y === contentSize.y) {
+          viewport = actual;
+          break;
+        }
+      }
+      if (!viewport) {
+        throw new Error(
+          `CfT recording viewport mismatch: expected ${contentSize.x}x${contentSize.y}`,
+        );
+      }
       await within(
         cdp.call("Runtime.evaluate", {
           expression: `(() => {
@@ -215,7 +256,7 @@ async function recordingPage(port: number): Promise<RecordingPage | undefined> {
         500,
       );
       return {
-        viewport: viewport ? { x: viewport.clientWidth, y: viewport.clientHeight } : undefined,
+        viewport,
         markerClick: async () => {
           const result = await within(
             cdp.call<{
@@ -228,6 +269,14 @@ async function recordingPage(port: number): Promise<RecordingPage | undefined> {
           );
           const point = result.result.value;
           return point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined;
+        },
+        validateViewport: async () => {
+          const actual = await readViewport();
+          if (actual.x !== viewport.x || actual.y !== viewport.y) {
+            throw new Error(
+              `CfT recording viewport changed: expected ${viewport.x}x${viewport.y}, got ${actual.x}x${actual.y}`,
+            );
+          }
         },
         close: () => cdp.close(),
       };
@@ -263,6 +312,13 @@ const pointOption = (name: string): Point | undefined => {
   const [x, y] = value.split(",").map(Number);
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`${name} must be x,y`);
   return { x, y };
+};
+const contentSizeOption = (): Point => {
+  const size = pointOption("--content-size") ?? { x: 860, y: 560 };
+  if (!Number.isInteger(size.x) || !Number.isInteger(size.y) || size.x < 32 || size.y < 32) {
+    throw new Error("--content-size must be integer width,height with both values at least 32");
+  }
+  return size;
 };
 async function runNode(
   node: PlanNode,
@@ -389,6 +445,7 @@ async function main() {
     await Deno.mkdir(runDir, { recursive: true });
     const profile = `${await Deno.realPath(runDir)}/profile`;
     const url = option("--url") ?? "about:blank";
+    const contentSize = contentSizeOption();
     const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
     const port = (reservation.addr as Deno.NetAddr).port;
     reservation.close();
@@ -408,7 +465,6 @@ async function main() {
         "--disable-infobars",
         "--force-device-scale-factor=1",
         "--disable-features=Translate,TranslateUI",
-        "--window-size=900,700",
         `--app=${url}`,
       ],
       stdout: "null",
@@ -434,7 +490,7 @@ async function main() {
       : undefined;
     let page: RecordingPage | undefined;
     try {
-      page = await recordingPage(port);
+      page = await recordingPage(port, contentSize);
       const useMarkerCalibration = duration === undefined;
       if (useMarkerCalibration && !page) {
         throw new Error("could not inject the recording calibration marker into the CfT page");
@@ -446,6 +502,7 @@ async function main() {
         controller.signal,
         page?.viewport,
         useMarkerCalibration ? page?.markerClick : undefined,
+        page?.validateViewport,
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);

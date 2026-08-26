@@ -10,6 +10,7 @@ export async function recordRaw(
   signal?: AbortSignal,
   viewport?: { x: number; y: number },
   markerClick?: () => Promise<{ x: number; y: number } | undefined>,
+  validateViewport?: () => Promise<void>,
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
@@ -29,6 +30,7 @@ export async function recordRaw(
     if (start) throw new Error(`Raw Input start failed: ${start}`);
     console.error(`Recording target Chrome process: ${pid}`);
     let markerCalibration: MarkerCalibration | undefined;
+    let nextViewportCheck = Date.now();
     const writeMetadata = async () => {
       const rectBytes = new Uint8Array(16);
       const rect = new DataView(rectBytes.buffer);
@@ -66,6 +68,10 @@ export async function recordRaw(
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
       while (!signal?.aborted) {
+        if (validateViewport && Date.now() >= nextViewportCheck) {
+          await validateViewport();
+          nextViewportCheck = Date.now() + 250;
+        }
         const bytes = new Uint8Array(24 * 256);
         const n = lib.symbols.crer_input_read(bytes, 256);
         const view = new DataView(bytes.buffer);
