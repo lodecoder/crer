@@ -89,6 +89,33 @@ class NetworkTracker {
   }
 }
 
+type ViewportInfo = { dpr: number; scale: number; width: number; height: number };
+async function readViewport(cdp: Cdp, sessionId: string): Promise<ViewportInfo | undefined> {
+  const result = await cdp.call<{ result: { value?: ViewportInfo } }>(
+    "Runtime.evaluate",
+    {
+      expression:
+        "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1,width:innerWidth,height:innerHeight})",
+      returnByValue: true,
+    },
+    sessionId,
+  );
+  return result.result.value;
+}
+async function setContentSize(
+  cdp: Cdp,
+  sessionId: string,
+  windowId: number,
+  content: { width: number; height: number },
+) {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    await cdp.call("Browser.setContentsSize", { windowId, ...content });
+    await sleep(100);
+    const actual = await readViewport(cdp, sessionId);
+    if (actual?.width === content.width && actual.height === content.height) return;
+  }
+}
+
 async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: string }> {
   for (let i = 0; i < 150; i++) {
     try {
@@ -106,18 +133,7 @@ async function validateDisplay(
   runDir: string,
 ): Promise<{ x: number; y: number }> {
   const display = s.browser.display;
-  const result = await cdp.call<{
-    result: { value?: { dpr: number; scale: number; width: number; height: number } };
-  }>(
-    "Runtime.evaluate",
-    {
-      expression:
-        "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1,width:innerWidth,height:innerHeight})",
-      returnByValue: true,
-    },
-    sessionId,
-  );
-  const actual = result.result.value;
+  const actual = await readViewport(cdp, sessionId);
   const expectedViewport = s.browser.window?.content;
   await Deno.writeTextFile(
     `${runDir}/display.json`,
@@ -212,16 +228,17 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     });
     const bounds = { ...(s.browser.window?.bounds ?? {}), ...(options.position ?? {}) };
     if (Object.keys(bounds).length) {
-      await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
-    }
-    if (s.browser.window?.content) {
-      await cdp.call("Browser.setContentsSize", {
+      await cdp.call("Browser.setWindowBounds", {
         windowId: window.windowId,
-        ...s.browser.window.content,
+        bounds: { windowState: "normal" },
       });
+      await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
     }
     await cdp.call("Page.enable", {}, attached.sessionId);
     await cdp.call("Runtime.enable", {}, attached.sessionId);
+    if (s.browser.window?.content) {
+      await setContentSize(cdp, attached.sessionId, window.windowId, s.browser.window.content);
+    }
     const network = new NetworkTracker(cdp, attached.sessionId);
     await cdp.call("Network.enable", {}, attached.sessionId);
     const viewport = await validateDisplay(cdp, attached.sessionId, s, runDir);
