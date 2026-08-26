@@ -9,7 +9,7 @@ export async function recordRaw(
   output: string,
   signal?: AbortSignal,
   viewport?: { x: number; y: number },
-  markerWasClicked?: () => Promise<boolean>,
+  markerClick?: () => Promise<{ x: number; y: number } | undefined>,
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
@@ -61,7 +61,7 @@ export async function recordRaw(
       return { rectStatus, validRect };
     };
     console.error(
-      "Click the 2x2 magenta marker at the page's upper-left corner to calibrate and begin recording.",
+      "Click the 4x4 magenta marker at the page's upper-left corner to calibrate and begin recording.",
     );
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
@@ -78,16 +78,15 @@ export async function recordRaw(
             kind: view.getUint32(o + 16, true),
             data: view.getUint32(o + 20, true),
           };
-          if (!markerCalibration && markerWasClicked && viewport) {
+          if (!markerCalibration && markerClick && viewport) {
             try {
               if (event.kind === 3) {
                 await new Promise((resolve) => setTimeout(resolve, 20));
-                if (await markerWasClicked()) {
-                  // The marker fills CSS pixels [0, 2) in both directions; its
-                  // centre is the least-biased reference point for a physical click.
+                const cssPoint = await markerClick();
+                if (cssPoint) {
                   markerCalibration = {
                     screenClick: { x: event.x, y: event.y },
-                    cssPoint: { x: 1, y: 1 },
+                    cssPoint,
                   };
                   console.error("Calibration complete. Recording browser interactions now.");
                 }
@@ -105,7 +104,7 @@ export async function recordRaw(
       file.close();
     }
     const metadata = await writeMetadata();
-    if (markerWasClicked && !markerCalibration) {
+    if (markerClick && !markerCalibration) {
       throw new Error("recording calibration marker was not clicked");
     }
     if (!metadata.validRect) {

@@ -48,7 +48,7 @@ try {
   }
 
   Write-Host "A dedicated Chrome for Testing window will open at $fixtureUrl"
-  Write-Host 'CfT のページ左上にある 2x2 のマゼンタ点を最初にクリックして較正してください。点が消えた後に query を入力し、Submit をクリックしてから、ここで Enter を押します。'
+  Write-Host 'CfT のページ左上にある 4x4 のマゼンタ点を最初にクリックして較正してください。点が消えた後に query を入力し、Submit をクリックしてから、ここで Enter を押します。'
   Push-Location $projectRoot
   $record = $null
   try {

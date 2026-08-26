@@ -45,11 +45,11 @@ Deno.test("calibrates the page origin from the recording marker", () => {
       css_viewport: { x: 884, y: 661 },
       marker_calibration: {
         screenClick: { x: 86, y: 35 },
-        cssPoint: { x: 1, y: 1 },
+        cssPoint: { x: 3, y: 2 },
       },
     }),
     {
-      clientOrigin: { x: 85.5, y: 34.49924357034796 },
+      clientOrigin: { x: 84.5, y: 33.998487140695915 },
       clientSize: { x: 442, y: 331 },
       viewport: { x: 884, y: 661 },
     },
