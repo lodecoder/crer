@@ -595,7 +595,7 @@ async function main() {
       : undefined;
     // The fixture script owns its terminal and uses --stop-file. A direct interactive invocation
     // can instead finish naturally with Enter, without requiring a second shell or Ctrl+C.
-    const cancelTerminalEnter = !stopFile && duration === undefined && Deno.isatty(Deno.stdin.rid)
+    const cancelTerminalEnter = !stopFile && duration === undefined && Deno.stdin.isTerminal()
       ? stopOnTerminalEnter(controller)
       : undefined;
     if (cancelTerminalEnter) console.error("Recording. Press Enter or Ctrl+C to stop.");
