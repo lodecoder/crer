@@ -228,10 +228,20 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     });
     const bounds = { ...(s.browser.window?.bounds ?? {}), ...(options.position ?? {}) };
     if (Object.keys(bounds).length) {
-      await cdp.call("Browser.setWindowBounds", {
-        windowId: window.windowId,
-        bounds: { windowState: "normal" },
-      });
+      const current = await cdp.call<{ bounds: { width?: number; height?: number } }>(
+        "Browser.getWindowBounds",
+        { windowId: window.windowId },
+      );
+      if (Number.isFinite(current.bounds.width) && Number.isFinite(current.bounds.height)) {
+        await cdp.call("Browser.setWindowBounds", {
+          windowId: window.windowId,
+          bounds: {
+            windowState: "normal",
+            width: current.bounds.width,
+            height: current.bounds.height,
+          },
+        });
+      }
       await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
     }
     await cdp.call("Page.enable", {}, attached.sessionId);
