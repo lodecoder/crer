@@ -120,6 +120,7 @@ Deno.test("applies a coordinate transform while normalizing", async () => {
       viewport: { x: 1000, y: 600 },
     });
     assertEquals(scenario.steps, [{ do: "click", at: { x: 500, y: 300 } }]);
+    assertEquals(scenario.browser.window?.content, { width: 1000, height: 600 });
   } finally {
     await Deno.remove(path);
   }

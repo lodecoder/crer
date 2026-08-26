@@ -76,7 +76,8 @@ Chrome for Testing が fixture を開いたら、まずページ左上のマゼ�
 Enter を押します。較正クリック自体は記録されません。結果は `.crer/fixture.raw-input.ndjson` に保存されます。
 同スクリプトは続けて `.crer/fixture.recorded.crer.yaml` も生成します。`-Output`、`-Scenario`、`-Port`、
 `-Chrome` で変更できます。記録時に有効なコンテンツ領域と CDP viewport を取得できた場合、`.meta.json`
-sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動変換します。sidecar がない場合は、従来どおり
+sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動変換し、同時に記録時の CSS viewport を
+`browser.window.content` として YAML に保存します。sidecar がない場合は、従来どおり
 `--client-origin`、`--client-size`、`--viewport` をすべて指定してください。
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。

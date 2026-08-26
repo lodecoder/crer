@@ -40,7 +40,8 @@
 - [x] `wait_for` の URL / locator hint / network idle を仕様どおり実装する。
   - URL パターン、可視 locator、CDP Network イベントに基づく 500ms の idle 判定を実装済み。
 - [ ] 個別 jitter、viewport / DPR / zoom の検証を厳密化する。
-  - jitter の必須項目・型・値域検証は実装済み。viewport / DPR / zoom の実行時検証は未完了。
+  - jitter の必須項目・型・値域、`window.content` の実測 viewport、DPR、`visualViewport.scale` の実装は完了。
+    `browser_zoom` は仕様どおり 100% だけを strict に保証する。headful CfT での回帰確認が残る。
 
 ## P1 — plan scheduler
 

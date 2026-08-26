@@ -67,24 +67,57 @@ async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: strin
   }
   throw new Error(`CDP endpoint on port ${port} was not available`);
 }
-async function validateDisplay(cdp: Cdp, sessionId: string, s: Scenario, runDir: string) {
+async function validateDisplay(
+  cdp: Cdp,
+  sessionId: string,
+  s: Scenario,
+  runDir: string,
+): Promise<{ x: number; y: number }> {
   const display = s.browser.display;
-  if (!display || display.zoom_check === "off") return;
-  const result = await cdp.call<{ result: { value?: { dpr: number; scale: number } } }>(
+  const result = await cdp.call<{
+    result: { value?: { dpr: number; scale: number; width: number; height: number } };
+  }>(
     "Runtime.evaluate",
     {
-      expression: "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1})",
+      expression:
+        "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1,width:innerWidth,height:innerHeight})",
       returnByValue: true,
     },
     sessionId,
   );
   const actual = result.result.value;
-  await Deno.writeTextFile(`${runDir}/display.json`, JSON.stringify(actual ?? {}, null, 2) + "\n");
+  const expectedViewport = s.browser.window?.content;
+  await Deno.writeTextFile(
+    `${runDir}/display.json`,
+    JSON.stringify({ actual: actual ?? {}, expectedViewport, display: display ?? {} }, null, 2)
+      + "\n",
+  );
+  if (!actual || actual.width <= 0 || actual.height <= 0) {
+    throw new Error("CfT viewport was unavailable");
+  }
+  const strict = display?.zoom_check === "strict";
+  const report = (message: string) => {
+    if (strict) throw new Error(message);
+    if (display?.zoom_check !== "off") console.warn(message);
+  };
+  if (
+    expectedViewport
+    && (actual.width !== expectedViewport.width || actual.height !== expectedViewport.height)
+  ) {
+    throw new Error(
+      `Viewport mismatch: expected ${expectedViewport.width}x${expectedViewport.height}, got ${actual.width}x${actual.height}`,
+    );
+  }
+  if (!display || display.zoom_check === "off") return { x: actual.width, y: actual.height };
   if (display.expected_dpr !== undefined && actual?.dpr !== display.expected_dpr) {
     const message = `DPR mismatch: expected ${display.expected_dpr}, got ${actual?.dpr}`;
-    if (display.zoom_check === "strict") throw new Error(message);
-    console.warn(message);
+    report(message);
   }
+  if (display.browser_zoom !== undefined && display.browser_zoom !== 100) {
+    report(`browser_zoom ${display.browser_zoom} is not supported; v1 strictly supports 100 only`);
+  }
+  if (actual.scale !== 1) report(`Viewport scale mismatch: expected 1, got ${actual.scale}`);
+  return { x: actual.width, y: actual.height };
 }
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
   const profile = `${await Deno.realPath(runDir)}/profile`;
@@ -158,8 +191,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   await cdp.call("Runtime.enable", {}, attached.sessionId);
   const network = new NetworkTracker(cdp, attached.sessionId);
   await cdp.call("Network.enable", {}, attached.sessionId);
-  await validateDisplay(cdp, attached.sessionId, s, runDir);
-  const viewport = s.browser.window?.content ?? { width: 1280, height: 720 };
+  const viewport = await validateDisplay(cdp, attached.sessionId, s, runDir);
   return {
     cdp,
     sessionId: attached.sessionId,
@@ -167,7 +199,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     windowId: window.windowId,
     process: p,
     runDir,
-    viewport: { x: viewport.width, y: viewport.height },
+    viewport,
     network,
   };
 }

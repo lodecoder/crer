@@ -200,7 +200,14 @@ export async function normalizeRawWithWarnings(
     scenario: {
       version: 1,
       name,
-      browser: { chrome: "chrome-for-testing@pinned", profile: "ephemeral", initial_url: url },
+      browser: {
+        chrome: "chrome-for-testing@pinned",
+        profile: "ephemeral",
+        initial_url: url,
+        ...(transform
+          ? { window: { content: { width: transform.viewport.x, height: transform.viewport.y } } }
+          : {}),
+      },
       playback: {
         jitter: {
           enabled: false,

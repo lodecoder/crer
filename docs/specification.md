@@ -155,13 +155,14 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
 専用プロファイルの translate 設定も無効化する。プロファイルは必ず絶対パスで渡す。再生・記録ともに `--app=<URL>` を使う同じ CfT アプリ
 ウィンドウとして起動し、Chrome のタブ・アドレスバー UI をページ座標系から除外する。`--disable-infobars`
-で CfT banner の抑止を要求する。CfT のバージョンまたは UI 状態によって banner が表示される場合も、
-座標変換ではこれを含めない content surface を使う。v1 は次を再生前提とする。
+で CfT banner の抑止を要求する。CfT のバージョンまたは UI 状態によって banner が表示される場合は、
+記録開始前にページ左上へ注入する 8×8 CSS px のマーカーを物理クリックして、DOM `clientX/clientY` と
+画面座標を対応付ける。マーカーのクリックは記録から除外する。v1 は次を再生前提とする。
 
 - Windows の表示スケーリングは任意とする。実行時に CfT の `devicePixelRatio` を検査し、strict
   の場合は想定値と異なれば失敗にする。
 - `window.content` は CSS viewport の目標サイズ、`window.bounds` は画面上の DIP 位置である。
-  `Browser.setWindowBounds` と `Browser.setContentsSize` を順に実行し、実測値を検証する。
+  `Browser.setWindowBounds` と `Browser.setContentsSize` を順に実行し、実測値が異なれば常に失敗にする。
 - `browser_zoom` は `100` のみを v1 の厳密保証範囲とする。Chrome UI のサイト別ズームは CDP の
   安定 API で直接固定できないためである。100% 以外を必要とする場合は、専用プロファイル
   テンプレートに事前設定したズームを使い、`visualViewport.scale` と CSS viewport の検証を
