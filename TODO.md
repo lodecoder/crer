@@ -16,9 +16,10 @@
   - `install-chrome-for-testing.ps1 -Version <version>` と `crer-chrome.json` manifest を提供。
 - [x] ローカル fixture ページに対し `play` を実行し、起動・ウィンドウ位置・入力・終了を確認する。
   - 2026-08-19: `fixtures/playback/search.crer.yaml` を CfT 152.0.7977.42 で再生し、終了コード 0 と `result.png` / `run.json` を確認。
-- [ ] OS のカーソル位置、前面ウィンドウ、通常 Chrome が変化しないことを確認する。
-  - CDP 再生に OS 入力注入 API は存在しないことをコード検査済み。5 秒間の `cursor-idle` fixture による
-    実機観察と、通常 Chrome のタブ／フォーカス不変確認が残る。
+- [x] OS のカーソル位置、前面ウィンドウ、通常 Chrome が変化しないことを確認する。
+  - CDP 再生に OS 入力注入 API は存在しないことをコード検査済み。2026-08-26 に 5 秒間の
+    `cursor-idle` fixture が物理カーソル不変で PASS、前面ウィンドウ復元は `restoreStatus: 0`、
+    通常 Chrome も目視で不変を確認済み。
 - [x] 成功／失敗時の screenshot・run metadata・終了コードを自動テストする。
   - `scripts/test-playback-fixture.ps1` が成功時の `result.png`、失敗時の `failure-0.png`、両方の
     `run.json` / `display.json` と終了コードを検査する。

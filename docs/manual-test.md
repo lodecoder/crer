@@ -47,6 +47,9 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 .\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\cursor-idle.crer.yaml
 ```
 
+2026-08-26 にこの fixture は物理カーソル不変で PASS した。`foreground.json` の
+`restoreStatus: 0` と合わせ、通常 Chrome を開いたままの非干渉確認に使う。
+
 ## 2. 失敗 artifacts
 
 ```powershell
