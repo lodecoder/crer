@@ -54,7 +54,8 @@
 
 ## P2 — 配布と堅牢化
 
-- [ ] `deno compile` と Native AOT DLL をパッケージ化する。
-  - `build-release.ps1`、standalone exe の DLL 自動検出、`test-release.ps1` を実装。生成物の実機 smoke test を実行中。
+- [x] `deno compile` と Native AOT DLL をパッケージ化する。
+  - `build-release.ps1`、standalone exe の DLL 自動検出、`test-release.ps1` を実装。2026-08-26 に
+    win-x64 配布物の headful CfT fixture 再生、artifact、物理カーソル不変を確認済み。
 - [ ] CfT の固定バージョン導入、`doctor` の診断、サンプル scenario を整える。
 - [ ] Windows x64 / ARM64 のビルドと回帰テストを整備する。

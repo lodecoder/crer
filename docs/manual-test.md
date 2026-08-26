@@ -103,6 +103,20 @@ Tab で Submit にフォーカスして Enter で実行するキー再生は、�
 deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts --step-delay-ms 1000
 ```
 
+## 5. standalone 配布物
+
+Native AOT DLL を横に置いた standalone 実行ファイルを生成し、同じ fixture で再生する。
+
+```powershell
+.\scripts\test-release.ps1
+```
+
+期待結果:
+
+- `dist\win-x64\crer.exe` と `dist\win-x64\crer-win-input.dll` が生成される。
+- fixture 再生は終了コード 0 で終了し、`result.png` を含む artifact が作成される。
+- `PASS: standalone distribution playback completed` が表示され、物理カーソル不変の判定も通る。
+
 報告してほしい情報:
 
 - 各コマンドの出力全体
