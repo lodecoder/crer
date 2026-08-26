@@ -55,9 +55,11 @@ if (-not $NoPersist) {
 
 $version = $chrome.VersionInfo.ProductVersion
 if ([string]::IsNullOrWhiteSpace($version)) { $version = 'unknown' }
-@{ requested = $Version; installed = $version; chrome = $path } |
+$sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
+@{ requested = $Version; installed = $version; chrome = $path; sha256 = $sha256 } |
   ConvertTo-Json | Set-Content -LiteralPath $manifestPath -Encoding utf8
 Write-Host "Registered: $version"
+Write-Host "SHA-256: $sha256"
 Write-Host "CRER_CHROME: $path"
 Write-Host "CRER_CHROME_MANIFEST: $manifestPath"
 if (-not $NoPersist) {

@@ -41,30 +41,44 @@ async function chromeDiagnostic(configured: string | undefined) {
     return { path: configured, exists: false };
   }
   let version: string | undefined;
+  let sha256: string | undefined;
   try {
     const escapedPath = resolved.replaceAll("'", "''");
     const output = await within(
-      new Deno.Command("powershell.exe", {
+      new Deno.Command("pwsh.exe", {
         args: [
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          `(Get-Item -LiteralPath '${escapedPath}').VersionInfo.ProductVersion`,
+          "$item = Get-Item -LiteralPath '" + escapedPath
+          + "'; $hash = (Get-FileHash -LiteralPath '" + escapedPath
+          + "' -Algorithm SHA256).Hash.ToLowerInvariant(); @{ version = $item.VersionInfo.ProductVersion; sha256 = $hash } | ConvertTo-Json -Compress",
         ],
         stdout: "piped",
         stderr: "piped",
       }).output(),
-      3_000,
+      15_000,
     );
     if (output.code === 0) {
-      const text = new TextDecoder().decode(output.stdout).trim();
-      if (text) version = text;
+      const probe = JSON.parse(new TextDecoder().decode(output.stdout)) as {
+        version?: unknown;
+        sha256?: unknown;
+      };
+      if (typeof probe.version === "string" && probe.version) version = probe.version;
+      if (typeof probe.sha256 === "string" && probe.sha256) sha256 = probe.sha256;
     }
   } catch {
     // The executable existence check above is still useful when version probing is blocked.
   }
   let manifest:
-    | { path: string; requested?: string; installed?: string; matchesChrome: boolean }
+    | {
+      path: string;
+      requested?: string;
+      installed?: string;
+      sha256?: string;
+      matchesChrome: boolean;
+      matchesSha256: boolean | "unverified";
+    }
     | undefined;
   const candidates: string[] = [];
   const configuredManifest = Deno.env.get("CRER_CHROME_MANIFEST");
@@ -81,13 +95,19 @@ async function chromeDiagnostic(configured: string | undefined) {
         requested?: unknown;
         installed?: unknown;
         chrome?: unknown;
+        sha256?: unknown;
       };
       const manifestChrome = typeof raw.chrome === "string" ? raw.chrome : undefined;
+      const manifestSha256 = typeof raw.sha256 === "string" ? raw.sha256.toLowerCase() : undefined;
       manifest = {
         path: candidate,
         ...(typeof raw.requested === "string" ? { requested: raw.requested } : {}),
         ...(typeof raw.installed === "string" ? { installed: raw.installed } : {}),
+        ...(manifestSha256 ? { sha256: manifestSha256 } : {}),
         matchesChrome: manifestChrome?.toLowerCase() === resolved.toLowerCase(),
+        matchesSha256: manifestSha256 && sha256
+          ? manifestSha256 === sha256.toLowerCase()
+          : "unverified",
       };
       break;
     } catch {
@@ -98,7 +118,14 @@ async function chromeDiagnostic(configured: string | undefined) {
     path: resolved,
     exists: true,
     version: version ?? "unavailable",
-    isChromeForTesting: manifest ? manifest.matchesChrome : "unverified",
+    sha256: sha256 ?? "unavailable",
+    isChromeForTesting: !manifest
+      ? "unverified"
+      : manifest.matchesChrome && manifest.matchesSha256 === true
+      ? true
+      : manifest.matchesChrome && manifest.matchesSha256 === "unverified"
+      ? "unverified"
+      : false,
     manifest: manifest ?? "not found",
   };
 }
