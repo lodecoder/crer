@@ -137,6 +137,30 @@ async function waitForStableViewport(
   return previous;
 }
 
+async function waitForExpectedViewport(
+  cdp: Cdp,
+  sessionId: string,
+  expected: { width: number; height: number },
+): Promise<ViewportInfo | undefined> {
+  const deadline = Date.now() + 30_000;
+  let matchSince: number | undefined;
+  let last: ViewportInfo | undefined;
+  while (Date.now() < deadline) {
+    const current = await readViewport(cdp, sessionId);
+    if (current) {
+      last = current;
+      if (current.width === expected.width && current.height === expected.height) {
+        matchSince ??= Date.now();
+        if (Date.now() - matchSince >= 1_000) return current;
+      } else {
+        matchSince = undefined;
+      }
+    }
+    await sleep(100);
+  }
+  return last;
+}
+
 async function waitForDocumentReady(cdp: Cdp, sessionId: string) {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -283,10 +307,15 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     if (s.browser.window?.content) {
       await setContentSize(cdp, attached.sessionId, window.windowId, s.browser.window.content);
     }
-    // A scrollbar may only appear after the initial navigation. The recorded viewport is the
-    // post-layout coordinate system, so do not validate the provisional pre-layout dimensions.
+    // A scrollbar may only appear after the initial navigation. Wait for the recorded coordinate
+    // space itself rather than accepting a short-lived provisional viewport.
     await waitForDocumentReady(cdp, attached.sessionId);
-    await waitForStableViewport(cdp, attached.sessionId);
+    const expectedViewport = s.browser.window?.viewport ?? s.browser.window?.content;
+    if (expectedViewport) {
+      await waitForExpectedViewport(cdp, attached.sessionId, expectedViewport);
+    } else {
+      await waitForStableViewport(cdp, attached.sessionId);
+    }
     const network = new NetworkTracker(cdp, attached.sessionId);
     await cdp.call("Network.enable", {}, attached.sessionId);
     const viewport = await validateDisplay(cdp, attached.sessionId, s, runDir);
