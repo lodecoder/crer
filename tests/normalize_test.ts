@@ -153,6 +153,38 @@ Deno.test("applies a coordinate transform while normalizing", async () => {
   }
 });
 
+Deno.test("uses the event viewport after a recorded navigation", async () => {
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(
+    path,
+    JSON.stringify({
+      qpc: "1",
+      x: 100,
+      y: 100,
+      kind: 2,
+      data: 0,
+      css_viewport: { x: 800, y: 600 },
+    }) + "\n" + JSON.stringify({
+      qpc: "2",
+      x: 100,
+      y: 100,
+      kind: 3,
+      data: 0,
+      css_viewport: { x: 800, y: 600 },
+    }),
+  );
+  try {
+    const scenario = await normalizeRaw(path, "https://example.test", "sample", {
+      clientOrigin: { x: 0, y: 0 },
+      clientSize: { x: 1000, y: 750 },
+      viewport: { x: 1000, y: 750 },
+    });
+    assertEquals(scenario.steps, [{ do: "click", at: { x: 80, y: 80 } }]);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
 Deno.test("warns and omits an incomplete mouse click", async () => {
   const path = await Deno.makeTempFile();
   await Deno.writeTextFile(path, JSON.stringify({ qpc: "1", x: 100, y: 200, kind: 2, data: 0 }));

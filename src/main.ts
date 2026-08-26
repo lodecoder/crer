@@ -168,7 +168,7 @@ type RecordingPage = {
   viewport: Point;
   windowBounds?: { left: number; top: number };
   markerClick: () => Promise<Point | undefined>;
-  validateViewport: () => Promise<void>;
+  readViewport: () => Promise<Point>;
   close: () => void;
 };
 async function recordingPage(
@@ -362,14 +362,7 @@ async function recordingPage(
           const point = result.result.value;
           return point && Number.isFinite(point.x) && Number.isFinite(point.y) ? point : undefined;
         },
-        validateViewport: async () => {
-          const actual = await readViewport();
-          if (actual.x !== viewport.x || actual.y !== viewport.y) {
-            throw new Error(
-              `CfT recording viewport changed: expected ${viewport.x}x${viewport.y}, got ${actual.x}x${actual.y}`,
-            );
-          }
-        },
+        readViewport,
         close: () => cdp.close(),
       };
     } catch (error) {
@@ -613,7 +606,7 @@ async function main() {
         controller.signal,
         page?.viewport,
         useMarkerCalibration ? page?.markerClick : undefined,
-        page?.validateViewport,
+        page?.readViewport,
         page?.windowBounds,
         contentSize,
       );

@@ -1,6 +1,13 @@
 import type { Point, Scenario, Step } from "./types.ts";
 
-type RawEvent = { qpc: string; x: number; y: number; kind: number; data: number };
+type RawEvent = {
+  qpc: string;
+  x: number;
+  y: number;
+  kind: number;
+  data: number;
+  css_viewport?: Point;
+};
 export type CoordinateTransform = { clientOrigin: Point; clientSize: Point; viewport: Point };
 type RecordingMetadata = {
   content_rect_screen_px?: { x: number; y: number; width: number; height: number };
@@ -171,8 +178,11 @@ export async function normalizeRawWithWarnings(
   };
   for (const event of raw) {
     const qpc = BigInt(event.qpc);
-    const point = transform
-      ? screenToCss({ x: event.x, y: event.y }, transform)
+    const eventTransform = transform && event.css_viewport
+      ? { ...transform, viewport: event.css_viewport }
+      : transform;
+    const point = eventTransform
+      ? screenToCss({ x: event.x, y: event.y }, eventTransform)
       : { x: event.x, y: event.y };
     const virtualKey = event.data >>> 16;
     if (virtualKey === 16 || virtualKey === 160 || virtualKey === 161) {

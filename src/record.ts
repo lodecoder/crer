@@ -10,7 +10,7 @@ export async function recordRaw(
   signal?: AbortSignal,
   viewport?: { x: number; y: number },
   markerClick?: () => Promise<{ x: number; y: number } | undefined>,
-  validateViewport?: () => Promise<void>,
+  readViewport?: () => Promise<{ x: number; y: number }>,
   windowBounds?: { left: number; top: number },
   requestedContent?: { x: number; y: number },
 ) {
@@ -32,6 +32,7 @@ export async function recordRaw(
     if (start) throw new Error(`Raw Input start failed: ${start}`);
     console.error(`Recording target Chrome process: ${pid}`);
     let markerCalibration: MarkerCalibration | undefined;
+    let activeViewport = viewport;
     let nextViewportCheck = Date.now();
     const writeMetadata = async () => {
       const rectBytes = new Uint8Array(16);
@@ -74,8 +75,17 @@ export async function recordRaw(
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {
       while (!signal?.aborted) {
-        if (validateViewport && Date.now() >= nextViewportCheck) {
-          await validateViewport();
+        if (readViewport && Date.now() >= nextViewportCheck) {
+          const nextViewport = await readViewport();
+          if (
+            activeViewport
+            && (nextViewport.x !== activeViewport.x || nextViewport.y !== activeViewport.y)
+          ) {
+            console.error(
+              `Note: recording viewport changed from ${activeViewport.x}x${activeViewport.y} to ${nextViewport.x}x${nextViewport.y}; subsequent input will use the new coordinate space.`,
+            );
+          }
+          activeViewport = nextViewport;
           nextViewportCheck = Date.now() + 250;
         }
         const bytes = new Uint8Array(24 * 256);
@@ -89,6 +99,10 @@ export async function recordRaw(
             y: view.getInt32(o + 12, true),
             kind: view.getUint32(o + 16, true),
             data: view.getUint32(o + 20, true),
+            ...(activeViewport && viewport
+                && (activeViewport.x !== viewport.x || activeViewport.y !== viewport.y)
+              ? { css_viewport: activeViewport }
+              : {}),
           };
           if (!markerCalibration && markerClick && viewport) {
             try {

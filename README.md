@@ -83,7 +83,8 @@ deno task dev normalize .crer\raw-input.ndjson `
 - `--content-size <width>,<height>` — CfT に要求する content host のサイズ。既定は `860,560`。
   ページがスクロールバーを表示する場合、実効 CSS viewport はこれより小さくなる。記録は両方を
   保存し、再生時は記録済みの実効 viewport が1秒維持されるまで最大30秒待ってから検証する。
-  録画開始後に実効 viewport が変化した場合だけ、座標混在を防ぐため失敗終了する。
+  ページ遷移などで実効 viewport が変化した場合は、その後の各入力に新しい座標系を保存して
+  正規化します。
 - `--position <left>,<top>` — CfT ウィンドウの画面上の位置。負の座標も指定可能。
 
 正規化後の YAML には、実測した値が次のように保存されるため、再生時も同じ viewport と位置を使う。

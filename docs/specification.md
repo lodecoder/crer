@@ -102,11 +102,11 @@ YAML へは不完全な操作を出力せず警告する。CfT が前景でな�
 アドレスバー・DevTools 上の入力、対象コンテンツ領域外のポインター入力は記録しない。
 
 座標は、Raw Input の物理 screen px を対象コンテンツ HWND の物理 client px に変換し、同時点の
-`Page.getLayoutMetrics().layoutViewport.clientWidth/clientHeight` と `GetClientRect` の幅・高さの
+`Page.getLayoutMetrics().cssVisualViewport.clientWidth/clientHeight` と `GetClientRect` の幅・高さの
 比で CSS viewport px に換算する。すなわち `x = clientX * cssWidth / clientWidth`、
 `y = clientY * cssHeight / clientHeight` とする。記録中に client rect、DPR、viewport が変化した
-場合は、その直後に `viewport_changed` 境界イベントを挿入する。既定ではこのイベントをまたぐ
-記録を停止して利用者に分割を求めるため、異なる表示条件の座標を一つの scenario に混在させない。
+場合は、以後の Raw Input イベントにその時点の CSS viewport を付与する。正規化はイベントごとの
+viewport を使うため、ページ遷移前後で異なる表示条件の座標を安全に一つの scenario へ保存できる。
 
 座標のほか、CDP `DOM.getNodeForLocation` で得たタグ、アクセシブル名、CSS path、要素の
 bounding box を **locator hint** として添える。これは編集・失敗診断・将来の検証専用であり、
