@@ -9,6 +9,7 @@ internal static class InputBridge
     private const uint RIM_TYPEMOUSE = 0, RIM_TYPEKEYBOARD = 1, RI_MOUSE_LEFT_BUTTON_DOWN = 1, RI_MOUSE_LEFT_BUTTON_UP = 2, RI_MOUSE_WHEEL = 0x400;
     private static readonly ConcurrentQueue<CrerInputEvent> Queue = new();
     private static readonly AutoResetEvent Stopped = new(false);
+    private static readonly byte[] KeyboardState = new byte[256];
     private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
     [StructLayout(LayoutKind.Sequential, Pack = 8)] internal struct CrerInputEvent { public ulong Qpc; public int X, Y; public uint Kind, Data; }
     [StructLayout(LayoutKind.Sequential)] internal struct CrerRect { public int X, Y, Width, Height; }
@@ -25,7 +26,6 @@ internal static class InputBridge
     [DllImport("user32.dll", SetLastError=true)] private static extern bool RegisterRawInputDevices(RawInputDevice[] d, uint n, uint cb);
     [DllImport("user32.dll")] private static extern int GetRawInputData(IntPtr h, uint command, IntPtr data, ref uint size, uint headerSize);
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point p);
-    [DllImport("user32.dll")] private static extern bool GetKeyboardState(byte[] state);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int ToUnicodeEx(uint key, uint scan, byte[] state, [Out] char[] text, int textLength, uint flags, IntPtr keyboardLayout);
     [DllImport("user32.dll")] private static extern IntPtr GetKeyboardLayout(uint threadId);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
@@ -121,23 +121,42 @@ internal static class InputBridge
             var input = Marshal.PtrToStructure<LowLevelKeyboard>(l);
             var message = (uint)w;
             if (message is 0x0100 or 0x0104) {
+                UpdateKeyboardState(input.VKey, true);
                 if (TryCharacter(input, out var character)) Push(9, character);
                 else Push(7, (input.VKey << 16) | input.ScanCode);
             }
-            else if (message is 0x0101 or 0x0105) Push(8, (input.VKey << 16) | input.ScanCode);
+            else if (message is 0x0101 or 0x0105) {
+                UpdateKeyboardState(input.VKey, false);
+                Push(8, (input.VKey << 16) | input.ScanCode);
+            }
         }
         return CallNextHookEx(_keyboardHook, code, w, l);
     }
     private static bool TryCharacter(LowLevelKeyboard input, out uint character)
     {
         character = 0;
-        var state = new byte[256];
-        if (!GetKeyboardState(state)) return false;
         var text = new char[4];
-        var count = ToUnicodeEx(input.VKey, input.ScanCode, state, text, text.Length, 0, GetKeyboardLayout(0));
+        var count = ToUnicodeEx(input.VKey, input.ScanCode, KeyboardState, text, text.Length, 0, GetKeyboardLayout(0));
         if (count != 1 || char.IsControl(text[0])) return false;
         character = text[0];
         return true;
+    }
+    private static void UpdateKeyboardState(uint key, bool down)
+    {
+        if (key >= KeyboardState.Length) return;
+        KeyboardState[key] = down ? (byte)0x80 : (byte)0;
+        if (key is 0xA0 or 0xA1) {
+            KeyboardState[0x10] = (KeyboardState[0xA0] & 0x80) != 0 || (KeyboardState[0xA1] & 0x80) != 0
+                ? (byte)0x80 : (byte)0;
+        }
+        if (key is 0xA2 or 0xA3) {
+            KeyboardState[0x11] = (KeyboardState[0xA2] & 0x80) != 0 || (KeyboardState[0xA3] & 0x80) != 0
+                ? (byte)0x80 : (byte)0;
+        }
+        if (key is 0xA4 or 0xA5) {
+            KeyboardState[0x12] = (KeyboardState[0xA4] & 0x80) != 0 || (KeyboardState[0xA5] & 0x80) != 0
+                ? (byte)0x80 : (byte)0;
+        }
     }
     private static IntPtr Proc(IntPtr h,uint m,UIntPtr w,IntPtr l){ if(m!=0x00FF) return DefWindowProcW(h,m,w,l); uint size=0; GetRawInputData(l,0x10000003,IntPtr.Zero,ref size,(uint)Marshal.SizeOf<RawInputHeader>()); var mem=Marshal.AllocHGlobal((int)size); try { if(GetRawInputData(l,0x10000003,mem,ref size,(uint)Marshal.SizeOf<RawInputHeader>())!=(int)size)return IntPtr.Zero; var r=Marshal.PtrToStructure<RawInput>(mem); if(r.Header.Type==RIM_TYPEMOUSE&&Active(true)){var x=r.Mouse;if(x.LastX!=0||x.LastY!=0)Push(1);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_DOWN)!=0)Push(2);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_UP)!=0)Push(3);if((x.ButtonFlags&RI_MOUSE_WHEEL)!=0)Push(6,x.ButtonData);}else if(r.Header.Type==RIM_TYPEKEYBOARD&&Active(false))Push((r.Keyboard.Flags&1)!=0?8u:7u,((uint)r.Keyboard.VKey<<16)|r.Keyboard.MakeCode); } finally{Marshal.FreeHGlobal(mem);} return IntPtr.Zero; }
     private static void Loop(){ _threadId=GetCurrentThreadId(); var wc=new WndClass{Name="crer.raw.input",Proc=Proc,Instance=GetModuleHandleW(null)};RegisterClassW(ref wc);var h=CreateWindowExW(0,wc.Name,wc.Name,0,0,0,0,0,new IntPtr(-3),IntPtr.Zero,wc.Instance,IntPtr.Zero);_mouseHook=SetWindowsHookExW(14,MouseHookProc,IntPtr.Zero,0);_keyboardHook=SetWindowsHookExW(13,KeyboardHookProc,IntPtr.Zero,0);if(_mouseHook==IntPtr.Zero||_keyboardHook==IntPtr.Zero){_error=Marshal.GetLastWin32Error();_running=false;}while(_running&&GetMessageW(out _,IntPtr.Zero,0,0)>0){}if(_mouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_mouseHook);if(_keyboardHook!=IntPtr.Zero)UnhookWindowsHookEx(_keyboardHook);_mouseHook=_keyboardHook=IntPtr.Zero;Stopped.Set(); }
@@ -149,7 +168,7 @@ internal static class InputBridge
         return SetForegroundWindow(h) ? 0 : Marshal.GetLastWin32Error();
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
-    [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid){if(_running)return 183;_pid=pid;_error=0;_target=_content=IntPtr.Zero;_running=true;_thread=new Thread(Loop){IsBackground=true};_thread.Start();return 0;}
+    [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid){if(_running)return 183;_pid=pid;_error=0;_target=_content=IntPtr.Zero;Array.Clear(KeyboardState);_running=true;_thread=new Thread(Loop){IsBackground=true};_thread.Start();return 0;}
     [UnmanagedCallersOnly(EntryPoint="crer_input_stop")] public static int Stop(){_running=false;if(_threadId!=0)PostThreadMessageW(_threadId,0x0012,UIntPtr.Zero,IntPtr.Zero);Stopped.WaitOne(1000);return _error;}
     [UnmanagedCallersOnly(EntryPoint="crer_input_read")] public static unsafe uint Read(CrerInputEvent* output,uint capacity){uint n=0;while(n<capacity&&Queue.TryDequeue(out var e))output[n++]=e;return n;}
     [UnmanagedCallersOnly(EntryPoint="crer_input_get_content_rect")] public static unsafe int GetContentRect(CrerRect* output)
