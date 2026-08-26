@@ -183,13 +183,27 @@ async function recordingPage(
         cdp.call<{ windowId: number }>("Browser.getWindowForTarget", { targetId: target.id }),
         cdpWaitMs,
       );
-      await within(
-        cdp.call("Browser.setWindowBounds", {
+      const initialBounds = await within(
+        cdp.call<{ bounds: { width?: number; height?: number } }>("Browser.getWindowBounds", {
           windowId: window.windowId,
-          bounds: { windowState: "normal" },
         }),
         cdpWaitMs,
       );
+      if (
+        Number.isFinite(initialBounds.bounds.width) && Number.isFinite(initialBounds.bounds.height)
+      ) {
+        await within(
+          cdp.call("Browser.setWindowBounds", {
+            windowId: window.windowId,
+            bounds: {
+              windowState: "normal",
+              width: initialBounds.bounds.width,
+              height: initialBounds.bounds.height,
+            },
+          }),
+          cdpWaitMs,
+        );
+      }
       if (position) {
         await within(
           cdp.call("Browser.setWindowBounds", {
