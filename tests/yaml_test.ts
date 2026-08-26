@@ -1,5 +1,6 @@
 import { assertThrows } from "jsr:@std/assert@^1.0.14";
 import { scenarioFrom } from "../src/yaml.ts";
+import { planFrom } from "../src/yaml.ts";
 
 Deno.test("validates key_chord keys", () => {
   const scenario = {
@@ -38,5 +39,26 @@ Deno.test("validates locator hint text", () => {
     () => scenarioFrom({ ...scenario, steps: [{ do: "assert", locator_hint: { text: 1 } }] }),
     Error,
     "locator_hint.text must be a string",
+  );
+});
+
+Deno.test("validates plan failure policies and nodes", () => {
+  const plan = {
+    version: 1,
+    name: "plan",
+    max_parallel: 2,
+    on_failure: { timeout: "continue" },
+    run: { serial: [{ scenario: "one.crer.yaml" }] },
+  };
+  planFrom(plan);
+  assertThrows(
+    () => planFrom({ ...plan, on_failure: { unknown: "continue" } }),
+    Error,
+    "plan.on_failure.unknown is not supported",
+  );
+  assertThrows(
+    () => planFrom({ ...plan, run: { scenario: "one", serial: [] } }),
+    Error,
+    "exactly one",
   );
 });

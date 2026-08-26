@@ -4,6 +4,7 @@ import {
   qpcFrequencyFromSidecar,
   transformFromSidecar,
 } from "./normalize.ts";
+import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
@@ -158,18 +159,6 @@ const pointOption = (name: string): Point | undefined => {
   if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`${name} must be x,y`);
   return { x, y };
 };
-function shouldAbortPlan(
-  results: RunResult[],
-  onFailure?: Record<string, FailurePolicy | undefined>,
-): boolean {
-  if (!results.some((result) => result.code !== 0)) return false;
-  const timeout = results.some((result) =>
-    result.failures.some((failure) => failure.includes(":timeout:"))
-  );
-  const environment = results.some((result) => result.code === 3);
-  const kind = timeout ? "timeout" : environment ? "environment" : "scenario_failure";
-  return (onFailure?.[kind] ?? onFailure?.default ?? "abort") === "abort";
-}
 async function runNode(
   node: PlanNode,
   base: string,
@@ -179,14 +168,21 @@ async function runNode(
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
     const controller = new AbortController();
-    const timer = workerMs ? setTimeout(() => controller.abort(), workerMs) : undefined;
+    let timedOut = false;
+    const timer = workerMs && workerMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, workerMs)
+      : undefined;
     try {
-      return [
-        await playScenario(scenarioFrom(await loadYaml(`${base}/${node.scenario}`)), {
-          chromePath: chromePath(),
-          signal: controller.signal,
-        }),
-      ];
+      const result = await playScenario(scenarioFrom(await loadYaml(`${base}/${node.scenario}`)), {
+        chromePath: chromePath(),
+        signal: controller.signal,
+      });
+      return timedOut
+        ? [{ ...result, code: 4, failures: [...result.failures, "plan:timeout:worker_ms"] }]
+        : [result];
     } finally {
       if (timer) clearTimeout(timer);
     }
@@ -279,7 +275,7 @@ async function main() {
       p.timeouts?.worker_ms,
       p.on_failure,
     );
-    const code = results.some((r) => r.code === 3) ? 3 : results.some((r) => r.code !== 0) ? 4 : 0;
+    const code = aggregatePlanExitCode(results);
     console.log(JSON.stringify(results, null, 2));
     Deno.exitCode = code;
     return;

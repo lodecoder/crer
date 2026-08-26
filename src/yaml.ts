@@ -25,6 +25,15 @@ function validateJitter(value: unknown, label: string) {
     || !["fail", "disable-for-step"].includes(String(jitter.out_of_bounds))
   ) throw new Error(`${label} is invalid`);
 }
+function validateFailurePolicies(value: unknown, label: string, allowed: readonly string[]) {
+  const policies = object(value, label);
+  for (const [kind, policy] of Object.entries(policies)) {
+    if (!allowed.includes(kind)) throw new Error(`${label}.${kind} is not supported`);
+    if (policy !== "abort" && policy !== "continue") {
+      throw new Error(`${label}.${kind} must be abort or continue`);
+    }
+  }
+}
 
 export function scenarioFrom(value: unknown): Scenario {
   const v = object(value, "scenario");
@@ -35,6 +44,13 @@ export function scenarioFrom(value: unknown): Scenario {
   if (typeof browser.initial_url !== "string") throw new Error("browser.initial_url is required");
   const playback = v.playback ? object(v.playback, "playback") : {};
   if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
+  if (playback.on_failure) {
+    validateFailurePolicies(
+      playback.on_failure,
+      "playback.on_failure",
+      ["default", "navigation", "timeout", "action", "assertion", "jitter_bounds"],
+    );
+  }
   if (
     playback.step_delay_ms !== undefined
     && (typeof playback.step_delay_ms !== "number" || !Number.isFinite(playback.step_delay_ms)
@@ -81,5 +97,51 @@ export function planFrom(value: unknown): Plan {
   if (v.version !== 1 || typeof v.name !== "string" || !v.run) {
     throw new Error("plan requires version: 1, name, and run");
   }
+  if (
+    v.max_parallel !== undefined && (
+      typeof v.max_parallel !== "number" || !Number.isInteger(v.max_parallel) || v.max_parallel < 1
+    )
+  ) throw new Error("plan.max_parallel must be a positive integer");
+  if (v.timeouts) {
+    const timeouts = object(v.timeouts, "plan.timeouts");
+    if (
+      timeouts.worker_ms !== undefined
+      && (typeof timeouts.worker_ms !== "number" || !Number.isFinite(timeouts.worker_ms)
+        || timeouts.worker_ms < 0)
+    ) throw new Error("plan.timeouts.worker_ms must be a non-negative number");
+  }
+  if (v.on_failure) {
+    validateFailurePolicies(
+      v.on_failure,
+      "plan.on_failure",
+      ["default", "scenario_failure", "timeout", "environment"],
+    );
+  }
+  validatePlanNode(v.run, "plan.run");
   return v as unknown as Plan;
+}
+
+function validatePlanNode(value: unknown, label: string) {
+  const node = object(value, label);
+  const variants = ["scenario", "serial", "parallel"].filter((key) => node[key] !== undefined);
+  if (variants.length !== 1) {
+    throw new Error(`${label} must have exactly one of scenario, serial, or parallel`);
+  }
+  if (node.scenario !== undefined) {
+    if (typeof node.scenario !== "string") throw new Error(`${label}.scenario must be a string`);
+    return;
+  }
+  if (node.serial !== undefined) {
+    if (!Array.isArray(node.serial)) throw new Error(`${label}.serial must be an array`);
+    node.serial.forEach((child, index) => validatePlanNode(child, `${label}.serial[${index}]`));
+    return;
+  }
+  const parallel = object(node.parallel, `${label}.parallel`);
+  if (!Array.isArray(parallel.jobs)) throw new Error(`${label}.parallel.jobs must be an array`);
+  if (parallel.fail_fast !== undefined && typeof parallel.fail_fast !== "boolean") {
+    throw new Error(`${label}.parallel.fail_fast must be a boolean`);
+  }
+  parallel.jobs.forEach((child, index) =>
+    validatePlanNode(child, `${label}.parallel.jobs[${index}]`)
+  );
 }
