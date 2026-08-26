@@ -78,6 +78,26 @@ deno task dev normalize .crer\raw-input.ndjson `
   --name example-recording
 ```
 
+重いサイトでキャッシュ・Cookie・Local Storage・Service Worker を再利用する場合は、CfT 専用の
+永続プロファイルを指定します。通常 Chrome のプロファイルは指定しないでください。
+
+```powershell
+$profile = "$PWD\.crer\profiles\yahoo"
+
+deno task dev record .crer\yahoo.ndjson `
+  --url https://www.yahoo.co.jp/ `
+  --profile-dir $profile
+
+deno task dev play .crer\yahoo.recorded.crer.yaml `
+  --chrome $env:CRER_CHROME `
+  --profile-dir $profile
+```
+
+`record --profile-dir` の sidecar を `normalize` すると、生成 YAML の `browser.profile` は
+`persistent:<絶対パス>` になります。以後は `play` の `--profile-dir` を省略しても同じプロファイルを
+使えます。CLI 指定は YAML より優先します。永続プロファイルは削除されず、同時に複数の再生で共有できません。
+`run` で使う場合は `max_parallel: 1` にしてください。
+
 `record` の主な指定:
 
 - `--content-size <width>,<height>` — CfT に要求する content host のサイズ。既定は `860,560`。
@@ -86,6 +106,7 @@ deno task dev normalize .crer\raw-input.ndjson `
   ページ遷移などで実効 viewport が変化した場合は、その後の各入力に新しい座標系を保存して
   正規化します。
 - `--position <left>,<top>` — CfT ウィンドウの画面上の位置。負の座標も指定可能。
+- `--profile-dir <directory>` — CfT の専用プロファイルを再利用する。`record` / `play` / `run` で使用可能。
 
 正規化後の YAML には、実測した値が次のように保存されるため、再生時も同じ viewport と位置を使う。
 

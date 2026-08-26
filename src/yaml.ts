@@ -42,6 +42,15 @@ export function scenarioFrom(value: unknown): Scenario {
   }
   const browser = object(v.browser, "browser");
   if (typeof browser.initial_url !== "string") throw new Error("browser.initial_url is required");
+  if (browser.profile !== undefined && typeof browser.profile !== "string") {
+    throw new Error("browser.profile must be a string");
+  }
+  if (
+    typeof browser.profile === "string" && browser.profile.startsWith("persistent:")
+    && !browser.profile.slice("persistent:".length).trim()
+  ) {
+    throw new Error("browser.profile persistent: requires a directory");
+  }
   if (browser.window !== undefined) {
     const window = object(browser.window, "browser.window");
     for (const name of ["content", "viewport"]) {

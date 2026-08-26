@@ -2,6 +2,7 @@ import { Cdp } from "./cdp.ts";
 import { inspectRun } from "./inspect.ts";
 import {
   normalizeRawWithWarnings,
+  profileDirFromSidecar,
   qpcFrequencyFromSidecar,
   requestedContentFromSidecar,
   transformFromSidecar,
@@ -417,6 +418,7 @@ const positionOption = (): Point | undefined => {
   }
   return position;
 };
+const profileDirOption = () => option("--profile-dir");
 async function runNode(
   node: PlanNode,
   base: string,
@@ -424,6 +426,7 @@ async function runNode(
   workerMs?: number,
   onFailure?: Record<string, FailurePolicy | undefined>,
   ignoreViewportMismatch = false,
+  profileDir?: string,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
     const controller = new AbortController();
@@ -435,11 +438,16 @@ async function runNode(
       }, workerMs)
       : undefined;
     try {
-      const result = await playScenario(scenarioFrom(await loadYaml(`${base}/${node.scenario}`)), {
+      const scenario = scenarioFrom(await loadYaml(`${base}/${node.scenario}`));
+      if (maxParallel > 1 && (profileDir || scenario.browser.profile?.startsWith("persistent:"))) {
+        throw new Error("persistent profile cannot be used with run max_parallel greater than 1");
+      }
+      const result = await playScenario(scenario, {
         chromePath: chromePath(),
         inputDllPath: inputDllPath(),
         signal: controller.signal,
         ignoreViewportMismatch,
+        profileDir,
       });
       return timedOut
         ? [{ ...result, code: 4, failures: [...result.failures, "plan:timeout:worker_ms"] }]
@@ -458,6 +466,7 @@ async function runNode(
         workerMs,
         onFailure,
         ignoreViewportMismatch,
+        profileDir,
       );
       out.push(...results);
       if (shouldAbortPlan(results, onFailure)) break;
@@ -467,7 +476,8 @@ async function runNode(
   const results = await mapWithConcurrency(
     node.parallel.jobs,
     maxParallel,
-    (child) => runNode(child, base, maxParallel, workerMs, onFailure, ignoreViewportMismatch),
+    (child) =>
+      runNode(child, base, maxParallel, workerMs, onFailure, ignoreViewportMismatch, profileDir),
     (result) =>
       node.parallel.fail_fast
         ? result.some((run) => run.code !== 0)
@@ -528,6 +538,7 @@ async function main() {
       keepArtifacts: args.includes("--keep-artifacts"),
       stepDelayMs,
       ignoreViewportMismatch: args.includes("--ignore-viewport-mismatch"),
+      profileDir: profileDirOption(),
     });
     console.log(JSON.stringify(r, null, 2));
     Deno.exitCode = r.code;
@@ -535,6 +546,10 @@ async function main() {
   }
   if (command === "run") {
     const p = planFrom(await loadYaml(file));
+    const profileDir = profileDirOption();
+    if (profileDir && (p.max_parallel ?? 1) > 1) {
+      throw new Error("--profile-dir cannot be used with run max_parallel greater than 1");
+    }
     const results = await runNode(
       p.run,
       file.replace(/[\\/][^\\/]+$/, ""),
@@ -542,6 +557,7 @@ async function main() {
       p.timeouts?.worker_ms,
       p.on_failure,
       args.includes("--ignore-viewport-mismatch"),
+      profileDir,
     );
     const code = aggregatePlanExitCode(results);
     console.log(JSON.stringify(results, null, 2));
@@ -551,7 +567,11 @@ async function main() {
   if (command === "record") {
     const runDir = `.crer/runs/${crypto.randomUUID()}`;
     await Deno.mkdir(runDir, { recursive: true });
-    const profile = `${await Deno.realPath(runDir)}/profile`;
+    const configuredProfile = profileDirOption();
+    if (configuredProfile) await Deno.mkdir(configuredProfile, { recursive: true });
+    const profile = configuredProfile
+      ? await Deno.realPath(configuredProfile)
+      : `${await Deno.realPath(runDir)}/profile`;
     const url = option("--url") ?? "about:blank";
     const contentSize = contentSizeOption();
     const position = positionOption();
@@ -559,10 +579,10 @@ async function main() {
     const port = (reservation.addr as Deno.NetAddr).port;
     reservation.close();
     await Deno.mkdir(`${profile}/Default`, { recursive: true });
-    await Deno.writeTextFile(
-      `${profile}/Default/Preferences`,
-      JSON.stringify({ translate: { enabled: false } }),
-    );
+    const preferences = `${profile}/Default/Preferences`;
+    if (!await Deno.stat(preferences).then(() => true).catch(() => false)) {
+      await Deno.writeTextFile(preferences, JSON.stringify({ translate: { enabled: false } }));
+    }
     const chrome = new Deno.Command(chromePath(), {
       args: [
         `--remote-debugging-port=${port}`,
@@ -620,6 +640,7 @@ async function main() {
         page?.readViewport,
         page?.windowBounds,
         contentSize,
+        configuredProfile ? profile : undefined,
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
@@ -649,6 +670,7 @@ async function main() {
     const qpcFrequencyHz = origin ? undefined : await qpcFrequencyFromSidecar(file);
     const windowBounds = origin ? undefined : await windowBoundsFromSidecar(file);
     const requestedContent = origin ? undefined : await requestedContentFromSidecar(file);
+    const profileDir = origin ? undefined : await profileDirFromSidecar(file);
     if (!origin && !sidecarTransform) {
       console.error(
         "Warning: recording metadata is unavailable; output coordinates remain physical screen pixels.",
@@ -663,6 +685,7 @@ async function main() {
         : sidecarTransform,
       qpcFrequencyHz,
       requestedContent,
+      profileDir,
     );
     if (windowBounds) {
       normalized.scenario.browser.window = {

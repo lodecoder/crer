@@ -73,8 +73,12 @@ chrome.exe --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 \
 起動時に `DevToolsActivePort` からランダムなローカル CDP ポートを取得する。CDP は
 localhost のみで待受け、ポート番号や WebSocket URL はログに秘匿情報として扱わない。
 通常 Chrome のプロファイル、既存プロセス、リモートデバッグポートには**接続しない**。
-既定では一時プロファイルを使い、`--profile-template` を指定したときのみ、停止中に複製した
-テンプレートを使う。CfT プロセスは成功・失敗・中断のいずれでも、終了処理で CDP
+既定では一時プロファイルを使う。`record`、`play`、`run` の `--profile-dir <directory>` は CfT の
+`--user-data-dir` を指定ディレクトリへ向け、キャッシュ、Cookie、Local Storage、Service Worker を
+次回実行へ残す。CLI 指定が最優先であり、シナリオの `profile: persistent:<directory>` でも同じ再利用を
+指定できる。永続プロファイルは実行後も削除しない。通常 Chrome の既存プロファイルは対象外とする。
+同一の永続プロファイルを並列起動すると Chrome のプロファイルロックとデータ競合を起こすため、
+`run` では `max_parallel: 1` を必須とする。CfT プロセスは成功・失敗・中断のいずれでも、終了処理で CDP
 `Browser.close` による graceful close を要求して閉じる。CDP が応答しない場合に限り、実行
 ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。
 
@@ -186,7 +190,7 @@ version: 1
 name: order-search
 browser:
   chrome: chrome-for-testing@pinned
-  profile: ephemeral                 # ephemeral | template:<path>
+  profile: ephemeral                 # ephemeral | persistent:<directory>
   initial_url: https://example.test/orders
   window:
     bounds: { left: 1640, top: 80, width: 1080, height: 900 } # screen DIP
@@ -333,8 +337,8 @@ assert の失敗、`5` 中断とする。
 ## 9. 安全性・ログ・失敗時の扱い
 
 - 初回起動時に CfT 実行ファイルのパスと SHA-256、通常 Chrome とは分離することを表示して確認する。
-- リモートデバッグは loopback 限定、run profile は終了後に既定で削除する。`--keep-artifacts` のみ
-  スクリーンショット、CDP trace、プロファイルを保持する。
+- リモートデバッグは loopback 限定。一時 run profile は終了後に既定で削除する。`--keep-artifacts` は
+  デバッグ目的で残す。`persistent:<directory>` または `--profile-dir` のプロファイルは常に残す。
 - URL は既定で `http` / `https` のみ。`file:`、拡張機能、ダウンロード、権限要求は明示フラグを
   必要とする。
 - 各ステップに時刻、実効座標、jitter offset、CDP 応答、URL、スクリーンショットをログする。

@@ -13,6 +13,7 @@ export async function recordRaw(
   readViewport?: () => Promise<{ x: number; y: number }>,
   windowBounds?: { left: number; top: number },
   requestedContent?: { x: number; y: number },
+  profileDir?: string,
 ) {
   const lib = Deno.dlopen(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
@@ -60,6 +61,7 @@ export async function recordRaw(
             ...(requestedContent
               ? { requested_content: { width: requestedContent.x, height: requestedContent.y } }
               : {}),
+            ...(profileDir ? { profile_dir: profileDir } : {}),
             ...(windowBounds ? { window_bounds: windowBounds } : {}),
             ...(markerCalibration ? { marker_calibration: markerCalibration } : {}),
           },

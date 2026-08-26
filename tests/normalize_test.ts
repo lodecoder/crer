@@ -5,6 +5,7 @@ import {
   screenToCss,
   transformFromRecordingMetadata,
   requestedContentFromSidecar,
+  profileDirFromSidecar,
   windowBoundsFromSidecar,
 } from "../src/normalize.ts";
 
@@ -77,6 +78,17 @@ Deno.test("reads the requested content size from a sidecar", async () => {
       JSON.stringify({ requested_content: { width: 780, height: 1250 } }),
     );
     assertEquals(await requestedContentFromSidecar(path), { width: 780, height: 1250 });
+  } finally {
+    await Deno.remove(path).catch(() => {});
+    await Deno.remove(`${path}.meta.json`).catch(() => {});
+  }
+});
+
+Deno.test("reads the persistent profile directory from a sidecar", async () => {
+  const path = await Deno.makeTempFile();
+  try {
+    await Deno.writeTextFile(`${path}.meta.json`, JSON.stringify({ profile_dir: ".crer/profiles/demo" }));
+    assertEquals(await profileDirFromSidecar(path), ".crer/profiles/demo");
   } finally {
     await Deno.remove(path).catch(() => {});
     await Deno.remove(`${path}.meta.json`).catch(() => {});

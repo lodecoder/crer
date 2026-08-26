@@ -34,6 +34,7 @@ export type PlayOptions = {
   keepArtifacts?: boolean;
   stepDelayMs?: number;
   ignoreViewportMismatch?: boolean;
+  profileDir?: string;
   signal?: AbortSignal;
 };
 type ForegroundGuard = {
@@ -64,6 +65,25 @@ type BrowserSession = {
   viewport: { x: number; y: number };
   network: NetworkTracker;
 };
+
+function scenarioProfileDir(s: Scenario): string | undefined {
+  const profile = s.browser.profile;
+  if (!profile?.startsWith("persistent:")) return undefined;
+  const directory = profile.slice("persistent:".length).trim();
+  if (!directory) throw new Error("browser.profile persistent: requires a directory");
+  return directory;
+}
+
+async function prepareProfile(directory: string) {
+  await Deno.mkdir(`${directory}/Default`, { recursive: true });
+  const preferences = `${directory}/Default/Preferences`;
+  try {
+    await Deno.stat(preferences);
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    await Deno.writeTextFile(preferences, JSON.stringify({ translate: { enabled: false } }));
+  }
+}
 
 class NetworkTracker {
   #requests = new Set<string>();
@@ -252,13 +272,12 @@ async function validateDisplay(
   return { x: actual.width, y: actual.height };
 }
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
-  const profile = `${await Deno.realPath(runDir)}/profile`;
-  await Deno.mkdir(profile, { recursive: true });
-  await Deno.mkdir(`${profile}/Default`, { recursive: true });
-  await Deno.writeTextFile(
-    `${profile}/Default/Preferences`,
-    JSON.stringify({ translate: { enabled: false } }),
-  );
+  const configuredProfile = options.profileDir ?? scenarioProfileDir(s);
+  if (configuredProfile) await Deno.mkdir(configuredProfile, { recursive: true });
+  const profile = configuredProfile
+    ? await Deno.realPath(configuredProfile)
+    : `${await Deno.realPath(runDir)}/profile`;
+  await prepareProfile(profile);
   const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const port = (reservation.addr as Deno.NetAddr).port;
   reservation.close();
@@ -784,7 +803,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       b.cdp.close();
     }
     if (
-      !options.keepArtifacts
+      !options.keepArtifacts && !options.profileDir && !scenarioProfileDir(s)
     ) {
       /* run metadata and diagnostics stay; only browser profile is disposable */ try {
         await Deno.remove(`${runDir}/profile`, { recursive: true });
