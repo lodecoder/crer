@@ -244,6 +244,26 @@ Deno.test("preserves Shift for recorded text", async () => {
   }
 });
 
+Deno.test("preserves punctuation translated by the Windows keyboard layout", async () => {
+  const path = await Deno.makeTempFile();
+  await Deno.writeTextFile(path, [
+    { qpc: "1", x: 0, y: 0, kind: 9, data: "C".codePointAt(0) },
+    { qpc: "2", x: 0, y: 0, kind: 9, data: "r".codePointAt(0) },
+    { qpc: "3", x: 0, y: 0, kind: 9, data: "e".codePointAt(0) },
+    { qpc: "4", x: 0, y: 0, kind: 9, data: "r".codePointAt(0) },
+    { qpc: "5", x: 0, y: 0, kind: 9, data: "@".codePointAt(0) },
+    { qpc: "6", x: 0, y: 0, kind: 9, data: ".".codePointAt(0) },
+    { qpc: "7", x: 0, y: 0, kind: 9, data: "4".codePointAt(0) },
+    { qpc: "8", x: 0, y: 0, kind: 9, data: "2".codePointAt(0) },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  try {
+    const scenario = await normalizeRaw(path, "https://example.test", "sample");
+    assertEquals(scenario.steps, [{ do: "text", value: "Crer@.42" }]);
+  } finally {
+    await Deno.remove(path);
+  }
+});
+
 Deno.test("normalizes Ctrl shortcuts as key chords", async () => {
   const path = await Deno.makeTempFile();
   await Deno.writeTextFile(path, [

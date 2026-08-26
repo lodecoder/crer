@@ -14,8 +14,8 @@ Deno CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使
 screen px から CSS viewport px への正確な変換、IME を含む text
 正規化は次の実装段階です。
 
-Raw Input だけではキーボード配列や IME の確定文字列を復元できないため、現在の `record` は英数字と基本
-ショートカットのみを安全に正規化します。
+現在の `record` は Windows のキーボードレイアウトを使って英数字と記号を正規化します。日本語 IME の
+確定文字列、特殊キー、複雑なショートカットは YAML を後から編集してください。
 
 ## 実行
 

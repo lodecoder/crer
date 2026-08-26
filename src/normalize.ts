@@ -184,6 +184,14 @@ export async function normalizeRawWithWarnings(
     const point = eventTransform
       ? screenToCss({ x: event.x, y: event.y }, eventTransform)
       : { x: event.x, y: event.y };
+    if (event.kind === 9) {
+      const character = String.fromCodePoint(event.data);
+      if (character && !/[\u0000-\u001f\u007f]/.test(character)) {
+        text += character;
+        textQpc = qpc;
+      }
+      continue;
+    }
     const virtualKey = event.data >>> 16;
     if (virtualKey === 16 || virtualKey === 160 || virtualKey === 161) {
       shift = event.kind === 7;

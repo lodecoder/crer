@@ -89,7 +89,8 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 
 - `WM_INPUT` の移動、ボタン、ホイールを時間順に採取する。
 - キーは対象 CfT が前景の場合だけ採取し、Scan Code／Virtual Key／修飾キーを保存する。
-- テキストは `WM_CHAR` と IME の確定文字列を優先して 1 つの `text` ステップに畳む。
+- 英数字・記号は Windows の現在のキーボードレイアウトに対する `ToUnicodeEx` の結果を 1 つの
+  `text` ステップに畳む。IME の確定文字列は v1 の対象外であり、YAML を後から編集する。
 - クリックは down/up と移動をイベントとして保持し、停止時にクリック・ドラッグ・スクロール
   として可読なステップへ正規化する。元イベント列は `artifacts/raw-input.ndjson` に任意保存する。
 - Windows QPC の周波数を sidecar に保存し、連続する論理操作の間隔を `sleep` ステップとして YAML に
