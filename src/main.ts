@@ -21,9 +21,15 @@ const chromePath = () => {
   if (!path) throw new Error("Chrome for Testing must be specified with --chrome or CRER_CHROME");
   return path;
 };
-const inputDllPath = () =>
-  option("--dll")
-    ?? "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
+const inputDllPath = () => {
+  const configured = option("--dll") ?? Deno.env.get("CRER_INPUT_DLL");
+  if (configured) return configured;
+  if (Deno.build.standalone) {
+    const directory = Deno.execPath().replace(/[\\/][^\\/]+$/, "");
+    return `${directory}\\crer-win-input.dll`;
+  }
+  return "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
+};
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;

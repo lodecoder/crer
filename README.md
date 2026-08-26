@@ -82,7 +82,17 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
-実行には Deno の `-A` を使いますが、配布版は同梱 DLL のみに限定した FFI 権限を要求する予定です。
+### 配布用ビルド
+
+次で `dist\win-x64\crer.exe` と同じフォルダの `crer-win-input.dll` を生成します。CfT は配布物に
+含めないため、実行時に `CRER_CHROME` または `--chrome` で専用の `chrome.exe` を指定してください。
+
+```powershell
+.\scripts\build-release.ps1
+$env:CRER_CHROME = 'C:\path\to\chrome.exe'
+.\dist\win-x64\crer.exe doctor
+```
+
 実行 artifacts は `.crer/runs/<run-id>` に出力されます。
 
 - 仕様書: [docs/specification.md](docs/specification.md)
