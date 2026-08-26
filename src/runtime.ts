@@ -29,7 +29,33 @@ type BrowserSession = {
   process: Deno.ChildProcess;
   runDir: string;
   viewport: { x: number; y: number };
+  network: NetworkTracker;
 };
+
+class NetworkTracker {
+  #requests = new Set<string>();
+  #lastActivity = Date.now();
+  constructor(cdp: Cdp, sessionId: string) {
+    const sameSession = (event: { sessionId?: string }) => event.sessionId === sessionId;
+    cdp.on("Network.requestWillBeSent", (event) => {
+      if (!sameSession(event)) return;
+      const requestId = (event.params as { requestId?: string }).requestId;
+      if (requestId) this.#requests.add(requestId);
+      this.#lastActivity = Date.now();
+    });
+    for (const method of ["Network.loadingFinished", "Network.loadingFailed"]) {
+      cdp.on(method, (event) => {
+        if (!sameSession(event)) return;
+        const requestId = (event.params as { requestId?: string }).requestId;
+        if (requestId) this.#requests.delete(requestId);
+        this.#lastActivity = Date.now();
+      });
+    }
+  }
+  idleFor(ms: number) {
+    return this.#requests.size === 0 && Date.now() - this.#lastActivity >= ms;
+  }
+}
 
 async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: string }> {
   for (let i = 0; i < 150; i++) {
@@ -130,6 +156,8 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   }
   await cdp.call("Page.enable", {}, attached.sessionId);
   await cdp.call("Runtime.enable", {}, attached.sessionId);
+  const network = new NetworkTracker(cdp, attached.sessionId);
+  await cdp.call("Network.enable", {}, attached.sessionId);
   await validateDisplay(cdp, attached.sessionId, s, runDir);
   const viewport = s.browser.window?.content ?? { width: 1280, height: 720 };
   return {
@@ -140,6 +168,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     process: p,
     runDir,
     viewport: { x: viewport.width, y: viewport.height },
+    network,
   };
 }
 async function capture(b: BrowserSession, name: string, required = false) {
@@ -210,9 +239,11 @@ async function waitFor(b: BrowserSession, step: Step, timeout: number, signal?: 
     const urlOk = !step.url
       || new RegExp("^" + step.url.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace("*", ".*") + "$")
         .test(state?.url ?? "");
-    const stateOk = !step.state || step.state === "network_idle"
-      ? state?.state === "complete"
-      : true;
+    const stateOk = step.state === "network_idle"
+      ? state?.state === "complete" && b.network.idleFor(500)
+      : step.state === "visible"
+      ? state?.found === true
+      : !step.state || state?.state === "complete";
     if (urlOk && stateOk && (state?.found ?? false)) return;
     await sleep(100);
   }
