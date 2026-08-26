@@ -248,6 +248,7 @@ async function runNode(
     try {
       const result = await playScenario(scenarioFrom(await loadYaml(`${base}/${node.scenario}`)), {
         chromePath: chromePath(),
+        inputDllPath: inputDllPath(),
         signal: controller.signal,
       });
       return timedOut
@@ -320,6 +321,7 @@ async function main() {
     }
     const r = await playScenario(scenarioFrom(await loadYaml(file)), {
       chromePath: chromePath(),
+      inputDllPath: inputDllPath(),
       seed: option("--seed"),
       keepArtifacts: args.includes("--keep-artifacts"),
       stepDelayMs,

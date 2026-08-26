@@ -28,12 +28,31 @@ async function sleepInterruptibly(ms: number, signal?: AbortSignal) {
 }
 export type PlayOptions = {
   chromePath: string;
+  inputDllPath?: string;
   position?: { left: number; top: number };
   seed?: string;
   keepArtifacts?: boolean;
   stepDelayMs?: number;
   signal?: AbortSignal;
 };
+type ForegroundGuard = {
+  original: bigint;
+  restore: () => number;
+  close: () => void;
+};
+const windowHandleText = (handle: bigint) => `0x${handle.toString(16)}`;
+function captureForeground(dllPath: string): ForegroundGuard {
+  const lib = Deno.dlopen(dllPath, {
+    crer_input_get_foreground_window: { parameters: [], result: "usize" },
+    crer_input_restore_foreground_window: { parameters: ["usize"], result: "i32" },
+  });
+  const original = lib.symbols.crer_input_get_foreground_window();
+  return {
+    original,
+    restore: () => lib.symbols.crer_input_restore_foreground_window(original),
+    close: () => lib.close(),
+  };
+}
 type BrowserSession = {
   cdp: Cdp;
   sessionId: string;
@@ -538,9 +557,32 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     JSON.stringify({ scenario: s.name, seed, startedAt: new Date().toISOString() }, null, 2),
   );
   let b: BrowserSession | undefined;
+  let foreground: ForegroundGuard | undefined;
   const failures: string[] = [];
   try {
+    if (options.inputDllPath) {
+      try {
+        foreground = captureForeground(options.inputDllPath);
+        await Deno.writeTextFile(
+          `${runDir}/foreground.json`,
+          JSON.stringify({ before: windowHandleText(foreground.original) }, null, 2) + "\n",
+        );
+      } catch (error) {
+        await Deno.writeTextFile(
+          `${runDir}/foreground.json`,
+          JSON.stringify({ captureError: String(error) }, null, 2) + "\n",
+        );
+      }
+    }
     b = await launch(s, options, runDir);
+    if (foreground) {
+      const restoreStatus = foreground.restore();
+      await Deno.writeTextFile(
+        `${runDir}/foreground.json`,
+        JSON.stringify({ before: windowHandleText(foreground.original), restoreStatus }, null, 2)
+          + "\n",
+      );
+    }
     const rng = new Random(BigInt(seed));
     const timeout = s.playback?.timeouts?.action_ms ?? 10_000;
     const stepDelayMs = options.stepDelayMs ?? s.playback?.step_delay_ms ?? 0;
@@ -579,5 +621,6 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         await Deno.remove(`${runDir}/profile`, { recursive: true });
       } catch { /* ignored */ }
     }
+    foreground?.close();
   }
 }

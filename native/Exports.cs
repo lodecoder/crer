@@ -27,6 +27,7 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point p);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll", SetLastError=true)] private static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc p, IntPtr l);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumProc p, IntPtr l);
@@ -123,6 +124,12 @@ internal static class InputBridge
     private static IntPtr Proc(IntPtr h,uint m,UIntPtr w,IntPtr l){ if(m!=0x00FF) return DefWindowProcW(h,m,w,l); uint size=0; GetRawInputData(l,0x10000003,IntPtr.Zero,ref size,(uint)Marshal.SizeOf<RawInputHeader>()); var mem=Marshal.AllocHGlobal((int)size); try { if(GetRawInputData(l,0x10000003,mem,ref size,(uint)Marshal.SizeOf<RawInputHeader>())!=(int)size)return IntPtr.Zero; var r=Marshal.PtrToStructure<RawInput>(mem); if(r.Header.Type==RIM_TYPEMOUSE&&Active(true)){var x=r.Mouse;if(x.LastX!=0||x.LastY!=0)Push(1);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_DOWN)!=0)Push(2);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_UP)!=0)Push(3);if((x.ButtonFlags&RI_MOUSE_WHEEL)!=0)Push(6,x.ButtonData);}else if(r.Header.Type==RIM_TYPEKEYBOARD&&Active(false))Push((r.Keyboard.Flags&1)!=0?8u:7u,((uint)r.Keyboard.VKey<<16)|r.Keyboard.MakeCode); } finally{Marshal.FreeHGlobal(mem);} return IntPtr.Zero; }
     private static void Loop(){ _threadId=GetCurrentThreadId(); var wc=new WndClass{Name="crer.raw.input",Proc=Proc,Instance=GetModuleHandleW(null)};RegisterClassW(ref wc);var h=CreateWindowExW(0,wc.Name,wc.Name,0,0,0,0,0,new IntPtr(-3),IntPtr.Zero,wc.Instance,IntPtr.Zero);_mouseHook=SetWindowsHookExW(14,MouseHookProc,IntPtr.Zero,0);_keyboardHook=SetWindowsHookExW(13,KeyboardHookProc,IntPtr.Zero,0);if(_mouseHook==IntPtr.Zero||_keyboardHook==IntPtr.Zero){_error=Marshal.GetLastWin32Error();_running=false;}while(_running&&GetMessageW(out _,IntPtr.Zero,0,0)>0){}if(_mouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_mouseHook);if(_keyboardHook!=IntPtr.Zero)UnhookWindowsHookEx(_keyboardHook);_mouseHook=_keyboardHook=IntPtr.Zero;Stopped.Set(); }
     [UnmanagedCallersOnly(EntryPoint="crer_input_abi_version")] public static uint Version()=>1;
+    [UnmanagedCallersOnly(EntryPoint="crer_input_get_foreground_window")] public static nint GetForegroundWindowHandle()=>GetForegroundWindow();
+    [UnmanagedCallersOnly(EntryPoint="crer_input_restore_foreground_window")] public static int RestoreForegroundWindow(nint h)
+    {
+        if (h == IntPtr.Zero) return 87; // ERROR_INVALID_PARAMETER
+        return SetForegroundWindow(h) ? 0 : Marshal.GetLastWin32Error();
+    }
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
     [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid){if(_running)return 183;_pid=pid;_error=0;_target=_content=IntPtr.Zero;_running=true;_thread=new Thread(Loop){IsBackground=true};_thread.Start();return 0;}
     [UnmanagedCallersOnly(EntryPoint="crer_input_stop")] public static int Stop(){_running=false;if(_threadId!=0)PostThreadMessageW(_threadId,0x0012,UIntPtr.Zero,IntPtr.Zero);Stopped.WaitOne(1000);return _error;}

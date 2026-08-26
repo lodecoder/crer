@@ -37,6 +37,7 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 - CfT が表示され、fixture の Search に `crer` が入力され Submit が押される。
 - 終了コードは 0。
 - `.crer\runs\<run-id>` に `run.json`、`display.json`、`result.png` がある。
+- 同じフォルダの `foreground.json` に `restoreStatus: 0` がある。
 - `PASS` が表示される。デスクトップ環境自体がカーソルを動かす場合は `INCONCLUSIVE` 警告でもよい。
 
 ## 2. 失敗 artifacts

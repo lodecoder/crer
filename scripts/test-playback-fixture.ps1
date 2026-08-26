@@ -40,7 +40,7 @@ try {
   if ($LASTEXITCODE -ne $ExpectedExitCode) { throw "play exited with code $LASTEXITCODE (expected $ExpectedExitCode)" }
   $run = Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory |
     Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-  $requiredArtifacts = @('run.json', 'display.json')
+  $requiredArtifacts = @('run.json', 'display.json', 'foreground.json')
   if ($ExpectedExitCode -eq 0) {
     $requiredArtifacts += 'result.png'
   } else {
@@ -54,6 +54,13 @@ try {
   }
   if ($missingArtifacts) {
     throw "Playback artifacts were not all created: $($requiredArtifacts -join ', ')."
+  }
+  $foreground = Get-Content -LiteralPath (Join-Path $run.FullName 'foreground.json') -Raw | ConvertFrom-Json
+  if ($null -ne $foreground.captureError) {
+    throw "Foreground window capture failed: $($foreground.captureError)"
+  }
+  if ($foreground.restoreStatus -ne 0) {
+    throw "Foreground window restore failed with Win32 status $($foreground.restoreStatus)"
   }
   Write-Host "Artifacts: $($run.FullName)"
   $after = [System.Windows.Forms.Cursor]::Position
