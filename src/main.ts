@@ -9,6 +9,7 @@ import {
   windowBoundsFromSidecar,
 } from "./normalize.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
+import { persistentProfileDirectory } from "./profiles.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
@@ -568,9 +569,8 @@ async function main() {
     const runDir = `.crer/runs/${crypto.randomUUID()}`;
     await Deno.mkdir(runDir, { recursive: true });
     const configuredProfile = profileDirOption();
-    if (configuredProfile) await Deno.mkdir(configuredProfile, { recursive: true });
     const profile = configuredProfile
-      ? await Deno.realPath(configuredProfile)
+      ? await persistentProfileDirectory(configuredProfile)
       : `${await Deno.realPath(runDir)}/profile`;
     const url = option("--url") ?? "about:blank";
     const contentSize = contentSizeOption();

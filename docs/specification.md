@@ -76,7 +76,9 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 既定では一時プロファイルを使う。`record`、`play`、`run` の `--profile-dir <directory>` は CfT の
 `--user-data-dir` を指定ディレクトリへ向け、キャッシュ、Cookie、Local Storage、Service Worker を
 次回実行へ残す。CLI 指定が最優先であり、シナリオの `profile: persistent:<directory>` でも同じ再利用を
-指定できる。永続プロファイルは実行後も削除しない。通常 Chrome の既存プロファイルは対象外とする。
+指定できる。`<directory>` はワークスペースの `.crer\\profiles` 配下だけを許可し、`..` を含むパスと
+実体が外部を指すシンボリックリンクを拒否する。永続プロファイルは実行後も削除しない。通常 Chrome の
+既存プロファイルは対象外とする。
 同一の永続プロファイルを並列起動すると Chrome のプロファイルロックとデータ競合を起こすため、
 `run` では `max_parallel: 1` を必須とする。CfT プロセスは成功・失敗・中断のいずれでも、終了処理で CDP
 `Browser.close` による graceful close を要求して閉じる。CDP が応答しない場合に限り、実行

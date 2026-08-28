@@ -1,5 +1,6 @@
 import { Cdp } from "./cdp.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
+import { persistentProfileDirectory } from "./profiles.ts";
 import type { FailureKind, Jitter, RunResult, Scenario, Step } from "./types.ts";
 
 const decoder = new TextDecoder();
@@ -273,9 +274,8 @@ async function validateDisplay(
 }
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
   const configuredProfile = options.profileDir ?? scenarioProfileDir(s);
-  if (configuredProfile) await Deno.mkdir(configuredProfile, { recursive: true });
   const profile = configuredProfile
-    ? await Deno.realPath(configuredProfile)
+    ? await persistentProfileDirectory(configuredProfile)
     : `${await Deno.realPath(runDir)}/profile`;
   await prepareProfile(profile);
   const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });

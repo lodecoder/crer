@@ -79,7 +79,8 @@ deno task dev normalize .crer\raw-input.ndjson `
 ```
 
 重いサイトでキャッシュ・Cookie・Local Storage・Service Worker を再利用する場合は、CfT 専用の
-永続プロファイルを指定します。通常 Chrome のプロファイルは指定しないでください。
+永続プロファイルを指定します。指定できるのはワークスペースの `.crer\profiles` 配下だけです。
+通常 Chrome のプロファイルは指定できません。
 
 ```powershell
 $profile = "$PWD\.crer\profiles\yahoo"
@@ -96,7 +97,8 @@ deno task dev play .crer\yahoo.recorded.crer.yaml `
 `record --profile-dir` の sidecar を `normalize` すると、生成 YAML の `browser.profile` は
 `persistent:<絶対パス>` になります。以後は `play` の `--profile-dir` を省略しても同じプロファイルを
 使えます。CLI 指定は YAML より優先します。永続プロファイルは削除されず、同時に複数の再生で共有できません。
-`run` で使う場合は `max_parallel: 1` にしてください。
+`run` で使う場合は `max_parallel: 1` にしてください。`.crer\profiles` 外のパス、`..` を含むパス、
+実体が外部を指すシンボリックリンクは拒否されます。
 
 `record` の主な指定:
 
