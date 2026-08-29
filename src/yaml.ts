@@ -70,7 +70,7 @@ export function scenarioFrom(value: unknown): Scenario {
     validateFailurePolicies(
       playback.on_failure,
       "playback.on_failure",
-      ["default", "navigation", "timeout", "action", "assertion", "jitter_bounds"],
+      ["default", "navigation", "timeout", "action", "assertion", "jitter_bounds", "template"],
     );
   }
   if (
@@ -109,6 +109,26 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     if (s.jitter) {
       validateJitter(s.jitter, `steps[${index}].jitter`);
+    }
+    if (s.template) {
+      if (s.do !== "click") throw new Error(`steps[${index}].template is supported only for click`);
+      if (s.at) throw new Error(`steps[${index}] cannot specify both at and template`);
+      if (s.jitter) throw new Error(`steps[${index}] cannot specify both jitter and template`);
+      const template = object(s.template, `steps[${index}].template`);
+      if (typeof template.path !== "string" || !template.path) {
+        throw new Error(`steps[${index}].template.path is required`);
+      }
+      if (
+        template.min_similarity !== undefined
+        && (typeof template.min_similarity !== "number" || !Number.isFinite(template.min_similarity)
+          || template.min_similarity < 0 || template.min_similarity > 1)
+      ) throw new Error(`steps[${index}].template.min_similarity must be between 0 and 1`);
+      if (
+        template.random_inset_px !== undefined
+        && (typeof template.random_inset_px !== "number"
+          || !Number.isFinite(template.random_inset_px)
+          || template.random_inset_px < 0)
+      ) throw new Error(`steps[${index}].template.random_inset_px must be non-negative`);
     }
   }
   return v as unknown as Scenario;

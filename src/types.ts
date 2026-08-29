@@ -1,4 +1,10 @@
-export type FailureKind = "navigation" | "timeout" | "action" | "assertion" | "jitter_bounds";
+export type FailureKind =
+  | "navigation"
+  | "timeout"
+  | "action"
+  | "assertion"
+  | "jitter_bounds"
+  | "template";
 export type FailurePolicy = "abort" | "continue";
 export type Point = { x: number; y: number };
 export type Jitter = {
@@ -18,6 +24,7 @@ export type Step = {
   state?: string;
   jitter?: Jitter;
   locator_hint?: { role?: string; name?: string; text?: string };
+  template?: { path: string; min_similarity?: number; random_inset_px?: number };
   [key: string]: unknown;
 };
 export type Scenario = {

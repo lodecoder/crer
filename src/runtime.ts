@@ -1,6 +1,7 @@
 import { Cdp } from "./cdp.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
 import { persistentProfileDirectory } from "./profiles.ts";
+import { matchTemplate, randomPointInMatch, type TemplateMatch } from "./template.ts";
 import type { FailureKind, Jitter, RunResult, Scenario, Step } from "./types.ts";
 
 const decoder = new TextDecoder();
@@ -36,6 +37,7 @@ export type PlayOptions = {
   stepDelayMs?: number;
   ignoreViewportMismatch?: boolean;
   profileDir?: string;
+  templateBaseDir?: string;
   signal?: AbortSignal;
 };
 type ForegroundGuard = {
@@ -423,6 +425,7 @@ async function capture(b: BrowserSession, name: string, required = false) {
 }
 function failureFor(step: Step, error: unknown): FailureKind {
   const e = String(error);
+  if (e.includes("template")) return "template";
   if (e.includes("jitter")) return "jitter_bounds";
   if (step.do === "assert" || step.do === "wait_for") {
     return e.includes("timed out")
@@ -750,13 +753,37 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     }
     const appendStepLog = (entry: Record<string, unknown>) =>
       Deno.writeTextFile(`${runDir}/steps.ndjson`, JSON.stringify(entry) + "\n", { append: true });
+    const browser = b!;
     for (const [i, step] of s.steps.entries()) {
       const startedAt = new Date().toISOString();
       let at: { x: number; y: number } | undefined;
       let jitterOffset: { x: number; y: number } | undefined;
+      let templateMatch: TemplateMatch | undefined;
       try {
         if (options.signal?.aborted) throw new Error("worker timed out");
-        if (step.at) {
+        if (step.template) {
+          const template = step.template as {
+            path: string;
+            min_similarity?: number;
+            random_inset_px?: number;
+          };
+          const found = await matchTemplate(
+            (method, params) => browser.cdp.call(method, params, browser.sessionId),
+            template,
+            options.templateBaseDir,
+          );
+          await Deno.writeFile(`${runDir}/template-${i}.png`, found.screenshot);
+          templateMatch = found.match;
+          const threshold = template.min_similarity ?? 0.8;
+          if (templateMatch.similarity < threshold) {
+            throw new Error(
+              `template match failed: ${template.path} similarity ${
+                templateMatch.similarity.toFixed(4)
+              } is below ${threshold}`,
+            );
+          }
+          at = randomPointInMatch(templateMatch, template.random_inset_px ?? 0, () => rng.next());
+        } else if (step.at) {
           at = jitter(step.at, step.jitter ?? s.playback?.jitter, rng, b.viewport);
           if (!at) throw new Error("jitter bounds failure");
           jitterOffset = { x: at.x - step.at.x, y: at.y - step.at.y };
@@ -769,6 +796,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           completedAt: new Date().toISOString(),
           ...(at ? { at } : {}),
           ...(jitterOffset ? { jitterOffset } : {}),
+          ...(templateMatch ? { templateMatch } : {}),
           url: await currentUrl(b),
           status: "ok",
         });
@@ -781,6 +809,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           completedAt: new Date().toISOString(),
           ...(at ? { at } : {}),
           ...(jitterOffset ? { jitterOffset } : {}),
+          ...(templateMatch ? { templateMatch } : {}),
           url: await currentUrl(b),
           status: "failed",
           kind,

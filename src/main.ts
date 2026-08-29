@@ -439,7 +439,8 @@ async function runNode(
       }, workerMs)
       : undefined;
     try {
-      const scenario = scenarioFrom(await loadYaml(`${base}/${node.scenario}`));
+      const scenarioFile = `${base}/${node.scenario}`;
+      const scenario = scenarioFrom(await loadYaml(scenarioFile));
       if (maxParallel > 1 && (profileDir || scenario.browser.profile?.startsWith("persistent:"))) {
         throw new Error("persistent profile cannot be used with run max_parallel greater than 1");
       }
@@ -449,6 +450,7 @@ async function runNode(
         signal: controller.signal,
         ignoreViewportMismatch,
         profileDir,
+        templateBaseDir: scenarioFile.replace(/[\\/][^\\/]+$/, ""),
       });
       return timedOut
         ? [{ ...result, code: 4, failures: [...result.failures, "plan:timeout:worker_ms"] }]
@@ -540,6 +542,7 @@ async function main() {
       stepDelayMs,
       ignoreViewportMismatch: args.includes("--ignore-viewport-mismatch"),
       profileDir: profileDirOption(),
+      templateBaseDir: file.replace(/[\\/][^\\/]+$/, ""),
     });
     console.log(JSON.stringify(r, null, 2));
     Deno.exitCode = r.code;

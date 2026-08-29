@@ -1,4 +1,4 @@
-import { assertThrows } from "jsr:@std/assert@^1.0.14";
+import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.14";
 import { scenarioFrom } from "../src/yaml.ts";
 import { planFrom } from "../src/yaml.ts";
 
@@ -39,6 +39,21 @@ Deno.test("validates locator hint text", () => {
     () => scenarioFrom({ ...scenario, steps: [{ do: "assert", locator_hint: { text: 1 } }] }),
     Error,
     "locator_hint.text must be a string",
+  );
+});
+
+Deno.test("validates click template matching options", () => {
+  const scenario = {
+    version: 1,
+    name: "template",
+    browser: { chrome: "chrome-for-testing@pinned", initial_url: "https://example.test" },
+    steps: [{ do: "click", template: { path: "templates/button.png", min_similarity: 0.8 } }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "click", at: { x: 1, y: 1 }, template: { path: "x.png" } }] }),
+    Error,
+    "cannot specify both at and template",
   );
 });
 

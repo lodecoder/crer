@@ -145,6 +145,25 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
+### 画像テンプレートでのクリック
+
+記録済みの `click` は、`at` をテンプレート指定に置き換えられます。再生直前の CDP screenshot から
+テンプレートを探索し、一致矩形内のランダム位置をクリックします。テンプレート画像のパスは YAML からの
+相対パスです。
+
+```yaml
+- do: click
+  template:
+    path: templates/sign-in.png
+    min_similarity: 0.8   # 省略時 0.8
+    random_inset_px: 2    # 省略時 0。矩形の端から除外する CSS px
+```
+
+`min_similarity` は 0〜1 です。一致しない場合は `template` 種別の失敗となり、探索直前の画面を
+`template-<step-index>.png` として artifacts に残します。クリック位置は再生 seed で決まるため、同じ
+seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出し、必要に応じて
+`random_inset_px` を指定してください。
+
 再生時に viewport mismatch を警告だけにして続行する必要がある場合は、`play` または `run` に
 `--ignore-viewport-mismatch` を指定します。`display.json` には実測値とこの指定の有無が保存されます。
 座標操作の安全性は下がるため、画面差異を確認する調査用途に限って使用してください。

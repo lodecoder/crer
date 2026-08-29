@@ -254,19 +254,26 @@ steps:
 フィールドがない場合はエラーとし、全体設定から補完しない。`drag` の個別揺らぎは v1 では
 未対応で、常に `playback.jitter` を使う。
 
+`click` は `at` の代わりに `template` を指定できる。テンプレートのファイルパスは scenario YAML からの
+相対パスであり、再生直前に CDP screenshot 上で探索する。`min_similarity` は 0〜1 の閾値で、既定値は
+`0.8` である。一致矩形内の位置は実効 seed を使う一様乱数で選び、`random_inset_px`（既定 `0`）は各辺を
+クリック候補から除外する。`at`、`jitter` と `template` は併用しない。一致不足は `template` 失敗として
+扱い、探索元の screenshot と similarity・矩形を artifacts に保存する。
+
 `playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を
 その実行だけ上書きする。これは記録済みの `sleep` に**追加する**目視用の固定待機である。
 
 `playback.on_failure` は、続行可能なステップ失敗に対するポリシーである。キーは `default`、
-`navigation`、`timeout`、`action`、`assertion`、`jitter_bounds` のみを許可し、値は `abort` または
+`navigation`、`timeout`、`action`、`assertion`、`jitter_bounds`、`template` のみを許可し、値は `abort` または
 `continue` とする。該当種別の設定を優先し、なければ `default`、さらに `default` もなければ
 `abort` を使う。`continue` の場合は失敗を artifacts と最終結果に記録した上で次のステップへ
 進む。YAML／CLI 検証エラー、実行環境不一致、CDP 接続喪失、CfT クラッシュ、利用者による中断は
 続行不能であり、この設定にかかわらず停止する。
 
 失敗種別は次で固定する。`navigation` は `navigate` または URL 待機の CDP エラー、`timeout` は
-ステップの待機時間超過、`action` は CDP 入力の拒否・入力状態不整合、`assertion` は `assert` または
+ステップの待機時間超過、`action` は CDP 入力の拒否・入力状態不整合、`template` は画像テンプレートの
+一致不足、`assertion` は `assert` または
 `wait_for` の条件不成立、`jitter_bounds` は揺らぎ後の有効座標を得られない場合である。`continue`
 を選んだ場合は、まず未解放の mouse/key を release してから、失敗種別・step index・実効座標・
 スクリーンショットを artifacts に記録し、次のステップを開始する。続行した失敗が一件でもあれば
