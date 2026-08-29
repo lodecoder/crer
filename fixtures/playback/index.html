@@ -6,10 +6,36 @@
     <label>Search <input id="search" role="textbox" aria-label="Search"></label>
     <button id="submit" role="button">Submit</button>
     <output id="result" role="status" aria-label="Result"></output>
+    <div id="drag-track" aria-label="Drag track">
+      <div id="drag-handle" role="slider" aria-label="Drag handle" aria-valuemin="0" aria-valuemax="368"></div>
+    </div>
+    <output id="drag-result" role="status" aria-label="Drag Result">20</output>
+    <style>
+      #drag-track { position: absolute; left: 20px; top: 80px; width: 400px; height: 40px; border: 1px solid #333; }
+      #drag-handle { position: absolute; left: 20px; top: 4px; width: 32px; height: 32px; background: #ff00ff; cursor: grab; }
+    </style>
     <script>
       document.querySelector('#submit').addEventListener('click', () => {
         document.querySelector('#result').textContent = document.querySelector('#search').value;
       });
+      const track = document.querySelector('#drag-track');
+      const handle = document.querySelector('#drag-handle');
+      const dragResult = document.querySelector('#drag-result');
+      let dragging = false;
+      const move = (event) => {
+        if (!dragging) return;
+        const rect = track.getBoundingClientRect();
+        const left = Math.max(0, Math.min(368, Math.round(event.clientX - rect.left - 16)));
+        handle.style.left = `${left}px`;
+        handle.setAttribute('aria-valuenow', String(left));
+        dragResult.textContent = String(left);
+      };
+      handle.addEventListener('pointerdown', (event) => {
+        dragging = true;
+        handle.setPointerCapture(event.pointerId);
+      });
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', () => { dragging = false; });
     </script>
   </body>
 </html>

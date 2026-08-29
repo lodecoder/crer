@@ -48,6 +48,13 @@ deno task test
 .\scripts\test-playback-fixture.ps1
 ```
 
+ドラッグ再生の fixture は次で確認できます。マゼンタのハンドルが右へ動き、終了位置が assertion されます。
+
+```powershell
+.\scripts\test-playback-fixture.ps1 `
+  -Scenario fixtures\playback\drag.crer.yaml
+```
+
 失敗 artifacts は次で確認できます。
 
 ```powershell
