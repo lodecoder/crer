@@ -625,6 +625,7 @@ async function act(
         x: jitteredFrom.x,
         y: jitteredFrom.y,
         button: "left",
+        buttons: 1,
         clickCount: 1,
       });
       for (let i = 1; i <= 10; i++) {
@@ -633,6 +634,7 @@ async function act(
           type: "mouseMoved",
           x: jitteredFrom.x + (jitteredTo.x - jitteredFrom.x) * ratio,
           y: jitteredFrom.y + (jitteredTo.y - jitteredFrom.y) * ratio,
+          button: "left",
           buttons: 1,
         });
       }
@@ -641,6 +643,7 @@ async function act(
         x: jitteredTo.x,
         y: jitteredTo.y,
         button: "left",
+        buttons: 0,
         clickCount: 1,
       });
     }
