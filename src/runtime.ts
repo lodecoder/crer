@@ -749,6 +749,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       let at: { x: number; y: number } | undefined;
       let jitterOffset: { x: number; y: number } | undefined;
       let templateMatch: TemplateMatch | undefined;
+      let succeeded = false;
       try {
         if (options.signal?.aborted) throw new Error("worker timed out");
         if (step.template) {
@@ -790,6 +791,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           url: await currentUrl(b),
           status: "ok",
         });
+        succeeded = true;
       } catch (e) {
         const kind = failureFor(step, e);
         await appendStepLog({
@@ -809,6 +811,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         failures.push(`${i}:${kind}:${e}`);
         const policy = s.playback?.on_failure?.[kind] ?? s.playback?.on_failure?.default ?? "abort";
         if (policy === "abort") break;
+      }
+      if (succeeded && step.delay_ms !== undefined) {
+        await sleepInterruptibly(Number(step.delay_ms), options.signal);
       }
       if (stepDelayMs > 0) await sleepInterruptibly(stepDelayMs, options.signal);
     }

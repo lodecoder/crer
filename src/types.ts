@@ -22,6 +22,8 @@ export type Step = {
   key?: string;
   url?: string;
   state?: string;
+  /** Wait after this successful operation before executing the next step. */
+  delay_ms?: number;
   jitter?: Jitter;
   locator_hint?: { role?: string; name?: string; text?: string };
   template?: { path: string; min_similarity?: number; random_inset_px?: number };

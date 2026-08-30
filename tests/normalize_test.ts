@@ -134,8 +134,7 @@ Deno.test("preserves recorded pauses between logical actions", async () => {
   try {
     const scenario = await normalizeRaw(path, "https://example.test", "sample", undefined, 1_000_000n);
     assertEquals(scenario.steps, [
-      { do: "click", at: { x: 10, y: 20 } },
-      { do: "sleep", ms: 5000 },
+      { do: "click", at: { x: 10, y: 20 }, delay_ms: 5000 },
       { do: "click", at: { x: 30, y: 40 } },
     ]);
   } finally {

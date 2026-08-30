@@ -222,33 +222,21 @@ playback:
     action: abort
     jitter_bounds: abort
 steps:
-  - do: wait_for
-    url: "https://example.test/orders*"
-    state: network_idle
-  - do: click
-    at: { x: 211, y: 182 }
-    locator_hint: { role: textbox, name: Search }
-    jitter:                         # この click では playback.jitter を完全に上書き
-      enabled: true
-      distribution: uniform
-      radius_px: 1
-      min_distance_from_edge_px: 2
-      out_of_bounds: fail
-  - do: text
-    value: "${ENV:ORDER_ID}"
-  - do: key
-    key: Enter
-  - do: wait_for
-    locator_hint: { role: table, name: Results, text: "10 results" }
-    state: visible
-  - do: scroll
-    at: { x: 920, y: 620 }
-    delta: { x: 0, y: 561 }
+  - { do: wait_for, url: "https://example.test/orders*", state: network_idle }
+  - { do: click, at: { x: 211, y: 182 }, delay_ms: 1040 }
+  - { do: text, value: "${ENV:ORDER_ID}" }
+  - { do: key, key: Enter }
+  - { do: wait_for, locator_hint: { role: table, name: Results, text: "10 results" }, state: visible }
+  - { do: scroll, at: { x: 920, y: 620 }, delta: { x: 0, y: 561 } }
 ```
 
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
 `text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep` である。`wait_for` と `assert` は
 ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
+`sleep` 以外の各操作には任意の `delay_ms`（0 以上のミリ秒）を指定できる。成功した操作の直後に
+待機してから次のステップへ進む。`normalize` は記録された操作間隔を原則として前の操作の `delay_ms`
+へ出力する。先頭または単独の待機を表す場合だけ、`{ do: sleep, ms: ... }` を用いる。`sleep` と
+`delay_ms` の併用は無効である。
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。
 
 `click` と `double_click` の `jitter` は `playback.jitter` と同じスキーマを持つ任意フィールド

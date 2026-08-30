@@ -123,6 +123,13 @@ export function scenarioFrom(value: unknown): Scenario {
     if (s.do === "sleep" && (typeof s.ms !== "number" || !Number.isFinite(s.ms) || s.ms < 0)) {
       throw new Error(`steps[${index}].ms must be a non-negative number for sleep`);
     }
+    if (
+      s.delay_ms !== undefined
+      && (s.do === "sleep" || typeof s.delay_ms !== "number" || !Number.isFinite(s.delay_ms)
+        || s.delay_ms < 0)
+    ) {
+      throw new Error(`steps[${index}].delay_ms must be a non-negative number on a non-sleep step`);
+    }
     if (s.locator_hint) {
       const hint = object(s.locator_hint, `steps[${index}].locator_hint`);
       for (const key of ["role", "name", "text"]) {

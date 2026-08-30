@@ -57,6 +57,21 @@ Deno.test("validates click template matching options", () => {
   );
 });
 
+Deno.test("validates a post-operation delay", () => {
+  const scenario = {
+    version: 1,
+    name: "delayed-click",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "click", at: { x: 1, y: 2 }, delay_ms: 1040 }],
+  };
+  scenarioFrom(scenario);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "sleep", ms: 10, delay_ms: 1 }] }),
+    Error,
+    "delay_ms must be a non-negative number on a non-sleep step",
+  );
+});
+
 Deno.test("writes each scenario step as a one-line flow mapping", async () => {
   const path = await Deno.makeTempFile();
   try {
@@ -64,11 +79,17 @@ Deno.test("writes each scenario step as a one-line flow mapping", async () => {
       version: 1,
       name: "flow-steps",
       browser: { chrome: "chrome-for-testing@pinned", initial_url: "https://example.test" },
-      steps: [{ do: "sleep", ms: 6575 }, { do: "click", at: { x: 10, y: 20 } }],
+      steps: [
+        { do: "sleep", ms: 6575 },
+        { do: "click", at: { x: 10, y: 20 }, delay_ms: 1040 },
+      ],
     });
     const text = await Deno.readTextFile(path);
     assertEquals(text.includes("  - { do: sleep, ms: 6575 }\n"), true);
-    assertEquals(text.includes("  - { do: click, at: { x: 10, y: 20 } }\n"), true);
+    assertEquals(
+      text.includes("  - { do: click, at: { x: 10, y: 20 }, delay_ms: 1040 }\n"),
+      true,
+    );
     assertEquals(scenarioFrom(await loadYaml(path)).steps.length, 2);
   } finally {
     await Deno.remove(path);

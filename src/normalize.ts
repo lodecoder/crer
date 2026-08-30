@@ -181,7 +181,13 @@ export async function normalizeRawWithWarnings(
   const addStep = (step: Step, qpc: bigint) => {
     if (qpcFrequencyHz && lastActionQpc !== undefined && qpc >= lastActionQpc) {
       const delayMs = Number((qpc - lastActionQpc) * 1000n / qpcFrequencyHz);
-      if (delayMs > 0) steps.push({ do: "sleep", ms: delayMs });
+      if (delayMs > 0) {
+        const previous = steps.at(-1);
+        // A recorded interval is the time after the previous operation, so keep it on that
+        // operation. This keeps generated YAML compact and is easier to edit by hand.
+        if (previous && previous.do !== "sleep") previous.delay_ms = delayMs;
+        else steps.push({ do: "sleep", ms: delayMs });
+      }
     }
     steps.push(step);
     lastActionQpc = qpc;
