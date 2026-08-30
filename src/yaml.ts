@@ -6,6 +6,15 @@ export async function loadYaml(path: string): Promise<unknown> {
 }
 
 export async function saveYaml(path: string, value: unknown): Promise<void> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.steps)) {
+      const { steps, ...header } = record;
+      const stepLines = steps.map((step) => `  - ${stringify(step, { flowLevel: 0 }).trim()}`);
+      await Deno.writeTextFile(path, `${stringify(header)}steps:\n${stepLines.join("\n")}\n`);
+      return;
+    }
+  }
   await Deno.writeTextFile(path, stringify(value));
 }
 

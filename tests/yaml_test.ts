@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.14";
-import { scenarioFrom } from "../src/yaml.ts";
+import { saveYaml, scenarioFrom } from "../src/yaml.ts";
 import { planFrom } from "../src/yaml.ts";
 
 Deno.test("validates key_chord keys", () => {
@@ -55,6 +55,23 @@ Deno.test("validates click template matching options", () => {
     Error,
     "cannot specify both at and template",
   );
+});
+
+Deno.test("writes each scenario step as a one-line flow mapping", async () => {
+  const path = await Deno.makeTempFile();
+  try {
+    await saveYaml(path, {
+      version: 1,
+      name: "flow-steps",
+      browser: { chrome: "chrome-for-testing@pinned", initial_url: "https://example.test" },
+      steps: [{ do: "sleep", ms: 6575 }, { do: "click", at: { x: 10, y: 20 } }],
+    });
+    const text = await Deno.readTextFile(path);
+    assertEquals(text.includes("  - {do: sleep, ms: 6575}\n"), true);
+    assertEquals(text.includes("  - {do: click, at: {x: 10, 'y': 20}}\n"), true);
+  } finally {
+    await Deno.remove(path);
+  }
 });
 
 Deno.test("validates plan failure policies and nodes", () => {
