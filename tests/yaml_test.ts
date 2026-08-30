@@ -1,5 +1,5 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.14";
-import { saveYaml, scenarioFrom } from "../src/yaml.ts";
+import { loadYaml, saveYaml, scenarioFrom } from "../src/yaml.ts";
 import { planFrom } from "../src/yaml.ts";
 
 Deno.test("validates key_chord keys", () => {
@@ -67,8 +67,9 @@ Deno.test("writes each scenario step as a one-line flow mapping", async () => {
       steps: [{ do: "sleep", ms: 6575 }, { do: "click", at: { x: 10, y: 20 } }],
     });
     const text = await Deno.readTextFile(path);
-    assertEquals(text.includes("  - {do: sleep, ms: 6575}\n"), true);
-    assertEquals(text.includes("  - {do: click, at: {x: 10, 'y': 20}}\n"), true);
+    assertEquals(text.includes("  - { do: sleep, ms: 6575 }\n"), true);
+    assertEquals(text.includes("  - { do: click, at: { x: 10, y: 20 } }\n"), true);
+    assertEquals(scenarioFrom(await loadYaml(path)).steps.length, 2);
   } finally {
     await Deno.remove(path);
   }

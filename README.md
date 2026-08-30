@@ -164,7 +164,8 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出し、必要に応じて
 `random_inset_px` を指定してください。
 
-`normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping で出力します。
+`normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
+（例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。
 既存の複数行形式も読み込み可能です。
 
 再生時に viewport mismatch を警告だけにして続行する必要がある場合は、`play` または `run` に

@@ -10,12 +10,27 @@ export async function saveYaml(path: string, value: unknown): Promise<void> {
     const record = value as Record<string, unknown>;
     if (Array.isArray(record.steps)) {
       const { steps, ...header } = record;
-      const stepLines = steps.map((step) => `  - ${stringify(step, { flowLevel: 0 }).trim()}`);
+      const stepLines = steps.map((step) => `  - ${flowYaml(step)}`);
       await Deno.writeTextFile(path, `${stringify(header)}steps:\n${stepLines.join("\n")}\n`);
       return;
     }
   }
   await Deno.writeTextFile(path, stringify(value));
+}
+
+function flowYaml(value: unknown): string {
+  if (Array.isArray(value)) return `[ ${value.map(flowYaml).join(", ")} ]`;
+  if (value && typeof value === "object") {
+    return `{ ${
+      Object.entries(value as Record<string, unknown>).map(([key, item]) =>
+        `${flowKey(key)}: ${flowYaml(item)}`
+      ).join(", ")
+    } }`;
+  }
+  return stringify(value, { flowLevel: 0 }).trim();
+}
+function flowKey(key: string) {
+  return /^[A-Za-z_][A-Za-z0-9_-]*$/.test(key) ? key : stringify(key, { flowLevel: 0 }).trim();
 }
 
 function object(value: unknown, label: string): Record<string, unknown> {
