@@ -72,7 +72,7 @@ export async function recordRaw(
       return { rectStatus, validRect };
     };
     console.error(
-      "Click the 8x8 magenta marker at the page's upper-left corner to calibrate and begin recording.",
+      "Click the 64x64 magenta marker at the page's upper-left corner to calibrate and begin recording.",
     );
     const file = await Deno.open(output, { create: true, write: true, append: true });
     try {

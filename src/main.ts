@@ -337,7 +337,7 @@ async function recordingPage(
             const marker = document.createElement("div");
             marker.id = id;
             marker.setAttribute("aria-hidden", "true");
-            marker.style.cssText = "all:initial;display:block!important;position:fixed!important;left:0!important;top:0!important;width:8px!important;height:8px!important;margin:0!important;padding:0!important;border:0!important;background:#ff00ff!important;z-index:2147483647!important;pointer-events:auto!important;cursor:crosshair!important;";
+            marker.style.cssText = "all:initial;display:block!important;position:fixed!important;left:0!important;top:0!important;width:64px!important;height:64px!important;margin:0!important;padding:0!important;border:0!important;background:#ff00ff!important;z-index:2147483647!important;pointer-events:auto!important;cursor:crosshair!important;";
             marker.addEventListener("pointerup", (event) => {
               globalThis.__crerCalibrationPoint = { x: event.clientX, y: event.clientY };
               marker.remove();

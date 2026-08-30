@@ -163,7 +163,7 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 専用プロファイルの translate 設定も無効化する。プロファイルは必ず絶対パスで渡す。再生・記録ともに `--app=<URL>` を使う同じ CfT アプリ
 ウィンドウとして起動し、Chrome のタブ・アドレスバー UI をページ座標系から除外する。`--disable-infobars`
 で CfT banner の抑止を要求する。CfT のバージョンまたは UI 状態によって banner が表示される場合は、
-記録開始前にページ左上へ注入する 8×8 CSS px のマーカーを物理クリックして、DOM `clientX/clientY` と
+記録開始前にページ左上へ注入する 64×64 CSS px のマーカーを物理クリックして、DOM `clientX/clientY` と
 画面座標を対応付ける。マーカーのクリックは記録から除外する。v1 は次を再生前提とする。
 
 - Windows の表示スケーリングは任意とする。実行時に CfT の `devicePixelRatio` を検査し、strict

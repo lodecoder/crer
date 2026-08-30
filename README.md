@@ -133,7 +133,7 @@ browser:
 .\scripts\record-playback-fixture.ps1
 ```
 
-Chrome for Testing が fixture を開いたら、まずページ左上のマゼンタ色の 8×8 CSS px 点をクリックして
+Chrome for Testing が fixture を開いたら、まずページ左上のマゼンタ色の 64×64 CSS px 点をクリックして
 座標を較正します。点が消えた後に検索欄への入力と Submit のクリックを行い、記録元の PowerShell で
 Enter を押します。較正クリック自体は記録されません。結果は `.crer/fixture.raw-input.ndjson` に保存されます。
 同スクリプトは続けて `.crer/fixture.recorded.crer.yaml` も生成します。`-Output`、`-Scenario`、`-Port`、

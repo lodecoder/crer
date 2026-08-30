@@ -34,7 +34,7 @@ export function transformFromRecordingMetadata(
     return undefined;
   }
   const calibration = metadata.marker_calibration;
-  // The marker is a fixed 8x8 CSS-pixel overlay at the page origin. CfT may place
+  // The marker is a fixed 64x64 CSS-pixel overlay at the page origin. CfT may place
   // its mandatory information bar in the compositor surface, but CDP input
   // coordinates begin at this DOM viewport origin.
   const clientOrigin = calibration && calibration.cssPoint.x >= 0 && calibration.cssPoint.y >= 0
