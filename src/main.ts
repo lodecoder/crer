@@ -427,6 +427,7 @@ async function runNode(
   workerMs?: number,
   onFailure?: Record<string, FailurePolicy | undefined>,
   ignoreViewportMismatch = false,
+  muteAudio = false,
   profileDir?: string,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
@@ -449,6 +450,7 @@ async function runNode(
         inputDllPath: inputDllPath(),
         signal: controller.signal,
         ignoreViewportMismatch,
+        muteAudio,
         profileDir,
         templateBaseDir: scenarioFile.replace(/[\\/][^\\/]+$/, ""),
       });
@@ -469,6 +471,7 @@ async function runNode(
         workerMs,
         onFailure,
         ignoreViewportMismatch,
+        muteAudio,
         profileDir,
       );
       out.push(...results);
@@ -480,7 +483,16 @@ async function runNode(
     node.parallel.jobs,
     maxParallel,
     (child) =>
-      runNode(child, base, maxParallel, workerMs, onFailure, ignoreViewportMismatch, profileDir),
+      runNode(
+        child,
+        base,
+        maxParallel,
+        workerMs,
+        onFailure,
+        ignoreViewportMismatch,
+        muteAudio,
+        profileDir,
+      ),
     (result) =>
       node.parallel.fail_fast
         ? result.some((run) => run.code !== 0)
@@ -541,6 +553,7 @@ async function main() {
       keepArtifacts: args.includes("--keep-artifacts"),
       stepDelayMs,
       ignoreViewportMismatch: args.includes("--ignore-viewport-mismatch"),
+      muteAudio: args.includes("--mute-audio"),
       profileDir: profileDirOption(),
       templateBaseDir: file.replace(/[\\/][^\\/]+$/, ""),
     });
@@ -561,6 +574,7 @@ async function main() {
       p.timeouts?.worker_ms,
       p.on_failure,
       args.includes("--ignore-viewport-mismatch"),
+      args.includes("--mute-audio"),
       profileDir,
     );
     const code = aggregatePlanExitCode(results);

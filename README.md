@@ -101,7 +101,8 @@ deno task dev record .crer\yahoo.ndjson `
 
 deno task dev play .crer\yahoo.recorded.crer.yaml `
   --chrome $env:CRER_CHROME `
-  --profile-dir $profile
+  --profile-dir $profile `
+  --mute-audio
 ```
 
 `record --profile-dir` の sidecar を `normalize` すると、生成 YAML の `browser.profile` は
@@ -119,6 +120,7 @@ deno task dev play .crer\yahoo.recorded.crer.yaml `
   正規化します。
 - `--position <left>,<top>` — CfT ウィンドウの画面上の位置。負の座標も指定可能。
 - `--profile-dir <directory>` — CfT の専用プロファイルを再利用する。`record` / `play` / `run` で使用可能。
+- `--mute-audio` — `play` / `run` 時の CfT だけをミュートする。Windows 全体および通常 Chrome の音量には影響しない。
 
 正規化後の YAML には、実測した値が次のように保存されるため、再生時も同じ viewport と位置を使う。
 

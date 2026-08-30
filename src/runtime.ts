@@ -36,6 +36,8 @@ export type PlayOptions = {
   keepArtifacts?: boolean;
   stepDelayMs?: number;
   ignoreViewportMismatch?: boolean;
+  /** Mute audio from the dedicated CfT process only. */
+  muteAudio?: boolean;
   profileDir?: string;
   templateBaseDir?: string;
   signal?: AbortSignal;
@@ -286,6 +288,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       "--force-device-scale-factor=1",
       // A translation bubble is browser UI, not page content, and can obscure coordinate replay.
       "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding",
+      ...(options.muteAudio ? ["--mute-audio"] : []),
       `--app=${s.browser.initial_url}`,
     ],
     stdout: "null",

@@ -320,15 +320,16 @@ crer browser install --channel stable --version <version>
 crer record new orders.crer.yaml --url https://example.test/orders
 crer record resume orders.crer.yaml
 crer validate orders.crer.yaml
-crer play orders.crer.yaml --position 1640,80 --seed 42
-crer run nightly.crer.plan.yaml --max-parallel 2
+crer play orders.crer.yaml --position 1640,80 --seed 42 --mute-audio
+crer run nightly.crer.plan.yaml --max-parallel 2 --mute-audio
 crer inspect artifacts/<run-id>      # ステップ、失敗、スクリーンショットを表示
 ```
 
 `record new` はテンプレートと CfT を起動し、利用者が終了コマンドを送るか CfT を閉じたときに
 正規化・検証した YAML を保存する。`play` の CLI オプションは明示的に指定した場合のみ
 front matter を上書きし、実行ログに override を記録する。`--position` は再生ウィンドウだけを
-移動する。
+移動する。`--mute-audio` は再生する CfT プロセスだけへ Chrome の mute 指定を渡すため、Windows 全体や
+通常 Chrome の音量には影響しない。
 
 終了コードは `0` 成功、`2` YAML/CLI 検証エラー、`3` 環境・ブラウザ不一致、`4` 操作または
 assert の失敗、`5` 中断とする。
