@@ -1,6 +1,6 @@
 import { Cdp } from "./cdp.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
-import { persistentProfileDirectory } from "./profiles.ts";
+import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { matchTemplate, randomPointInMatch, type TemplateMatch } from "./template.ts";
 import type { FailureKind, Jitter, RunResult, Scenario, Step } from "./types.ts";
 
@@ -75,17 +75,6 @@ function scenarioProfileDir(s: Scenario): string | undefined {
   const directory = profile.slice("persistent:".length).trim();
   if (!directory) throw new Error("browser.profile persistent: requires a directory");
   return directory;
-}
-
-async function prepareProfile(directory: string) {
-  await Deno.mkdir(`${directory}/Default`, { recursive: true });
-  const preferences = `${directory}/Default/Preferences`;
-  try {
-    await Deno.stat(preferences);
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
-    await Deno.writeTextFile(preferences, JSON.stringify({ translate: { enabled: false } }));
-  }
 }
 
 class NetworkTracker {
@@ -279,7 +268,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   const profile = configuredProfile
     ? await persistentProfileDirectory(configuredProfile)
     : `${await Deno.realPath(runDir)}/profile`;
-  await prepareProfile(profile);
+  await prepareChromeProfile(profile);
   const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const port = (reservation.addr as Deno.NetAddr).port;
   reservation.close();
@@ -292,10 +281,11 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       "--no-default-browser-check",
       "--disable-sync",
       "--disable-infobars",
+      "--disable-save-password-bubble",
       // Keep CSS coordinates stable even when Windows uses 125%/150%/200% display scaling.
       "--force-device-scale-factor=1",
       // A translation bubble is browser UI, not page content, and can obscure coordinate replay.
-      "--disable-features=Translate,TranslateUI",
+      "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding",
       `--app=${s.browser.initial_url}`,
     ],
     stdout: "null",

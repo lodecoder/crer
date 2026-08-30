@@ -4,6 +4,9 @@ Windows 上で Chrome for Testing を専用プロファイルで起動し、GUI 
 Deno CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使うため、OS の物理マウス・
 キーボードや普段使いの Chrome を操作しません。
 
+CfT には翻訳、パスワード保存、パスワード漏えい検出のブラウザ UI を抑止する設定を適用するため、
+記録・再生中にログインパスワードを保存するか確認するポップアップは表示しません。
+
 ## 現在の実装範囲
 
 - `.crer.yaml` の検証、CfT の隔離起動、headful な CDP 入力再生

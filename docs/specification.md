@@ -160,7 +160,9 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 画面座標の再現性は OS のスケーリングに依存する。v1 は CfT を
 `--force-device-scale-factor=1` で起動し、CSS 座標の `devicePixelRatio` を 1 に固定する。
 さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
-専用プロファイルの translate 設定も無効化する。プロファイルは必ず絶対パスで渡す。再生・記録ともに `--app=<URL>` を使う同じ CfT アプリ
+`--disable-save-password-bubble` と password manager の専用プロファイル設定により、ログイン後の
+パスワード保存・漏えい検出ポップアップも抑止する。既存の永続プロファイルには他の設定を残したまま
+この設定を反映する。プロファイルは必ず絶対パスで渡す。再生・記録ともに `--app=<URL>` を使う同じ CfT アプリ
 ウィンドウとして起動し、Chrome のタブ・アドレスバー UI をページ座標系から除外する。`--disable-infobars`
 で CfT banner の抑止を要求する。CfT のバージョンまたは UI 状態によって banner が表示される場合は、
 記録開始前にページ左上へ注入する 64×64 CSS px のマーカーを物理クリックして、DOM `clientX/clientY` と

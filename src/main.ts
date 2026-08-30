@@ -9,7 +9,7 @@ import {
   windowBoundsFromSidecar,
 } from "./normalize.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
-import { persistentProfileDirectory } from "./profiles.ts";
+import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
@@ -581,11 +581,7 @@ async function main() {
     const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
     const port = (reservation.addr as Deno.NetAddr).port;
     reservation.close();
-    await Deno.mkdir(`${profile}/Default`, { recursive: true });
-    const preferences = `${profile}/Default/Preferences`;
-    if (!await Deno.stat(preferences).then(() => true).catch(() => false)) {
-      await Deno.writeTextFile(preferences, JSON.stringify({ translate: { enabled: false } }));
-    }
+    await prepareChromeProfile(profile);
     const chrome = new Deno.Command(chromePath(), {
       args: [
         `--remote-debugging-port=${port}`,
@@ -595,8 +591,9 @@ async function main() {
         "--no-default-browser-check",
         "--disable-sync",
         "--disable-infobars",
+        "--disable-save-password-bubble",
         "--force-device-scale-factor=1",
-        "--disable-features=Translate,TranslateUI",
+        "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding",
         `--app=${url}`,
       ],
       stdout: "null",
