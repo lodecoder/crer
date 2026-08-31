@@ -47,6 +47,7 @@ Deno.test("validates click template matching options", () => {
     version: 1,
     name: "template",
     browser: { chrome: "chrome-for-testing@pinned", initial_url: "https://example.test" },
+    playback: { template: { min_similarity: 0.8, random_inset_px: 2, on_missing: "skip" } },
     steps: [{ do: "click", template: { path: "templates/button.png", min_similarity: 0.8 } }],
   };
   assertEquals(scenarioFrom(scenario).steps.length, 1);
@@ -54,6 +55,11 @@ Deno.test("validates click template matching options", () => {
     () => scenarioFrom({ ...scenario, steps: [{ do: "click", at: { x: 1, y: 1 }, template: { path: "x.png" } }] }),
     Error,
     "cannot specify both at and template",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, playback: { template: { on_missing: "continue" } } }),
+    Error,
+    "playback.template.on_missing must be fail or skip",
   );
 });
 

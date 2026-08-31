@@ -158,16 +158,18 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 
 ```yaml
 - do: click
-  template:
-    path: templates/sign-in.png
-    min_similarity: 0.8   # 省略時 0.8
-    random_inset_px: 2    # 省略時 0。矩形の端から除外する CSS px
+playback:
+  template: { min_similarity: 0.8, random_inset_px: 2, on_missing: skip }
+steps:
+  - { do: click, template: { path: templates/sign-in.png } }
 ```
 
-`min_similarity` は 0〜1 です。一致しない場合は `template` 種別の失敗となり、探索直前の画面を
+`playback.template` は全 template click の既定値です。個別の `template` に `min_similarity`、
+`random_inset_px`、`on_missing` を指定するとその値を優先します。`min_similarity` は 0〜1、既定値は
+`0.8`、`random_inset_px` の既定値は `0` です。`on_missing` は既定の `fail` なら `template` 種別の
+失敗、`skip` ならクリックを行わず正常に次のステップへ進みます。どちらの場合も探索直前の画面を
 `template-<step-index>.png` として artifacts に残します。クリック位置は再生 seed で決まるため、同じ
-seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出し、必要に応じて
-`random_inset_px` を指定してください。
+seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出してください。
 
 `normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
 （例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。

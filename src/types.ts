@@ -14,6 +14,11 @@ export type Jitter = {
   min_distance_from_edge_px: number;
   out_of_bounds: "fail" | "disable-for-step";
 };
+export type TemplateDefaults = {
+  min_similarity?: number;
+  random_inset_px?: number;
+  on_missing?: "fail" | "skip";
+};
 export type Step = {
   do: string;
   at?: Point;
@@ -26,7 +31,7 @@ export type Step = {
   delay_ms?: number;
   jitter?: Jitter;
   locator_hint?: { role?: string; name?: string; text?: string };
-  template?: { path: string; min_similarity?: number; random_inset_px?: number };
+  template?: { path: string } & TemplateDefaults;
   [key: string]: unknown;
 };
 export type Scenario = {
@@ -53,6 +58,8 @@ export type Scenario = {
     seed?: string;
     speed?: number;
     step_delay_ms?: number;
+    /** Defaults for click steps that use image template matching. */
+    template?: TemplateDefaults;
     jitter?: Jitter;
     timeouts?: { navigation_ms?: number; action_ms?: number };
     on_failure?: Partial<Record<FailureKind | "default", FailurePolicy>>;

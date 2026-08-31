@@ -760,6 +760,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             path: string;
             min_similarity?: number;
             random_inset_px?: number;
+            on_missing?: "fail" | "skip";
           };
           const found = await matchTemplate(
             (method, params) => browser.cdp.call(method, params, browser.sessionId),
@@ -768,33 +769,56 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           );
           await Deno.writeFile(`${runDir}/template-${i}.png`, found.screenshot);
           templateMatch = found.match;
-          const threshold = template.min_similarity ?? 0.8;
+          const defaults = s.playback?.template;
+          const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
           if (templateMatch.similarity < threshold) {
-            throw new Error(
-              `template match failed: ${template.path} similarity ${
-                templateMatch.similarity.toFixed(4)
-              } is below ${threshold}`,
+            const error = `template match failed: ${template.path} similarity ${
+              templateMatch.similarity.toFixed(4)
+            } is below ${threshold}`;
+            if ((template.on_missing ?? defaults?.on_missing ?? "fail") === "skip") {
+              await appendStepLog({
+                index: i,
+                do: step.do,
+                startedAt,
+                completedAt: new Date().toISOString(),
+                templateMatch,
+                url: await currentUrl(b),
+                status: "skipped",
+                kind: "template",
+                reason: error,
+              });
+              succeeded = true;
+            } else {
+              throw new Error(error);
+            }
+          }
+          if (!succeeded) {
+            at = randomPointInMatch(
+              templateMatch,
+              template.random_inset_px ?? defaults?.random_inset_px ?? 0,
+              () => rng.next(),
             );
           }
-          at = randomPointInMatch(templateMatch, template.random_inset_px ?? 0, () => rng.next());
         } else if (step.at) {
           at = jitter(step.at, step.jitter ?? s.playback?.jitter, rng, b.viewport);
           if (!at) throw new Error("jitter bounds failure");
           jitterOffset = { x: at.x - step.at.x, y: at.y - step.at.y };
         }
-        await act(b, step, at, s.playback?.jitter, rng, timeout, options.signal);
-        await appendStepLog({
-          index: i,
-          do: step.do,
-          startedAt,
-          completedAt: new Date().toISOString(),
-          ...(at ? { at } : {}),
-          ...(jitterOffset ? { jitterOffset } : {}),
-          ...(templateMatch ? { templateMatch } : {}),
-          url: await currentUrl(b),
-          status: "ok",
-        });
-        succeeded = true;
+        if (!succeeded) {
+          await act(b, step, at, s.playback?.jitter, rng, timeout, options.signal);
+          await appendStepLog({
+            index: i,
+            do: step.do,
+            startedAt,
+            completedAt: new Date().toISOString(),
+            ...(at ? { at } : {}),
+            ...(jitterOffset ? { jitterOffset } : {}),
+            ...(templateMatch ? { templateMatch } : {}),
+            url: await currentUrl(b),
+            status: "ok",
+          });
+          succeeded = true;
+        }
       } catch (e) {
         const kind = failureFor(step, e);
         await appendStepLog({

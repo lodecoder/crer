@@ -49,6 +49,28 @@ function validateJitter(value: unknown, label: string) {
     || !["fail", "disable-for-step"].includes(String(jitter.out_of_bounds))
   ) throw new Error(`${label} is invalid`);
 }
+function validateTemplateOptions(value: unknown, label: string, pathRequired: boolean) {
+  const template = object(value, label);
+  if (pathRequired && (typeof template.path !== "string" || !template.path)) {
+    throw new Error(`${label}.path is required`);
+  }
+  if (
+    template.min_similarity !== undefined
+    && (typeof template.min_similarity !== "number" || !Number.isFinite(template.min_similarity)
+      || template.min_similarity < 0 || template.min_similarity > 1)
+  ) throw new Error(`${label}.min_similarity must be between 0 and 1`);
+  if (
+    template.random_inset_px !== undefined
+    && (typeof template.random_inset_px !== "number" || !Number.isFinite(template.random_inset_px)
+      || template.random_inset_px < 0)
+  ) throw new Error(`${label}.random_inset_px must be non-negative`);
+  if (
+    template.on_missing !== undefined && template.on_missing !== "fail"
+    && template.on_missing !== "skip"
+  ) {
+    throw new Error(`${label}.on_missing must be fail or skip`);
+  }
+}
 function validateFailurePolicies(value: unknown, label: string, allowed: readonly string[]) {
   const policies = object(value, label);
   for (const [kind, policy] of Object.entries(policies)) {
@@ -90,6 +112,7 @@ export function scenarioFrom(value: unknown): Scenario {
   }
   const playback = v.playback ? object(v.playback, "playback") : {};
   if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
+  if (playback.template) validateTemplateOptions(playback.template, "playback.template", false);
   if (playback.on_failure) {
     validateFailurePolicies(
       playback.on_failure,
@@ -145,21 +168,7 @@ export function scenarioFrom(value: unknown): Scenario {
       if (s.do !== "click") throw new Error(`steps[${index}].template is supported only for click`);
       if (s.at) throw new Error(`steps[${index}] cannot specify both at and template`);
       if (s.jitter) throw new Error(`steps[${index}] cannot specify both jitter and template`);
-      const template = object(s.template, `steps[${index}].template`);
-      if (typeof template.path !== "string" || !template.path) {
-        throw new Error(`steps[${index}].template.path is required`);
-      }
-      if (
-        template.min_similarity !== undefined
-        && (typeof template.min_similarity !== "number" || !Number.isFinite(template.min_similarity)
-          || template.min_similarity < 0 || template.min_similarity > 1)
-      ) throw new Error(`steps[${index}].template.min_similarity must be between 0 and 1`);
-      if (
-        template.random_inset_px !== undefined
-        && (typeof template.random_inset_px !== "number"
-          || !Number.isFinite(template.random_inset_px)
-          || template.random_inset_px < 0)
-      ) throw new Error(`steps[${index}].template.random_inset_px must be non-negative`);
+      validateTemplateOptions(s.template, `steps[${index}].template`, true);
     }
   }
   return v as unknown as Scenario;

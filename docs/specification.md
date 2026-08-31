@@ -245,10 +245,13 @@ steps:
 未対応で、常に `playback.jitter` を使う。
 
 `click` は `at` の代わりに `template` を指定できる。テンプレートのファイルパスは scenario YAML からの
-相対パスであり、再生直前に CDP screenshot 上で探索する。`min_similarity` は 0〜1 の閾値で、既定値は
-`0.8` である。一致矩形内の位置は実効 seed を使う一様乱数で選び、`random_inset_px`（既定 `0`）は各辺を
-クリック候補から除外する。`at`、`jitter` と `template` は併用しない。一致不足は `template` 失敗として
-扱い、探索元の screenshot と similarity・矩形を artifacts に保存する。
+相対パスであり、再生直前に CDP screenshot 上で探索する。`playback.template` は `min_similarity`（0〜1、
+既定 `0.8`）、`random_inset_px`（既定 `0`）、`on_missing`（`fail` または `skip`、既定 `fail`）の既定値を
+指定する。個別の `steps[].template` はこれらを上書きする。一致矩形内の位置は実効 seed を使う一様乱数で選び、
+`random_inset_px` は各辺をクリック候補から除外する。`at`、`jitter` と `template` は併用しない。一致不足で
+`on_missing: fail` の場合は `template` 失敗として扱う。`skip` の場合はクリックせず `steps.ndjson` に
+`status: skipped` として記録し、失敗にせず次のステップへ進む。どちらの場合も探索元の screenshot と
+similarity・矩形を artifacts に保存する。
 
 `playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を

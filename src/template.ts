@@ -4,6 +4,7 @@ export type TemplateOptions = {
   path: string;
   min_similarity?: number;
   random_inset_px?: number;
+  on_missing?: "fail" | "skip";
 };
 export type TemplateMatch = {
   x: number;
