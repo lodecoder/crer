@@ -747,65 +747,114 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     const appendStepLog = (entry: Record<string, unknown>) =>
       Deno.writeTextFile(`${runDir}/steps.ndjson`, JSON.stringify(entry) + "\n", { append: true });
     const browser = b!;
-    for (const [i, step] of s.steps.entries()) {
-      const startedAt = new Date().toISOString();
-      let at: { x: number; y: number } | undefined;
-      let jitterOffset: { x: number; y: number } | undefined;
-      let templateMatch: TemplateMatch | undefined;
-      let succeeded = false;
-      try {
-        if (options.signal?.aborted) throw new Error("worker timed out");
-        if (step.template) {
-          const template = step.template as {
-            path: string;
-            min_similarity?: number;
-            random_inset_px?: number;
-            on_missing?: "fail" | "skip";
-          };
-          const found = await matchTemplate(
-            (method, params) => browser.cdp.call(method, params, browser.sessionId),
-            template,
-            options.templateBaseDir,
-          );
-          await Deno.writeFile(`${runDir}/template-${i}.png`, found.screenshot);
-          templateMatch = found.match;
-          const defaults = s.playback?.template;
-          const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
-          if (templateMatch.similarity < threshold) {
-            const error = `template match failed: ${template.path} similarity ${
+    let stopped = false;
+    const executeSteps = async (steps: Step[], parentIndex = ""): Promise<void> => {
+      for (const [offset, step] of steps.entries()) {
+        if (stopped) return;
+        const i = parentIndex ? `${parentIndex}.${offset}` : String(offset);
+        const startedAt = new Date().toISOString();
+        let at: { x: number; y: number } | undefined;
+        let jitterOffset: { x: number; y: number } | undefined;
+        let templateMatch: TemplateMatch | undefined;
+        let succeeded = false;
+        try {
+          if (options.signal?.aborted) throw new Error("worker timed out");
+          if (step.template) {
+            const template = step.template as {
+              path: string;
+              min_similarity?: number;
+              random_inset_px?: number;
+              on_missing?: "fail" | "skip";
+            };
+            const found = await matchTemplate(
+              (method, params) => browser.cdp.call(method, params, browser.sessionId),
+              template,
+              options.templateBaseDir,
+            );
+            await Deno.writeFile(`${runDir}/template-${i}.png`, found.screenshot);
+            templateMatch = found.match;
+            const defaults = s.playback?.template;
+            const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
+            const matchError = `template match failed: ${template.path} similarity ${
               templateMatch.similarity.toFixed(4)
             } is below ${threshold}`;
-            if ((template.on_missing ?? defaults?.on_missing ?? "fail") === "skip") {
-              await appendStepLog({
-                index: i,
-                do: step.do,
-                startedAt,
-                completedAt: new Date().toISOString(),
-                templateMatch,
-                url: await currentUrl(b),
-                status: "skipped",
-                kind: "template",
-                reason: error,
-              });
+            if (step.do === "if") {
+              if (templateMatch.similarity < threshold) {
+                await appendStepLog({
+                  index: i,
+                  do: step.do,
+                  startedAt,
+                  completedAt: new Date().toISOString(),
+                  templateMatch,
+                  url: await currentUrl(browser),
+                  status: "skipped",
+                  kind: "template",
+                  reason: matchError,
+                });
+              } else {
+                await appendStepLog({
+                  index: i,
+                  do: step.do,
+                  startedAt,
+                  completedAt: new Date().toISOString(),
+                  templateMatch,
+                  url: await currentUrl(browser),
+                  status: "ok",
+                });
+                await executeSteps(step.then ?? [], i);
+              }
               succeeded = true;
-            } else {
-              throw new Error(error);
             }
+            if (templateMatch.similarity < threshold) {
+              if (
+                step.do !== "if"
+                && (template.on_missing ?? defaults?.on_missing ?? "fail") === "skip"
+              ) {
+                await appendStepLog({
+                  index: i,
+                  do: step.do,
+                  startedAt,
+                  completedAt: new Date().toISOString(),
+                  templateMatch,
+                  url: await currentUrl(browser),
+                  status: "skipped",
+                  kind: "template",
+                  reason: matchError,
+                });
+                succeeded = true;
+              } else if (step.do !== "if") {
+                throw new Error(matchError);
+              }
+            }
+            if (!succeeded) {
+              at = randomPointInMatch(
+                templateMatch,
+                template.random_inset_px ?? defaults?.random_inset_px ?? 0,
+                () => rng.next(),
+              );
+            }
+          } else if (step.at) {
+            at = jitter(step.at, step.jitter ?? s.playback?.jitter, rng, browser.viewport);
+            if (!at) throw new Error("jitter bounds failure");
+            jitterOffset = { x: at.x - step.at.x, y: at.y - step.at.y };
           }
           if (!succeeded) {
-            at = randomPointInMatch(
-              templateMatch,
-              template.random_inset_px ?? defaults?.random_inset_px ?? 0,
-              () => rng.next(),
-            );
+            await act(browser, step, at, s.playback?.jitter, rng, timeout, options.signal);
+            await appendStepLog({
+              index: i,
+              do: step.do,
+              startedAt,
+              completedAt: new Date().toISOString(),
+              ...(at ? { at } : {}),
+              ...(jitterOffset ? { jitterOffset } : {}),
+              ...(templateMatch ? { templateMatch } : {}),
+              url: await currentUrl(browser),
+              status: "ok",
+            });
+            succeeded = true;
           }
-        } else if (step.at) {
-          at = jitter(step.at, step.jitter ?? s.playback?.jitter, rng, b.viewport);
-          if (!at) throw new Error("jitter bounds failure");
-          jitterOffset = { x: at.x - step.at.x, y: at.y - step.at.y };
-        }
-        if (!succeeded) {
-          await act(b, step, at, s.playback?.jitter, rng, timeout, options.signal);
+        } catch (e) {
+          const kind = failureFor(step, e);
           await appendStepLog({
             index: i,
             do: step.do,
@@ -814,36 +863,27 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             ...(at ? { at } : {}),
             ...(jitterOffset ? { jitterOffset } : {}),
             ...(templateMatch ? { templateMatch } : {}),
-            url: await currentUrl(b),
-            status: "ok",
+            url: await currentUrl(browser),
+            status: "failed",
+            kind,
+            error: String(e),
           });
-          succeeded = true;
+          await capture(browser, `failure-${i}`);
+          failures.push(`${i}:${kind}:${e}`);
+          const policy = s.playback?.on_failure?.[kind] ?? s.playback?.on_failure?.default
+            ?? "abort";
+          if (policy === "abort") {
+            stopped = true;
+            return;
+          }
         }
-      } catch (e) {
-        const kind = failureFor(step, e);
-        await appendStepLog({
-          index: i,
-          do: step.do,
-          startedAt,
-          completedAt: new Date().toISOString(),
-          ...(at ? { at } : {}),
-          ...(jitterOffset ? { jitterOffset } : {}),
-          ...(templateMatch ? { templateMatch } : {}),
-          url: await currentUrl(b),
-          status: "failed",
-          kind,
-          error: String(e),
-        });
-        await capture(b, `failure-${i}`);
-        failures.push(`${i}:${kind}:${e}`);
-        const policy = s.playback?.on_failure?.[kind] ?? s.playback?.on_failure?.default ?? "abort";
-        if (policy === "abort") break;
+        if (succeeded && step.delay_ms !== undefined) {
+          await sleepInterruptibly(Number(step.delay_ms), options.signal);
+        }
+        if (stepDelayMs > 0) await sleepInterruptibly(stepDelayMs, options.signal);
       }
-      if (succeeded && step.delay_ms !== undefined) {
-        await sleepInterruptibly(Number(step.delay_ms), options.signal);
-      }
-      if (stepDelayMs > 0) await sleepInterruptibly(stepDelayMs, options.signal);
-    }
+    };
+    await executeSteps(s.steps);
     return { code: failures.length ? 4 : 0, failures, runDir };
   } catch (e) {
     return { code: 3, failures: [String(e)], runDir };

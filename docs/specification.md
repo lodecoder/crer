@@ -253,6 +253,12 @@ steps:
 `status: skipped` として記録し、失敗にせず次のステップへ進む。どちらの場合も探索元の screenshot と
 similarity・矩形を artifacts に保存する。
 
+`do: if` は `template` と `then`（ステップ配列）を必須とする条件ステップである。template の similarity が
+閾値以上なら `then` を順に実行し、閾値未満なら `then` を実行せず次の兄弟ステップへ進む。これは正常な
+条件分岐であり、`on_missing` や `on_failure.template` の対象ではない。`if` では `at` と `jitter` を指定せず、
+`playback.template.min_similarity` を個別指定がない場合の既定値として用いる。条件評価の screenshot、
+similarity、実行または skip の状態は artifacts に保存する。
+
 `playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を
 その実行だけ上書きする。これは記録済みの `sleep` に**追加する**目視用の固定待機である。

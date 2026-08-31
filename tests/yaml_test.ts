@@ -78,6 +78,30 @@ Deno.test("validates a post-operation delay", () => {
   );
 });
 
+Deno.test("validates template conditional branches", () => {
+  const scenario = {
+    version: 1,
+    name: "conditional-template",
+    browser: { initial_url: "https://example.test" },
+    steps: [{
+      do: "if",
+      template: { path: "templates/signed-in.png" },
+      then: [{ do: "click", at: { x: 1, y: 2 } }],
+    }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", then: [] }] }),
+    Error,
+    "steps[0].template is required for if",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", template: { path: "x.png" } }] }),
+    Error,
+    "steps[0].then must be a step array for if",
+  );
+});
+
 Deno.test("writes each scenario step as a one-line flow mapping", async () => {
   const path = await Deno.makeTempFile();
   try {

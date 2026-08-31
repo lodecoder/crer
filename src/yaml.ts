@@ -132,45 +132,55 @@ export function scenarioFrom(value: unknown): Scenario {
   if (playback.seed && BigInt(playback.seed) > 0xffff_ffff_ffff_ffffn) {
     throw new Error("playback.seed exceeds uint64");
   }
-  for (const [index, step] of v.steps.entries()) {
-    const s = object(step, `steps[${index}]`);
-    if (typeof s.do !== "string") throw new Error(`steps[${index}].do is required`);
+  const validateStep = (step: unknown, label: string): void => {
+    const s = object(step, label);
+    if (typeof s.do !== "string") throw new Error(`${label}.do is required`);
     if (s.do === "key_chord") {
       if (
         !Array.isArray(s.keys) || s.keys.length < 2
         || !s.keys.every((key) => typeof key === "string")
       ) {
-        throw new Error(`steps[${index}].keys requires at least two strings`);
+        throw new Error(`${label}.keys requires at least two strings`);
       }
     }
     if (s.do === "sleep" && (typeof s.ms !== "number" || !Number.isFinite(s.ms) || s.ms < 0)) {
-      throw new Error(`steps[${index}].ms must be a non-negative number for sleep`);
+      throw new Error(`${label}.ms must be a non-negative number for sleep`);
     }
     if (
       s.delay_ms !== undefined
       && (s.do === "sleep" || typeof s.delay_ms !== "number" || !Number.isFinite(s.delay_ms)
         || s.delay_ms < 0)
     ) {
-      throw new Error(`steps[${index}].delay_ms must be a non-negative number on a non-sleep step`);
+      throw new Error(`${label}.delay_ms must be a non-negative number on a non-sleep step`);
     }
     if (s.locator_hint) {
-      const hint = object(s.locator_hint, `steps[${index}].locator_hint`);
+      const hint = object(s.locator_hint, `${label}.locator_hint`);
       for (const key of ["role", "name", "text"]) {
         if (hint[key] !== undefined && typeof hint[key] !== "string") {
-          throw new Error(`steps[${index}].locator_hint.${key} must be a string`);
+          throw new Error(`${label}.locator_hint.${key} must be a string`);
         }
       }
     }
     if (s.jitter) {
-      validateJitter(s.jitter, `steps[${index}].jitter`);
+      validateJitter(s.jitter, `${label}.jitter`);
     }
     if (s.template) {
-      if (s.do !== "click") throw new Error(`steps[${index}].template is supported only for click`);
-      if (s.at) throw new Error(`steps[${index}] cannot specify both at and template`);
-      if (s.jitter) throw new Error(`steps[${index}] cannot specify both jitter and template`);
-      validateTemplateOptions(s.template, `steps[${index}].template`, true);
+      if (s.do !== "click" && s.do !== "if") {
+        throw new Error(`${label}.template is supported only for click or if`);
+      }
+      if (s.at) throw new Error(`${label} cannot specify both at and template`);
+      if (s.jitter) throw new Error(`${label} cannot specify both jitter and template`);
+      validateTemplateOptions(s.template, `${label}.template`, true);
     }
-  }
+    if (s.do === "if") {
+      if (!s.template) throw new Error(`${label}.template is required for if`);
+      if (!Array.isArray(s.then)) throw new Error(`${label}.then must be a step array for if`);
+      for (const [index, child] of s.then.entries()) validateStep(child, `${label}.then[${index}]`);
+    } else if (s.then !== undefined) {
+      throw new Error(`${label}.then is supported only for if`);
+    }
+  };
+  for (const [index, step] of v.steps.entries()) validateStep(step, `steps[${index}]`);
   return v as unknown as Scenario;
 }
 

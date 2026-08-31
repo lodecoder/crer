@@ -171,6 +171,23 @@ steps:
 `template-<step-index>.png` として artifacts に残します。クリック位置は再生 seed で決まるため、同じ
 seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出してください。
 
+### テンプレート条件分岐
+
+テンプレートが閾値以上で見つかった場合だけ複数の操作を実行するには `do: if` と `then` を使います。
+不一致は正常な分岐であり、`then` を実行せず次の兄弟ステップへ進みます。条件の既定値には同じ
+`playback.template` を使います。
+
+```yaml
+- do: if
+  template: { path: templates/signed-in.png, min_similarity: 0.9 }
+  then:
+    - { do: click, at: { x: 500, y: 200 } }
+    - { do: text, value: "continue" }
+```
+
+条件評価時のスクリーンショットは `template-<step-index>.png`、実行・不一致の結果は `steps.ndjson` に
+残ります。画像ファイルの欠落や読み込み不能は設定エラーとして失敗します。
+
 `normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
 （例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。
 既存の複数行形式も読み込み可能です。
