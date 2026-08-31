@@ -748,6 +748,21 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       Deno.writeTextFile(`${runDir}/steps.ndjson`, JSON.stringify(entry) + "\n", { append: true });
     const browser = b!;
     let stopped = false;
+    const weekday = (timeZone?: string) => {
+      const name = new Intl.DateTimeFormat("en-US", {
+        weekday: "short",
+        ...(timeZone ? { timeZone } : {}),
+      }).format(new Date()).toLowerCase();
+      return ({
+        mon: "mon",
+        tue: "tue",
+        wed: "wed",
+        thu: "thu",
+        fri: "fri",
+        sat: "sat",
+        sun: "sun",
+      } as Record<string, string>)[name];
+    };
     const executeSteps = async (steps: Step[], parentIndex = ""): Promise<void> => {
       for (const [offset, step] of steps.entries()) {
         if (stopped) return;
@@ -759,7 +774,21 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let succeeded = false;
         try {
           if (options.signal?.aborted) throw new Error("worker timed out");
-          if (step.template) {
+          if (step.do === "if" && step.weekdays) {
+            const current = weekday(step.time_zone);
+            const matched = step.weekdays.includes(current);
+            await appendStepLog({
+              index: i,
+              do: step.do,
+              startedAt,
+              completedAt: new Date().toISOString(),
+              condition: { weekdays: step.weekdays, time_zone: step.time_zone, current },
+              url: await currentUrl(browser),
+              status: matched ? "ok" : "skipped",
+            });
+            if (matched) await executeSteps(step.then ?? [], i);
+            succeeded = true;
+          } else if (step.template) {
             const template = step.template as {
               path: string;
               min_similarity?: number;

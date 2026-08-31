@@ -259,6 +259,12 @@ similarity・矩形を artifacts に保存する。
 `playback.template.min_similarity` を個別指定がない場合の既定値として用いる。条件評価の screenshot、
 similarity、実行または skip の状態は artifacts に保存する。
 
+`do: if` は `template` の代わりに `weekdays` を条件にできる。`weekdays` は `mon`、`tue`、`wed`、`thu`、
+`fri`、`sat`、`sun` から一つ以上を選ぶ配列である。実行時のローカル時刻の曜日が含まれる場合だけ `then` を
+実行する。`time_zone` に IANA タイムゾーン（例 `Asia/Tokyo`）を指定すれば、そのタイムゾーンで判定する。
+`template` と `weekdays` は同じ `if` に併用せず、どちらか一方を必須とする。不一致は正常な条件分岐として
+`steps.ndjson` に記録し、次の兄弟ステップへ進む。
+
 `playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を
 その実行だけ上書きする。これは記録済みの `sleep` に**追加する**目視用の固定待機である。

@@ -93,12 +93,32 @@ Deno.test("validates template conditional branches", () => {
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "if", then: [] }] }),
     Error,
-    "steps[0].template is required for if",
+    "steps[0] requires exactly one of template or weekdays for if",
   );
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "if", template: { path: "x.png" } }] }),
     Error,
     "steps[0].then must be a step array for if",
+  );
+});
+
+Deno.test("validates weekday conditional branches", () => {
+  const scenario = {
+    version: 1,
+    name: "conditional-weekday",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "if", weekdays: ["mon", "wed", "fri"], time_zone: "Asia/Tokyo", then: [] }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", weekdays: ["monday"], then: [] }] }),
+    Error,
+    "steps[0].weekdays must be a non-empty array of mon through sun",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", weekdays: ["mon"], time_zone: "JST", then: [] }] }),
+    Error,
+    "steps[0].time_zone must be an IANA time zone string",
   );
 });
 

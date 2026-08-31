@@ -173,11 +173,39 @@ export function scenarioFrom(value: unknown): Scenario {
       validateTemplateOptions(s.template, `${label}.template`, true);
     }
     if (s.do === "if") {
-      if (!s.template) throw new Error(`${label}.template is required for if`);
+      const hasTemplate = s.template !== undefined;
+      const hasWeekdays = s.weekdays !== undefined;
+      if (hasTemplate === hasWeekdays) {
+        throw new Error(`${label} requires exactly one of template or weekdays for if`);
+      }
+      if (
+        hasWeekdays && (!Array.isArray(s.weekdays) || s.weekdays.length === 0
+          || !s.weekdays.every((day) =>
+            typeof day === "string" && [
+              "mon",
+              "tue",
+              "wed",
+              "thu",
+              "fri",
+              "sat",
+              "sun",
+            ].includes(day)
+          ))
+      ) {
+        throw new Error(`${label}.weekdays must be a non-empty array of mon through sun`);
+      }
+      if (s.time_zone !== undefined) {
+        if (typeof s.time_zone !== "string" || !s.time_zone) {
+          throw new Error(`${label}.time_zone must be an IANA time zone string`);
+        }
+        if (!Intl.supportedValuesOf("timeZone").includes(s.time_zone)) {
+          throw new Error(`${label}.time_zone must be an IANA time zone string`);
+        }
+      }
       if (!Array.isArray(s.then)) throw new Error(`${label}.then must be a step array for if`);
       for (const [index, child] of s.then.entries()) validateStep(child, `${label}.then[${index}]`);
-    } else if (s.then !== undefined) {
-      throw new Error(`${label}.then is supported only for if`);
+    } else if (s.then !== undefined || s.weekdays !== undefined || s.time_zone !== undefined) {
+      throw new Error(`${label}.then, weekdays, and time_zone are supported only for if`);
     }
   };
   for (const [index, step] of v.steps.entries()) validateStep(step, `steps[${index}]`);

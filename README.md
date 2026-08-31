@@ -188,6 +188,20 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
 条件評価時のスクリーンショットは `template-<step-index>.png`、実行・不一致の結果は `steps.ndjson` に
 残ります。画像ファイルの欠落や読み込み不能は設定エラーとして失敗します。
 
+曜日で条件分岐する場合は `weekdays` に `mon`、`tue`、`wed`、`thu`、`fri`、`sat`、`sun` を一つ以上
+指定します。既定は実行マシンのローカル時刻ですが、再現性が必要なシナリオでは `time_zone` に IANA
+タイムゾーンを指定してください。
+
+```yaml
+- do: if
+  weekdays: [mon, wed, fri]
+  time_zone: Asia/Tokyo
+  then:
+    - { do: click, at: { x: 500, y: 200 } }
+```
+
+曜日が一致しない場合は `then` を実行せず、`steps.ndjson` に条件評価結果を残して次のステップへ進みます。
+
 `normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
 （例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。
 既存の複数行形式も読み込み可能です。
