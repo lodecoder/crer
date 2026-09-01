@@ -219,6 +219,19 @@ export function scenarioFrom(value: unknown): Scenario {
     ) {
       throw new Error(`${label}.then, else, weekdays, and time_zone are supported only for if`);
     }
+    if (s.do === "repeat") {
+      if (!Number.isInteger(s.count) || (s.count as number) < 1) {
+        throw new Error(`${label}.count must be a positive integer for repeat`);
+      }
+      if (!Array.isArray(s.steps)) {
+        throw new Error(`${label}.steps must be a step array for repeat`);
+      }
+      for (const [index, child] of s.steps.entries()) {
+        validateStep(child, `${label}.steps[${index}]`);
+      }
+    } else if (s.count !== undefined || s.steps !== undefined) {
+      throw new Error(`${label}.count and steps are supported only for repeat`);
+    }
   };
   for (const [index, step] of v.steps.entries()) validateStep(step, `steps[${index}]`);
   return v as unknown as Scenario;

@@ -93,6 +93,26 @@ Deno.test("validates console log steps", () => {
   );
 });
 
+Deno.test("validates repeat steps", () => {
+  const scenario = {
+    version: 1,
+    name: "repeat",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "repeat", count: 3, steps: [{ do: "log", message: "retry" }] }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "repeat", count: 0, steps: [] }] }),
+    Error,
+    "steps[0].count must be a positive integer for repeat",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "repeat", count: 1 }] }),
+    Error,
+    "steps[0].steps must be a step array for repeat",
+  );
+});
+
 Deno.test("validates template conditional branches", () => {
   const scenario = {
     version: 1,

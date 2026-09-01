@@ -777,7 +777,22 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let succeeded = false;
         try {
           if (options.signal?.aborted) throw new Error("worker timed out");
-          if (step.do === "if" && step.weekdays) {
+          if (step.do === "repeat") {
+            await appendStepLog({
+              index: i,
+              do: step.do,
+              startedAt,
+              completedAt: new Date().toISOString(),
+              count: step.count,
+              url: await currentUrl(browser),
+              status: "ok",
+            });
+            for (let iteration = 0; iteration < Number(step.count); iteration++) {
+              await executeSteps(step.steps ?? [], `${i}.${iteration}`);
+              if (stopped) break;
+            }
+            succeeded = true;
+          } else if (step.do === "if" && step.weekdays) {
             const current = weekday(step.time_zone);
             const matched = step.weekdays.includes(current);
             await appendStepLog({
@@ -902,6 +917,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             return;
           }
         }
+        if (stopped) return;
         if (succeeded && step.delay_ms !== undefined) {
           await sleepInterruptibly(Number(step.delay_ms), options.signal);
         }

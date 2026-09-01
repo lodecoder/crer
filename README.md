@@ -218,6 +218,22 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
 - { do: log, message: "ログイン操作を送信しました" }
 ```
 
+### 操作の繰り返し
+
+`do: repeat` の `steps` を `count` 回（1以上の整数）繰り返します。操作の間隔は、各子ステップの
+`delay_ms` で指定できます。
+
+```yaml
+- do: repeat
+  count: 3
+  steps:
+    - { do: click, at: { x: 493, y: 132 }, delay_ms: 500 }
+    - { do: log, message: "クリックを繰り返しました" }
+```
+
+子ステップは通常の操作・`if`・さらに `repeat` を含められます。実行ログの step index は
+`<repeat-index>.<繰り返し回数>.<子-step-index>` の形式になります。
+
 `normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
 （例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。
 既存の複数行形式も読み込み可能です。

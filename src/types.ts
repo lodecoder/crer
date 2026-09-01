@@ -39,6 +39,8 @@ export type Step = {
   time_zone?: string;
   then?: Step[];
   else?: Step[];
+  count?: number;
+  steps?: Step[];
   [key: string]: unknown;
 };
 export type Scenario = {
