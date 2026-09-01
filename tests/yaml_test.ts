@@ -78,6 +78,21 @@ Deno.test("validates a post-operation delay", () => {
   );
 });
 
+Deno.test("validates console log steps", () => {
+  const scenario = {
+    version: 1,
+    name: "progress",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "log", message: "loaded sign-in page" }],
+  };
+  scenarioFrom(scenario);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "log" }] }),
+    Error,
+    "steps[0].message must be a string for log",
+  );
+});
+
 Deno.test("validates template conditional branches", () => {
   const scenario = {
     version: 1,

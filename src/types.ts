@@ -24,6 +24,7 @@ export type Step = {
   at?: Point;
   delta?: Point;
   value?: string;
+  message?: string;
   key?: string;
   url?: string;
   state?: string;

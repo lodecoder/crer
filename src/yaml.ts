@@ -146,6 +146,9 @@ export function scenarioFrom(value: unknown): Scenario {
     if (s.do === "sleep" && (typeof s.ms !== "number" || !Number.isFinite(s.ms) || s.ms < 0)) {
       throw new Error(`${label}.ms must be a non-negative number for sleep`);
     }
+    if (s.do === "log" && typeof s.message !== "string") {
+      throw new Error(`${label}.message must be a string for log`);
+    }
     if (
       s.delay_ms !== undefined
       && (s.do === "sleep" || typeof s.delay_ms !== "number" || !Number.isFinite(s.delay_ms)

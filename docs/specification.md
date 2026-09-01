@@ -231,12 +231,15 @@ steps:
 ```
 
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
-`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep` である。`wait_for` と `assert` は
+`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log` である。`wait_for` と `assert` は
 ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
 `sleep` 以外の各操作には任意の `delay_ms`（0 以上のミリ秒）を指定できる。成功した操作の直後に
 待機してから次のステップへ進む。`normalize` は記録された操作間隔を原則として前の操作の `delay_ms`
 へ出力する。先頭または単独の待機を表す場合だけ、`{ do: sleep, ms: ... }` を用いる。`sleep` と
 `delay_ms` の併用は無効である。
+
+`log` は必須の文字列 `message` を標準出力へ `[crer] <message>` として出力する進捗確認用のステップである。
+ブラウザ・ページには操作をせず、メッセージは該当する `steps.ndjson` の記録にも含める。
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。
 
 `click` と `double_click` の `jitter` は `playback.jitter` と同じスキーマを持つ任意フィールド

@@ -685,6 +685,9 @@ async function act(
     }
     case "sleep":
       return await sleepInterruptibly(Number(step.ms ?? 0), signal);
+    case "log":
+      console.log(`[crer] ${step.message}`);
+      return;
     case "screenshot":
       return await capture(b, String(step.name ?? "screenshot"), true);
     default:
@@ -892,6 +895,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             ...(at ? { at } : {}),
             ...(jitterOffset ? { jitterOffset } : {}),
             ...(templateMatch ? { templateMatch } : {}),
+            ...(step.do === "log" ? { message: step.message } : {}),
             url: await currentUrl(browser),
             status: "failed",
             kind,
