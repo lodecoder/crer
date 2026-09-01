@@ -787,9 +787,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               completedAt: new Date().toISOString(),
               condition: { weekdays: step.weekdays, time_zone: step.time_zone, current },
               url: await currentUrl(browser),
-              status: matched ? "ok" : "skipped",
+              status: "ok",
+              matched,
+              branch: matched ? "then" : "else",
             });
-            if (matched) await executeSteps(step.then ?? [], i);
+            await executeSteps(matched ? step.then ?? [] : step.else ?? [], i);
             succeeded = true;
           } else if (step.template) {
             const template = step.template as {
@@ -811,30 +813,20 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               templateMatch.similarity.toFixed(4)
             } is below ${threshold}`;
             if (step.do === "if") {
-              if (templateMatch.similarity < threshold) {
-                await appendStepLog({
-                  index: i,
-                  do: step.do,
-                  startedAt,
-                  completedAt: new Date().toISOString(),
-                  templateMatch,
-                  url: await currentUrl(browser),
-                  status: "skipped",
-                  kind: "template",
-                  reason: matchError,
-                });
-              } else {
-                await appendStepLog({
-                  index: i,
-                  do: step.do,
-                  startedAt,
-                  completedAt: new Date().toISOString(),
-                  templateMatch,
-                  url: await currentUrl(browser),
-                  status: "ok",
-                });
-                await executeSteps(step.then ?? [], i);
-              }
+              const matched = templateMatch.similarity >= threshold;
+              await appendStepLog({
+                index: i,
+                do: step.do,
+                startedAt,
+                completedAt: new Date().toISOString(),
+                templateMatch,
+                url: await currentUrl(browser),
+                status: "ok",
+                matched,
+                branch: matched ? "then" : "else",
+                ...(matched ? {} : { reason: matchError }),
+              });
+              await executeSteps(matched ? step.then ?? [] : step.else ?? [], i);
               succeeded = true;
             }
             if (templateMatch.similarity < threshold) {

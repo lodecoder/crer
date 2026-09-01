@@ -257,7 +257,8 @@ steps:
 similarity・矩形を artifacts に保存する。
 
 `do: if` は `template` と `then`（ステップ配列）を必須とする条件ステップである。template の similarity が
-閾値以上なら `then` を順に実行し、閾値未満なら `then` を実行せず次の兄弟ステップへ進む。これは正常な
+閾値以上なら `then` を順に実行し、閾値未満で `else` がなければ次の兄弟ステップへ進む。任意の `else`
+（ステップ配列）を指定した場合は、閾値未満なら代わりに `else` を順に実行する。これは正常な
 条件分岐であり、`on_missing` や `on_failure.template` の対象ではない。`if` では `at` と `jitter` を指定せず、
 `playback.template.min_similarity` を個別指定がない場合の既定値として用いる。条件評価の screenshot、
 similarity、実行または skip の状態は artifacts に保存する。
@@ -266,7 +267,7 @@ similarity、実行または skip の状態は artifacts に保存する。
 `fri`、`sat`、`sun` から一つ以上を選ぶ配列である。実行時のローカル時刻の曜日が含まれる場合だけ `then` を
 実行する。`time_zone` に IANA タイムゾーン（例 `Asia/Tokyo`）を指定すれば、そのタイムゾーンで判定する。
 `template` と `weekdays` は同じ `if` に併用せず、どちらか一方を必須とする。不一致は正常な条件分岐として
-`steps.ndjson` に記録し、次の兄弟ステップへ進む。
+`steps.ndjson` に記録し、`else` があればそれを実行し、なければ次の兄弟ステップへ進む。
 
 `playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を

@@ -207,8 +207,17 @@ export function scenarioFrom(value: unknown): Scenario {
       }
       if (!Array.isArray(s.then)) throw new Error(`${label}.then must be a step array for if`);
       for (const [index, child] of s.then.entries()) validateStep(child, `${label}.then[${index}]`);
-    } else if (s.then !== undefined || s.weekdays !== undefined || s.time_zone !== undefined) {
-      throw new Error(`${label}.then, weekdays, and time_zone are supported only for if`);
+      if (s.else !== undefined) {
+        if (!Array.isArray(s.else)) throw new Error(`${label}.else must be a step array for if`);
+        for (const [index, child] of s.else.entries()) {
+          validateStep(child, `${label}.else[${index}]`);
+        }
+      }
+    } else if (
+      s.then !== undefined || s.else !== undefined || s.weekdays !== undefined
+      || s.time_zone !== undefined
+    ) {
+      throw new Error(`${label}.then, else, weekdays, and time_zone are supported only for if`);
     }
   };
   for (const [index, step] of v.steps.entries()) validateStep(step, `steps[${index}]`);

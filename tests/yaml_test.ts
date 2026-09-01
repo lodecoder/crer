@@ -102,6 +102,7 @@ Deno.test("validates template conditional branches", () => {
       do: "if",
       template: { path: "templates/signed-in.png" },
       then: [{ do: "click", at: { x: 1, y: 2 } }],
+      else: [{ do: "log", message: "not signed in" }],
     }],
   };
   assertEquals(scenarioFrom(scenario).steps.length, 1);
@@ -114,6 +115,11 @@ Deno.test("validates template conditional branches", () => {
     () => scenarioFrom({ ...scenario, steps: [{ do: "if", template: { path: "x.png" } }] }),
     Error,
     "steps[0].then must be a step array for if",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", template: { path: "x.png" }, then: [], else: {} }] }),
+    Error,
+    "steps[0].else must be a step array for if",
   );
 });
 

@@ -38,6 +38,7 @@ export type Step = {
   /** Optional IANA time zone for a weekday conditional; defaults to the local system zone. */
   time_zone?: string;
   then?: Step[];
+  else?: Step[];
   [key: string]: unknown;
 };
 export type Scenario = {
