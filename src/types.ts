@@ -8,7 +8,13 @@ export type FailureKind =
 export type FailurePolicy = "abort" | "continue";
 export type Point = { x: number; y: number };
 export type Jitter = {
-  enabled: boolean;
+  enabled: false;
+  distribution?: "none" | "uniform" | "normal";
+  radius_px?: number;
+  min_distance_from_edge_px?: number;
+  out_of_bounds?: "fail" | "disable-for-step";
+} | {
+  enabled: true;
   distribution: "none" | "uniform" | "normal";
   radius_px: number;
   min_distance_from_edge_px: number;

@@ -149,7 +149,8 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 する。`radius_px` は最大オフセット距離、`min_distance_from_edge_px` は CSS viewport の各辺から
 確保する最小距離である。最大 16 回の試行後に有効な点を作れなければ `out_of_bounds` を適用する。
 
-`click`／`double_click` に個別 `jitter` を書く場合は `enabled`、`distribution`、`radius_px`、
+`click`／`double_click` に個別 `jitter` を書く場合、`enabled: false` だけなら他の項目を省略でき、
+その操作だけ揺らぎなしにする。`enabled: true` の場合は `distribution`、`radius_px`、
 `min_distance_from_edge_px`、`out_of_bounds` の全項目を必須とする。個別設定があるとき、全体設定の
 `playback.jitter` は一切参照しない。
 
@@ -250,8 +251,8 @@ steps:
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。
 
 `click` と `double_click` の `jitter` は `playback.jitter` と同じスキーマを持つ任意フィールド
-である。省略時だけ `playback.jitter` を使う。`jitter` を指定したステップに `radius_px` 等の
-フィールドがない場合はエラーとし、全体設定から補完しない。`drag` の個別揺らぎは v1 では
+である。省略時だけ `playback.jitter` を使う。`jitter: { enabled: false }` は個別揺らぎの無効化を
+表し、`enabled: true` の場合だけ `radius_px` 等の全項目が必要で、全体設定から補完しない。`drag` の個別揺らぎは v1 では
 未対応で、常に `playback.jitter` を使う。
 
 `click` は `at` の代わりに `template` を指定できる。テンプレートのファイルパスは scenario YAML からの

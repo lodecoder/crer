@@ -25,6 +25,14 @@ Deno.test("rejects invalid jitter settings", () => {
     playback: { jitter: { enabled: true, distribution: "random", radius_px: -1, min_distance_from_edge_px: 0, out_of_bounds: "fail" } },
     steps: [],
   }), Error, "playback.jitter is invalid");
+  const disabled = {
+    version: 1,
+    name: "no-jitter",
+    browser: { initial_url: "https://example.test" },
+    playback: { jitter: { enabled: false } },
+    steps: [{ do: "click", at: { x: 1, y: 2 }, jitter: { enabled: false } }],
+  };
+  assertEquals(scenarioFrom(disabled).steps.length, 1);
 });
 
 Deno.test("validates locator hint text", () => {

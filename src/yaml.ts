@@ -41,8 +41,9 @@ function object(value: unknown, label: string): Record<string, unknown> {
 }
 function validateJitter(value: unknown, label: string) {
   const jitter = object(value, label);
+  if (jitter.enabled === false) return;
   if (
-    typeof jitter.enabled !== "boolean"
+    jitter.enabled !== true
     || !["none", "uniform", "normal"].includes(String(jitter.distribution))
     || typeof jitter.radius_px !== "number" || jitter.radius_px < 0
     || typeof jitter.min_distance_from_edge_px !== "number" || jitter.min_distance_from_edge_px < 0
