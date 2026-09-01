@@ -35,13 +35,45 @@ export async function recordRaw(
     let markerCalibration: MarkerCalibration | undefined;
     let activeViewport = viewport;
     let nextViewportCheck = Date.now();
-    const writeMetadata = async () => {
+    let mouseDown: { x: number; y: number } | undefined;
+    let mouseMoved = false;
+    const contentRect = () => {
       const rectBytes = new Uint8Array(16);
       const rect = new DataView(rectBytes.buffer);
-      const rectStatus = lib.symbols.crer_input_get_content_rect(rectBytes);
-      const validRect = rectStatus === 0 && rect.getInt32(8, true) >= 32
-        && rect.getInt32(12, true) >= 32;
-      if (!validRect && !viewport) return { rectStatus, validRect };
+      const status = lib.symbols.crer_input_get_content_rect(rectBytes);
+      return {
+        status,
+        x: rect.getInt32(0, true),
+        y: rect.getInt32(4, true),
+        width: rect.getInt32(8, true),
+        height: rect.getInt32(12, true),
+      };
+    };
+    const logClick = (point: { x: number; y: number }) => {
+      const rect = contentRect();
+      if (
+        markerCalibration && activeViewport && rect.status === 0 && rect.width >= 32
+        && rect.height >= 32
+      ) {
+        const origin = {
+          x: markerCalibration.screenClick.x
+            - markerCalibration.cssPoint.x * rect.width / activeViewport.x,
+          y: markerCalibration.screenClick.y
+            - markerCalibration.cssPoint.y * rect.height / activeViewport.y,
+        };
+        const css = {
+          x: Math.round((point.x - origin.x) * activeViewport.x / rect.width),
+          y: Math.round((point.y - origin.y) * activeViewport.y / rect.height),
+        };
+        console.log(`[crer] click: { x: ${css.x}, y: ${css.y} }`);
+      } else {
+        console.log(`[crer] click screen_px: { x: ${point.x}, y: ${point.y} }`);
+      }
+    };
+    const writeMetadata = async () => {
+      const rect = contentRect();
+      const validRect = rect.status === 0 && rect.width >= 32 && rect.height >= 32;
+      if (!validRect && !viewport) return { rectStatus: rect.status, validRect };
       await Deno.writeTextFile(
         `${output}.meta.json`,
         JSON.stringify(
@@ -50,10 +82,10 @@ export async function recordRaw(
             ...(validRect
               ? {
                 content_rect_screen_px: {
-                  x: rect.getInt32(0, true),
-                  y: rect.getInt32(4, true),
-                  width: rect.getInt32(8, true),
-                  height: rect.getInt32(12, true),
+                  x: rect.x,
+                  y: rect.y,
+                  width: rect.width,
+                  height: rect.height,
                 },
               }
               : {}),
@@ -69,7 +101,7 @@ export async function recordRaw(
           2,
         ) + "\n",
       );
-      return { rectStatus, validRect };
+      return { rectStatus: rect.status, validRect };
     };
     console.error(
       "Click the 64x64 magenta marker at the page's upper-left corner to calibrate and begin recording.",
@@ -123,6 +155,18 @@ export async function recordRaw(
               // The recording can still be normalized with explicit coordinates.
             }
             continue;
+          }
+          if (event.kind === 2) {
+            mouseDown = { x: event.x, y: event.y };
+            mouseMoved = false;
+          } else if (
+            event.kind === 1 && mouseDown && (event.x !== mouseDown.x || event.y !== mouseDown.y)
+          ) {
+            mouseMoved = true;
+          } else if (event.kind === 3) {
+            if (mouseDown && !mouseMoved) logClick({ x: event.x, y: event.y });
+            mouseDown = undefined;
+            mouseMoved = false;
           }
           await file.write(new TextEncoder().encode(JSON.stringify(event) + "\n"));
         }

@@ -76,6 +76,8 @@ dotnet publish native/Crer.WinInput.csproj -c Release -r win-x64
 
 CfT のコンテンツ領域で操作を記録し、直接起動時は PowerShell で `Enter` または `Ctrl+C` を押して停止します。
 `--stop-file` を使う自動化では、指定した stop file の作成で停止します。
+較正完了後のクリックは標準出力へ CSS 座標（例: `[crer] click: { x: 493, y: 132 }`）を表示します。
+content bounds を取得できない場合だけ、代わりに物理画面座標を `screen_px` として表示します。
 
 ```powershell
 deno task dev record .crer\raw-input.ndjson `

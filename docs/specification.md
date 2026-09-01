@@ -107,6 +107,8 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 ウィンドウの終了とする。graceful stop では、未確定の down/up 対を `raw-input.ndjson` に残し、
 YAML へは不完全な操作を出力せず警告する。CfT が前景でない間のキー入力、Chrome のタブバー・
 アドレスバー・DevTools 上の入力、対象コンテンツ領域外のポインター入力は記録しない。
+較正後の左クリックは記録中の標準出力へ CSS 座標として表示し、content bounds を得られない場合は
+物理画面座標であることを示す `screen_px` 表記で表示する。ドラッグはクリックとして表示しない。
 
 座標は、Raw Input の物理 screen px を対象コンテンツ HWND の物理 client px に変換し、同時点の
 `Page.getLayoutMetrics().cssVisualViewport.clientWidth/clientHeight` と `GetClientRect` の幅・高さの
