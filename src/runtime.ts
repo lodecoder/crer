@@ -899,6 +899,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             templateMatch = found.match;
             const defaults = s.playback?.template;
             const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
+            console.log(
+              `[crer] template: ${template.path}, similarity: ${
+                templateMatch.similarity.toFixed(4)
+              }, threshold: ${threshold}`,
+            );
             const matchError = `template match failed: ${template.path} similarity ${
               templateMatch.similarity.toFixed(4)
             } is below ${threshold}`;

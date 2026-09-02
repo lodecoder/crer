@@ -271,7 +271,8 @@ scenario トップレベルの `functions` は、識別子名をキー、ステ�
 `random_inset_px` は各辺をクリック候補から除外する。`at`、`jitter` と `template` は併用しない。一致不足で
 `on_missing: fail` の場合は `template` 失敗として扱う。`skip` の場合はクリックせず `steps.ndjson` に
 `status: skipped` として記録し、失敗にせず次のステップへ進む。どちらの場合も探索元の screenshot と
-similarity・矩形を artifacts に保存する。
+similarity・矩形を artifacts に保存する。探索ごとに標準出力へテンプレートパス・実測 similarity・適用した
+threshold を出力する。
 
 `do: if` は `template` と `then`（ステップ配列）を必須とする条件ステップである。template の similarity が
 閾値以上なら `then` を順に実行し、閾値未満で `else` がなければ次の兄弟ステップへ進む。任意の `else`
