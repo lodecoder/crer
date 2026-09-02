@@ -238,6 +238,28 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
 子ステップは通常の操作・`if`・さらに `repeat` を含められます。実行ログの step index は
 `<repeat-index>.<繰り返し回数>.<子-step-index>` の形式になります。
 
+### テンプレート状態までの繰り返し
+
+`do: repeat_until` は、テンプレートが指定した状態になるまで子ステップ列を繰り返します。`state: visible`
+は画像が見つかるまで、`state: hidden` は画像が見つからなくなるまで待ちます。各試行の**前**に探索するため、
+開始時点で状態を満たしていれば子ステップは実行しません。
+
+```yaml
+- do: repeat_until
+  template: { path: templates/complete.png, min_similarity: 0.9 }
+  state: visible
+  max_attempts: 10
+  on_limit: fail
+  steps:
+    - { do: click, at: { x: 500, y: 200 }, delay_ms: 500 }
+    - { do: log, message: "完了画面を確認中" }
+```
+
+`max_attempts` は子ステップ列を実行する最大回数（1 以上の整数）です。上限後も状態を満たさない場合、
+`on_limit: fail` は `template` 種別の失敗にし、`on_limit: continue` は `status: skipped` を
+`steps.ndjson` に残して次の兄弟ステップへ進みます。各探索画面は
+`template-<step-index>.attempt-<試行回数>.png` に保存され、類似度も標準出力へ表示します。
+
 ### 操作列の再利用
 
 トップレベルの `functions` に名前付き操作列を定義し、`do: call` で呼び出せます。関数名は英字または
@@ -261,7 +283,7 @@ steps:
 書けます。`params` は一意な識別子の配列、`args` はその全てを文字列または有限の数値で指定する mapping です。関数内の
 `${名前}` は対応する引数に置換され、`value`、`message`、`url`、テンプレートのパスを含む文字列フィールドで
 使えます。プレースホルダーだけで構成される数値フィールドには数値のまま展開されるため、`repeat.count`、
-`delay_ms`、`sleep.ms`、座標にも使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も
+`delay_ms`、`sleep.ms`、座標、`repeat_until.max_attempts` にも使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も
 引き続き利用できます。
 
 ```yaml

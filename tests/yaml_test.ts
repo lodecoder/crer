@@ -121,6 +121,38 @@ Deno.test("validates repeat steps", () => {
   );
 });
 
+Deno.test("validates template repeat-until steps", () => {
+  const scenario = {
+    version: 1,
+    name: "repeat-until",
+    browser: { initial_url: "https://example.test" },
+    steps: [{
+      do: "repeat_until",
+      template: { path: "templates/complete.png", min_similarity: 0.9 },
+      state: "visible",
+      max_attempts: 3,
+      on_limit: "continue",
+      steps: [{ do: "log", message: "retry" }],
+    }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ ...scenario.steps[0], state: "gone" }] }),
+    Error,
+    "steps[0].state must be visible or hidden for repeat_until",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ ...scenario.steps[0], max_attempts: 0 }] }),
+    Error,
+    "steps[0].max_attempts must be a positive integer for repeat_until",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ ...scenario.steps[0], on_limit: "skip" }] }),
+    Error,
+    "steps[0].on_limit must be fail or continue for repeat_until",
+  );
+});
+
 Deno.test("validates named function calls", () => {
   const scenario = {
     version: 1,
@@ -170,9 +202,23 @@ Deno.test("validates function call arguments", () => {
     ...scenario,
     functions: {
       repeat: { params: ["count"], steps: [{ do: "repeat", count: "${count}", steps: [] }] },
+      repeatUntil: {
+        params: ["attempts"],
+        steps: [{
+          do: "repeat_until",
+          template: { path: "templates/done.png" },
+          state: "visible",
+          max_attempts: "${attempts}",
+          on_limit: "continue",
+          steps: [],
+        }],
+      },
     },
-    steps: [{ do: "call", function: "repeat", args: { count: 3 } }],
-  }).steps.length, 1);
+    steps: [
+      { do: "call", function: "repeat", args: { count: 3 } },
+      { do: "call", function: "repeatUntil", args: { attempts: 3 } },
+    ],
+  }).steps.length, 2);
 });
 
 Deno.test("validates template conditional branches", () => {

@@ -53,6 +53,8 @@ export type Step = {
   then?: Step[];
   else?: Step[];
   count?: number;
+  max_attempts?: number;
+  on_limit?: "fail" | "continue";
   steps?: Step[];
   [key: string]: unknown;
 };

@@ -233,8 +233,8 @@ export function scenarioFrom(value: unknown): Scenario {
       validateJitter(s.jitter, `${label}.jitter`, parameters);
     }
     if (s.template) {
-      if (s.do !== "click" && s.do !== "if") {
-        throw new Error(`${label}.template is supported only for click or if`);
+      if (s.do !== "click" && s.do !== "if" && s.do !== "repeat_until") {
+        throw new Error(`${label}.template is supported only for click, if, or repeat_until`);
       }
       if (s.at) throw new Error(`${label} cannot specify both at and template`);
       if (s.jitter) throw new Error(`${label} cannot specify both jitter and template`);
@@ -312,8 +312,37 @@ export function scenarioFrom(value: unknown): Scenario {
       for (const [index, child] of s.steps.entries()) {
         validateStep(child, `${label}.steps[${index}]`, parameters);
       }
-    } else if (s.count !== undefined || s.steps !== undefined) {
-      throw new Error(`${label}.count and steps are supported only for repeat`);
+    } else if (s.count !== undefined) {
+      throw new Error(`${label}.count is supported only for repeat`);
+    }
+    if (s.do === "repeat_until") {
+      if (!s.template) throw new Error(`${label}.template is required for repeat_until`);
+      if (s.state !== "visible" && s.state !== "hidden") {
+        throw new Error(`${label}.state must be visible or hidden for repeat_until`);
+      }
+      if (
+        !(typeof s.max_attempts === "number" && Number.isInteger(s.max_attempts)
+          && s.max_attempts >= 1)
+        && !parameterReference(s.max_attempts, parameters)
+      ) {
+        throw new Error(`${label}.max_attempts must be a positive integer for repeat_until`);
+      }
+      if (s.on_limit !== "fail" && s.on_limit !== "continue") {
+        throw new Error(`${label}.on_limit must be fail or continue for repeat_until`);
+      }
+      if (!Array.isArray(s.steps)) {
+        throw new Error(`${label}.steps must be a step array for repeat_until`);
+      }
+      for (const [index, child] of s.steps.entries()) {
+        validateStep(child, `${label}.steps[${index}]`, parameters);
+      }
+    } else {
+      if (s.max_attempts !== undefined || s.on_limit !== undefined) {
+        throw new Error(`${label}.max_attempts and on_limit are supported only for repeat_until`);
+      }
+      if (s.steps !== undefined && s.do !== "repeat") {
+        throw new Error(`${label}.steps is supported only for repeat or repeat_until`);
+      }
     }
   };
   for (const [name, definition] of Object.entries(definitions)) {

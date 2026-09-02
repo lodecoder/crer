@@ -234,7 +234,8 @@ steps:
 ```
 
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
-`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log` である。`wait_for` と `assert` は
+`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log`、`if`、`repeat`、`repeat_until`、`call`
+である。`wait_for` と `assert` は
 ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
 `sleep` 以外の各操作には任意の `delay_ms`（0 以上のミリ秒）を指定できる。成功した操作の直後に
 待機してから次のステップへ進む。`normalize` は記録された操作間隔を原則として前の操作の `delay_ms`
@@ -249,12 +250,20 @@ steps:
 場合は、残りの反復を実行しない。repeat 自身と子ステップは `steps.ndjson` に別々に記録し、子の index は
 親 index・反復番号・子番号をドットで結合した文字列とする。
 
+`repeat_until` は `template`、`state`、正の整数 `max_attempts`、`on_limit`、ステップ配列 `steps` を必須と
+する。`state` は `visible` または `hidden`、`on_limit` は `fail` または `continue` である。毎回、子ステップを
+実行する**前**にテンプレートを探索し、`visible` なら similarity が閾値以上、`hidden` なら閾値未満になった
+時点で成功として子ステップを実行せず終了する。未達なら `steps` を 1 回実行して再判定する。子ステップ列を
+`max_attempts` 回実行しても未達の場合、`on_limit: fail` は `template` 失敗、`on_limit: continue` は
+`status: skipped` を記録して次の兄弟ステップへ進む。探索ごとに screenshot を
+`template-<step-index>.attempt-<試行回数>.png` として artifacts に残し、similarity と閾値を標準出力に出力する。
+
 scenario トップレベルの `functions` は、識別子名をキー、ステップ配列を値とする名前付き操作列の mapping
 である。値は従来形式のステップ配列、または `params`（一意な識別子の配列）と `steps` を持つ mapping である。
 `call` は必須文字列 `function` で定義済みの名前を指定し、引数付き関数では必須 mapping `args` に全 parameter
 を文字列または有限の数値として過不足なく指定する。関数内の文字列フィールドにある `${parameter}` は対応する
 引数で置換してから実行する。フィールド値全体が一つの `${parameter}` であり、引数が数値なら数値のまま保持する。
-これにより `repeat.count`、`delay_ms`、`sleep.ms`、座標などの数値フィールドへ渡せる。文字列中へ埋め込む場合は
+これにより `repeat.count`、`repeat_until.max_attempts`、`delay_ms`、`sleep.ms`、座標などの数値フィールドへ渡せる。文字列中へ埋め込む場合は
 数値を10進文字列として置換する。関数内には通常の操作、`if`、`repeat`、`call` を含められるが、直接・間接を問わず
 循環する呼び出しは action 失敗として停止する。`call` 自身と展開された子は `steps.ndjson` に記録する。
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。

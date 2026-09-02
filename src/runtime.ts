@@ -852,6 +852,86 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               if (stopped) break;
             }
             succeeded = true;
+          } else if (step.do === "repeat_until") {
+            const template = step.template as {
+              path: string;
+              min_similarity?: number;
+              random_inset_px?: number;
+              on_missing?: "fail" | "skip";
+            };
+            const defaults = s.playback?.template;
+            const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
+            const desiredVisible = step.state === "visible";
+            const maxAttempts = Number(step.max_attempts);
+            if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+              throw new Error(
+                "repeat_until max_attempts must be a positive integer after argument expansion",
+              );
+            }
+            let attempts = 0;
+            while (true) {
+              const found = await matchTemplate(
+                (method, params) => browser.cdp.call(method, params, browser.sessionId),
+                template,
+                options.templateBaseDir,
+              );
+              await Deno.writeFile(
+                `${runDir}/template-${i}.attempt-${attempts}.png`,
+                found.screenshot,
+              );
+              templateMatch = found.match;
+              console.log(
+                `[crer] template: ${template.path}, similarity: ${
+                  templateMatch.similarity.toFixed(4)
+                }, threshold: ${threshold}`,
+              );
+              const visible = templateMatch.similarity >= threshold;
+              if (visible === desiredVisible) {
+                await appendStepLog({
+                  index: i,
+                  do: step.do,
+                  startedAt,
+                  completedAt: new Date().toISOString(),
+                  templateMatch,
+                  url: await currentUrl(browser),
+                  status: "ok",
+                  state: step.state,
+                  attempts,
+                });
+                succeeded = true;
+                break;
+              }
+              if (attempts >= maxAttempts) {
+                const error =
+                  `repeat_until limit reached: template ${template.path} did not become ${step.state} after ${maxAttempts} attempts (similarity ${
+                    templateMatch.similarity.toFixed(4)
+                  }, threshold ${threshold})`;
+                if (step.on_limit === "continue") {
+                  await appendStepLog({
+                    index: i,
+                    do: step.do,
+                    startedAt,
+                    completedAt: new Date().toISOString(),
+                    templateMatch,
+                    url: await currentUrl(browser),
+                    status: "skipped",
+                    kind: "template",
+                    reason: error,
+                    state: step.state,
+                    attempts,
+                  });
+                  succeeded = true;
+                  break;
+                }
+                throw new Error(error);
+              }
+              attempts++;
+              await executeSteps(step.steps ?? [], `${i}.${attempts - 1}`);
+              if (stopped) {
+                succeeded = true;
+                break;
+              }
+            }
           } else if (step.do === "if" && step.equals) {
             const matched = step.equals.left === step.equals.right;
             await appendStepLog({
