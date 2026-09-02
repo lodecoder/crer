@@ -39,31 +39,46 @@ function object(value: unknown, label: string): Record<string, unknown> {
   }
   return value as Record<string, unknown>;
 }
-function validateJitter(value: unknown, label: string) {
+const parameterReference = (value: unknown, parameters: ReadonlySet<string>) =>
+  typeof value === "string" && /^\$\{([A-Za-z_][A-Za-z0-9_-]*)\}$/.test(value)
+  && parameters.has(value.slice(2, -1));
+const nonNegativeNumberOrParameter = (value: unknown, parameters: ReadonlySet<string>) =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0
+  || parameterReference(value, parameters);
+function validateJitter(
+  value: unknown,
+  label: string,
+  parameters: ReadonlySet<string> = new Set(),
+) {
   const jitter = object(value, label);
   if (jitter.enabled === false) return;
   if (
     jitter.enabled !== true
     || !["none", "uniform", "normal"].includes(String(jitter.distribution))
-    || typeof jitter.radius_px !== "number" || jitter.radius_px < 0
-    || typeof jitter.min_distance_from_edge_px !== "number" || jitter.min_distance_from_edge_px < 0
+    || !nonNegativeNumberOrParameter(jitter.radius_px, parameters)
+    || !nonNegativeNumberOrParameter(jitter.min_distance_from_edge_px, parameters)
     || !["fail", "disable-for-step"].includes(String(jitter.out_of_bounds))
   ) throw new Error(`${label} is invalid`);
 }
-function validateTemplateOptions(value: unknown, label: string, pathRequired: boolean) {
+function validateTemplateOptions(
+  value: unknown,
+  label: string,
+  pathRequired: boolean,
+  parameters: ReadonlySet<string> = new Set(),
+) {
   const template = object(value, label);
   if (pathRequired && (typeof template.path !== "string" || !template.path)) {
     throw new Error(`${label}.path is required`);
   }
   if (
     template.min_similarity !== undefined
-    && (typeof template.min_similarity !== "number" || !Number.isFinite(template.min_similarity)
-      || template.min_similarity < 0 || template.min_similarity > 1)
+    && !(typeof template.min_similarity === "number" && Number.isFinite(template.min_similarity)
+      && template.min_similarity >= 0 && template.min_similarity <= 1)
+    && !parameterReference(template.min_similarity, parameters)
   ) throw new Error(`${label}.min_similarity must be between 0 and 1`);
   if (
     template.random_inset_px !== undefined
-    && (typeof template.random_inset_px !== "number" || !Number.isFinite(template.random_inset_px)
-      || template.random_inset_px < 0)
+    && !nonNegativeNumberOrParameter(template.random_inset_px, parameters)
   ) throw new Error(`${label}.random_inset_px must be non-negative`);
   if (
     template.on_missing !== undefined && template.on_missing !== "fail"
@@ -157,7 +172,11 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     definitions[name] = { params: params as string[], steps: definition.steps };
   }
-  const validateStep = (step: unknown, label: string): void => {
+  const validateStep = (
+    step: unknown,
+    label: string,
+    parameters: ReadonlySet<string> = new Set(),
+  ): void => {
     const s = object(step, label);
     if (typeof s.do !== "string") throw new Error(`${label}.do is required`);
     if (s.do === "key_chord") {
@@ -168,7 +187,7 @@ export function scenarioFrom(value: unknown): Scenario {
         throw new Error(`${label}.keys requires at least two strings`);
       }
     }
-    if (s.do === "sleep" && (typeof s.ms !== "number" || !Number.isFinite(s.ms) || s.ms < 0)) {
+    if (s.do === "sleep" && !nonNegativeNumberOrParameter(s.ms, parameters)) {
       throw new Error(`${label}.ms must be a non-negative number for sleep`);
     }
     if (s.do === "log" && typeof s.message !== "string") {
@@ -179,8 +198,12 @@ export function scenarioFrom(value: unknown): Scenario {
         throw new Error(`${label}.function must name a defined function for call`);
       }
       const args = s.args === undefined ? {} : object(s.args, `${label}.args`);
-      if (!Object.values(args).every((value) => typeof value === "string")) {
-        throw new Error(`${label}.args values must be strings`);
+      if (
+        !Object.values(args).every((value) =>
+          typeof value === "string" || typeof value === "number" && Number.isFinite(value)
+        )
+      ) {
+        throw new Error(`${label}.args values must be strings or finite numbers`);
       }
       const params = definitions[s.function].params;
       const names = Object.keys(args);
@@ -194,8 +217,7 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     if (
       s.delay_ms !== undefined
-      && (s.do === "sleep" || typeof s.delay_ms !== "number" || !Number.isFinite(s.delay_ms)
-        || s.delay_ms < 0)
+      && (s.do === "sleep" || !nonNegativeNumberOrParameter(s.delay_ms, parameters))
     ) {
       throw new Error(`${label}.delay_ms must be a non-negative number on a non-sleep step`);
     }
@@ -208,7 +230,7 @@ export function scenarioFrom(value: unknown): Scenario {
       }
     }
     if (s.jitter) {
-      validateJitter(s.jitter, `${label}.jitter`);
+      validateJitter(s.jitter, `${label}.jitter`, parameters);
     }
     if (s.template) {
       if (s.do !== "click" && s.do !== "if") {
@@ -216,7 +238,7 @@ export function scenarioFrom(value: unknown): Scenario {
       }
       if (s.at) throw new Error(`${label} cannot specify both at and template`);
       if (s.jitter) throw new Error(`${label} cannot specify both jitter and template`);
-      validateTemplateOptions(s.template, `${label}.template`, true);
+      validateTemplateOptions(s.template, `${label}.template`, true, parameters);
     }
     if (s.do === "if") {
       const hasTemplate = s.template !== undefined;
@@ -227,8 +249,12 @@ export function scenarioFrom(value: unknown): Scenario {
       }
       if (hasEquals) {
         const equals = object(s.equals, `${label}.equals`);
-        if (typeof equals.left !== "string" || typeof equals.right !== "string") {
-          throw new Error(`${label}.equals requires string left and right`);
+        if (
+          ![equals.left, equals.right].every((part) =>
+            typeof part === "string" || typeof part === "number" && Number.isFinite(part)
+          )
+        ) {
+          throw new Error(`${label}.equals requires string or finite-number left and right`);
         }
       }
       if (
@@ -256,11 +282,13 @@ export function scenarioFrom(value: unknown): Scenario {
         }
       }
       if (!Array.isArray(s.then)) throw new Error(`${label}.then must be a step array for if`);
-      for (const [index, child] of s.then.entries()) validateStep(child, `${label}.then[${index}]`);
+      for (const [index, child] of s.then.entries()) {
+        validateStep(child, `${label}.then[${index}]`, parameters);
+      }
       if (s.else !== undefined) {
         if (!Array.isArray(s.else)) throw new Error(`${label}.else must be a step array for if`);
         for (const [index, child] of s.else.entries()) {
-          validateStep(child, `${label}.else[${index}]`);
+          validateStep(child, `${label}.else[${index}]`, parameters);
         }
       }
     } else if (
@@ -272,14 +300,17 @@ export function scenarioFrom(value: unknown): Scenario {
       );
     }
     if (s.do === "repeat") {
-      if (!Number.isInteger(s.count) || (s.count as number) < 1) {
+      if (
+        !(typeof s.count === "number" && Number.isInteger(s.count) && s.count >= 1)
+        && !parameterReference(s.count, parameters)
+      ) {
         throw new Error(`${label}.count must be a positive integer for repeat`);
       }
       if (!Array.isArray(s.steps)) {
         throw new Error(`${label}.steps must be a step array for repeat`);
       }
       for (const [index, child] of s.steps.entries()) {
-        validateStep(child, `${label}.steps[${index}]`);
+        validateStep(child, `${label}.steps[${index}]`, parameters);
       }
     } else if (s.count !== undefined || s.steps !== undefined) {
       throw new Error(`${label}.count and steps are supported only for repeat`);
@@ -287,7 +318,7 @@ export function scenarioFrom(value: unknown): Scenario {
   };
   for (const [name, definition] of Object.entries(definitions)) {
     for (const [index, step] of definition.steps.entries()) {
-      validateStep(step, `functions.${name}[${index}]`);
+      validateStep(step, `functions.${name}[${index}]`, new Set(definition.params));
     }
   }
   for (const [index, step] of v.steps.entries()) validateStep(step, `steps[${index}]`);

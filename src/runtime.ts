@@ -683,8 +683,13 @@ async function act(
       }
       return;
     }
-    case "sleep":
-      return await sleepInterruptibly(Number(step.ms ?? 0), signal);
+    case "sleep": {
+      const ms = Number(step.ms ?? 0);
+      if (!Number.isFinite(ms) || ms < 0) {
+        throw new Error("sleep ms must be a non-negative number after argument expansion");
+      }
+      return await sleepInterruptibly(ms, signal);
+    }
     case "log":
       console.log(`[crer] ${step.message}`);
       return;
@@ -757,11 +762,13 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         ? { params: [], steps: raw }
         : { params: raw.params ?? [], steps: raw.steps };
     };
-    const expandArguments = (value: unknown, args: Record<string, string>): unknown => {
+    const expandArguments = (value: unknown, args: Record<string, string | number>): unknown => {
       if (typeof value === "string") {
+        const wholeReference = /^\$\{([A-Za-z_][A-Za-z0-9_-]*)\}$/.exec(value);
+        if (wholeReference && args[wholeReference[1]] !== undefined) return args[wholeReference[1]];
         return value.replace(
           /\$\{([A-Za-z_][A-Za-z0-9_-]*)\}/g,
-          (all, name: string) => args[name] ?? all,
+          (all, name: string) => args[name] === undefined ? all : String(args[name]),
         );
       }
       if (Array.isArray(value)) return value.map((item) => expandArguments(item, args));
@@ -827,16 +834,20 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             }
             succeeded = true;
           } else if (step.do === "repeat") {
+            const count = Number(step.count);
+            if (!Number.isInteger(count) || count < 1) {
+              throw new Error("repeat count must be a positive integer after argument expansion");
+            }
             await appendStepLog({
               index: i,
               do: step.do,
               startedAt,
               completedAt: new Date().toISOString(),
-              count: step.count,
+              count,
               url: await currentUrl(browser),
               status: "ok",
             });
-            for (let iteration = 0; iteration < Number(step.count); iteration++) {
+            for (let iteration = 0; iteration < count; iteration++) {
               await executeSteps(step.steps ?? [], `${i}.${iteration}`);
               if (stopped) break;
             }
@@ -983,7 +994,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         }
         if (stopped) return;
         if (succeeded && step.delay_ms !== undefined) {
-          await sleepInterruptibly(Number(step.delay_ms), options.signal);
+          const delay = Number(step.delay_ms);
+          if (!Number.isFinite(delay) || delay < 0) {
+            throw new Error("delay_ms must be a non-negative number after argument expansion");
+          }
+          await sleepInterruptibly(delay, options.signal);
         }
         if (stepDelayMs > 0) await sleepInterruptibly(stepDelayMs, options.signal);
       }

@@ -237,7 +237,7 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
 ### 操作列の再利用
 
 トップレベルの `functions` に名前付き操作列を定義し、`do: call` で呼び出せます。関数名は英字または
-`_` で始まり、英数字・`_`・`-` を使えます。引数は持たず、共通操作の再利用に使います。
+`_` で始まり、英数字・`_`・`-` を使えます。引数を使って共通操作を再利用できます。
 
 ```yaml
 functions:
@@ -254,9 +254,21 @@ steps:
 ```
 
 未定義関数や循環呼び出しは失敗として停止します。関数内には通常の操作、`if`、`repeat`、別の `call` を
-書けます。`params` は一意な識別子の配列、`args` はその全てを文字列で指定する mapping です。関数内の
+書けます。`params` は一意な識別子の配列、`args` はその全てを文字列または有限の数値で指定する mapping です。関数内の
 `${名前}` は対応する引数に置換され、`value`、`message`、`url`、テンプレートのパスを含む文字列フィールドで
-使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も引き続き利用できます。
+使えます。プレースホルダーだけで構成される数値フィールドには数値のまま展開されるため、`repeat.count`、
+`delay_ms`、`sleep.ms`、座標にも使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も
+引き続き利用できます。
+
+```yaml
+functions:
+  retry:
+    params: [count, delay]
+    steps:
+      - { do: repeat, count: "${count}", steps: [ { do: click, at: { x: 493, y: 132 }, delay_ms: "${delay}" } ] }
+steps:
+  - { do: call, function: retry, args: { count: 3, delay: 500 } }
+```
 
 関数引数の値で分岐するには `if.equals` の `left` と `right` を比較します。関数内では置換後の文字列で
 比較されます。

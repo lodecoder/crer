@@ -166,6 +166,13 @@ Deno.test("validates function call arguments", () => {
     Error,
     "functions.search.params must be unique identifiers",
   );
+  assertEquals(scenarioFrom({
+    ...scenario,
+    functions: {
+      repeat: { params: ["count"], steps: [{ do: "repeat", count: "${count}", steps: [] }] },
+    },
+    steps: [{ do: "call", function: "repeat", args: { count: 3 } }],
+  }).steps.length, 1);
 });
 
 Deno.test("validates template conditional branches", () => {
@@ -227,9 +234,9 @@ Deno.test("validates string equality conditional branches", () => {
   };
   assertEquals(scenarioFrom(scenario).steps.length, 1);
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "if", equals: { left: "a", right: 1 }, then: [] }] }),
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", equals: { left: "a", right: true }, then: [] }] }),
     Error,
-    "steps[0].equals requires string left and right",
+    "steps[0].equals requires string or finite-number left and right",
   );
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "if", equals: { left: "a", right: "a" }, weekdays: ["mon"], then: [] }] }),
