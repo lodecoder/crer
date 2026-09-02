@@ -258,6 +258,18 @@ steps:
 `${名前}` は対応する引数に置換され、`value`、`message`、`url`、テンプレートのパスを含む文字列フィールドで
 使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も引き続き利用できます。
 
+関数引数の値で分岐するには `if.equals` の `left` と `right` を比較します。関数内では置換後の文字列で
+比較されます。
+
+```yaml
+- do: if
+  equals: { left: "${mode}", right: "weekday" }
+  then:
+    - { do: log, message: "平日処理" }
+  else:
+    - { do: log, message: "休日処理" }
+```
+
 `normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
 （例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。
 既存の複数行形式も読み込み可能です。

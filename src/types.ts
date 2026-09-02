@@ -45,6 +45,7 @@ export type Step = {
   jitter?: Jitter;
   locator_hint?: { role?: string; name?: string; text?: string };
   template?: { path: string } & TemplateDefaults;
+  equals?: { left: string; right: string };
   /** Weekdays accepted by a conditional step, using mon through sun. */
   weekdays?: string[];
   /** Optional IANA time zone for a weekday conditional; defaults to the local system zone. */

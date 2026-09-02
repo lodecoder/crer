@@ -841,6 +841,21 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               if (stopped) break;
             }
             succeeded = true;
+          } else if (step.do === "if" && step.equals) {
+            const matched = step.equals.left === step.equals.right;
+            await appendStepLog({
+              index: i,
+              do: step.do,
+              startedAt,
+              completedAt: new Date().toISOString(),
+              condition: { equals: step.equals },
+              url: await currentUrl(browser),
+              status: "ok",
+              matched,
+              branch: matched ? "then" : "else",
+            });
+            await executeSteps(matched ? step.then ?? [] : step.else ?? [], i);
+            succeeded = true;
           } else if (step.do === "if" && step.weekdays) {
             const current = weekday(step.time_zone);
             const matched = step.weekdays.includes(current);

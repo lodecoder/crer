@@ -221,8 +221,15 @@ export function scenarioFrom(value: unknown): Scenario {
     if (s.do === "if") {
       const hasTemplate = s.template !== undefined;
       const hasWeekdays = s.weekdays !== undefined;
-      if (hasTemplate === hasWeekdays) {
-        throw new Error(`${label} requires exactly one of template or weekdays for if`);
+      const hasEquals = s.equals !== undefined;
+      if ([hasTemplate, hasWeekdays, hasEquals].filter(Boolean).length !== 1) {
+        throw new Error(`${label} requires exactly one of template, weekdays, or equals for if`);
+      }
+      if (hasEquals) {
+        const equals = object(s.equals, `${label}.equals`);
+        if (typeof equals.left !== "string" || typeof equals.right !== "string") {
+          throw new Error(`${label}.equals requires string left and right`);
+        }
       }
       if (
         hasWeekdays && (!Array.isArray(s.weekdays) || s.weekdays.length === 0
@@ -258,9 +265,11 @@ export function scenarioFrom(value: unknown): Scenario {
       }
     } else if (
       s.then !== undefined || s.else !== undefined || s.weekdays !== undefined
-      || s.time_zone !== undefined
+      || s.time_zone !== undefined || s.equals !== undefined
     ) {
-      throw new Error(`${label}.then, else, weekdays, and time_zone are supported only for if`);
+      throw new Error(
+        `${label}.then, else, weekdays, time_zone, and equals are supported only for if`,
+      );
     }
     if (s.do === "repeat") {
       if (!Number.isInteger(s.count) || (s.count as number) < 1) {

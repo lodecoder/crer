@@ -184,7 +184,7 @@ Deno.test("validates template conditional branches", () => {
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "if", then: [] }] }),
     Error,
-    "steps[0] requires exactly one of template or weekdays for if",
+    "steps[0] requires exactly one of template, weekdays, or equals for if",
   );
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "if", template: { path: "x.png" } }] }),
@@ -215,6 +215,26 @@ Deno.test("validates weekday conditional branches", () => {
     () => scenarioFrom({ ...scenario, steps: [{ do: "if", weekdays: ["mon"], time_zone: "JST", then: [] }] }),
     Error,
     "steps[0].time_zone must be an IANA time zone string",
+  );
+});
+
+Deno.test("validates string equality conditional branches", () => {
+  const scenario = {
+    version: 1,
+    name: "conditional-equals",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "if", equals: { left: "${mode}", right: "weekday" }, then: [] }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", equals: { left: "a", right: 1 }, then: [] }] }),
+    Error,
+    "steps[0].equals requires string left and right",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "if", equals: { left: "a", right: "a" }, weekdays: ["mon"], then: [] }] }),
+    Error,
+    "steps[0] requires exactly one of template, weekdays, or equals for if",
   );
 });
 

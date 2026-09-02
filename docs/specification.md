@@ -281,8 +281,13 @@ similarity、実行または skip の状態は artifacts に保存する。
 `do: if` は `template` の代わりに `weekdays` を条件にできる。`weekdays` は `mon`、`tue`、`wed`、`thu`、
 `fri`、`sat`、`sun` から一つ以上を選ぶ配列である。実行時のローカル時刻の曜日が含まれる場合だけ `then` を
 実行する。`time_zone` に IANA タイムゾーン（例 `Asia/Tokyo`）を指定すれば、そのタイムゾーンで判定する。
-`template` と `weekdays` は同じ `if` に併用せず、どちらか一方を必須とする。不一致は正常な条件分岐として
-`steps.ndjson` に記録し、`else` があればそれを実行し、なければ次の兄弟ステップへ進む。
+`template`、`weekdays`、`equals` は同じ `if` に併用せず、ちょうど一つを必須とする。不一致は正常な
+条件分岐として `steps.ndjson` に記録し、`else` があればそれを実行し、なければ次の兄弟ステップへ進む。
+
+`do: if` は `equals` を条件にできる。`equals` は必須文字列 `left` と `right` を持ち、完全一致した場合に
+`then`、不一致なら `else`（なければ次の兄弟ステップ）を実行する。`template`、`weekdays`、`equals` は同じ
+`if` に併用せず、ちょうど一つを指定する。関数の展開時は `${parameter}` を引数文字列へ置換した後に
+`equals` を評価するため、関数引数による分岐に使える。
 
 `playback.step_delay_ms` は再生中の各ステップ後に待機するミリ秒数で、最後のステップの後にも適用する。
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を
