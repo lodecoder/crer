@@ -25,6 +25,10 @@ export type TemplateDefaults = {
   random_inset_px?: number;
   on_missing?: "fail" | "skip";
 };
+export type FunctionDefinition = {
+  params?: string[];
+  steps: Step[];
+};
 export type Step = {
   do: string;
   at?: Point;
@@ -32,6 +36,7 @@ export type Step = {
   value?: string;
   message?: string;
   function?: string;
+  args?: Record<string, string>;
   key?: string;
   url?: string;
   state?: string;
@@ -81,7 +86,7 @@ export type Scenario = {
     on_failure?: Partial<Record<FailureKind | "default", FailurePolicy>>;
   };
   /** Named reusable step sequences, invoked by { do: call, function: <name> }. */
-  functions?: Record<string, Step[]>;
+  functions?: Record<string, Step[] | FunctionDefinition>;
   steps: Step[];
 };
 export type PlanNode = { scenario: string } | { serial: PlanNode[] } | {

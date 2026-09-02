@@ -142,6 +142,32 @@ Deno.test("validates named function calls", () => {
   );
 });
 
+Deno.test("validates function call arguments", () => {
+  const scenario = {
+    version: 1,
+    name: "parameterized-functions",
+    browser: { initial_url: "https://example.test" },
+    functions: {
+      search: {
+        params: ["query"],
+        steps: [{ do: "text", value: "${query}" }],
+      },
+    },
+    steps: [{ do: "call", function: "search", args: { query: "crer" } }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "call", function: "search", args: {} }] }),
+    Error,
+    "steps[0].args must provide exactly the function parameters",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, functions: { search: { params: ["query", "query"], steps: [] } } }),
+    Error,
+    "functions.search.params must be unique identifiers",
+  );
+});
+
 Deno.test("validates template conditional branches", () => {
   const scenario = {
     version: 1,

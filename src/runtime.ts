@@ -750,6 +750,30 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     const appendStepLog = (entry: Record<string, unknown>) =>
       Deno.writeTextFile(`${runDir}/steps.ndjson`, JSON.stringify(entry) + "\n", { append: true });
     const browser = b!;
+    const functionDefinition = (name: string) => {
+      const raw = s.functions?.[name];
+      if (!raw) return undefined;
+      return Array.isArray(raw)
+        ? { params: [], steps: raw }
+        : { params: raw.params ?? [], steps: raw.steps };
+    };
+    const expandArguments = (value: unknown, args: Record<string, string>): unknown => {
+      if (typeof value === "string") {
+        return value.replace(
+          /\$\{([A-Za-z_][A-Za-z0-9_-]*)\}/g,
+          (all, name: string) => args[name] ?? all,
+        );
+      }
+      if (Array.isArray(value)) return value.map((item) => expandArguments(item, args));
+      if (value && typeof value === "object") {
+        return Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map((
+            [key, item],
+          ) => [key, expandArguments(item, args)]),
+        );
+      }
+      return value;
+    };
     let stopped = false;
     const weekday = (timeZone?: string) => {
       const name = new Intl.DateTimeFormat("en-US", {
@@ -780,8 +804,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           if (options.signal?.aborted) throw new Error("worker timed out");
           if (step.do === "call") {
             const name = step.function!;
-            const body = s.functions?.[name];
-            if (!body) throw new Error(`undefined function: ${name}`);
+            const definition = functionDefinition(name);
+            if (!definition) throw new Error(`undefined function: ${name}`);
             if (callStack.includes(name)) {
               throw new Error(`recursive function call: ${[...callStack, name].join(" -> ")}`);
             }
@@ -796,6 +820,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             });
             callStack.push(name);
             try {
+              const body = expandArguments(definition.steps, step.args ?? {}) as Step[];
               await executeSteps(body, `${i}.${name}`);
             } finally {
               callStack.pop();

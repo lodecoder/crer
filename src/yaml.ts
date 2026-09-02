@@ -134,11 +134,28 @@ export function scenarioFrom(value: unknown): Scenario {
     throw new Error("playback.seed exceeds uint64");
   }
   const functions = v.functions === undefined ? {} : object(v.functions, "functions");
-  for (const [name, steps] of Object.entries(functions)) {
+  const definitions: Record<string, { params: string[]; steps: unknown[] }> = {};
+  for (const [name, raw] of Object.entries(functions)) {
     if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) {
       throw new Error(`functions.${name} must be an identifier`);
     }
-    if (!Array.isArray(steps)) throw new Error(`functions.${name} must be a step array`);
+    if (Array.isArray(raw)) {
+      definitions[name] = { params: [], steps: raw };
+      continue;
+    }
+    const definition = object(raw, `functions.${name}`);
+    if (!Array.isArray(definition.steps)) {
+      throw new Error(`functions.${name}.steps must be a step array`);
+    }
+    const params = definition.params === undefined ? [] : definition.params;
+    if (
+      !Array.isArray(params) || !params.every((param) =>
+        typeof param === "string" && /^[A-Za-z_][A-Za-z0-9_-]*$/.test(param)
+      ) || new Set(params).size !== params.length
+    ) {
+      throw new Error(`functions.${name}.params must be unique identifiers`);
+    }
+    definitions[name] = { params: params as string[], steps: definition.steps };
   }
   const validateStep = (step: unknown, label: string): void => {
     const s = object(step, label);
@@ -158,11 +175,22 @@ export function scenarioFrom(value: unknown): Scenario {
       throw new Error(`${label}.message must be a string for log`);
     }
     if (s.do === "call") {
-      if (typeof s.function !== "string" || !Object.hasOwn(functions, s.function)) {
+      if (typeof s.function !== "string" || !Object.hasOwn(definitions, s.function)) {
         throw new Error(`${label}.function must name a defined function for call`);
+      }
+      const args = s.args === undefined ? {} : object(s.args, `${label}.args`);
+      if (!Object.values(args).every((value) => typeof value === "string")) {
+        throw new Error(`${label}.args values must be strings`);
+      }
+      const params = definitions[s.function].params;
+      const names = Object.keys(args);
+      if (names.length !== params.length || !params.every((param) => Object.hasOwn(args, param))) {
+        throw new Error(`${label}.args must provide exactly the function parameters`);
       }
     } else if (s.function !== undefined) {
       throw new Error(`${label}.function is supported only for call`);
+    } else if (s.args !== undefined) {
+      throw new Error(`${label}.args is supported only for call`);
     }
     if (
       s.delay_ms !== undefined
@@ -248,8 +276,8 @@ export function scenarioFrom(value: unknown): Scenario {
       throw new Error(`${label}.count and steps are supported only for repeat`);
     }
   };
-  for (const [name, steps] of Object.entries(functions)) {
-    for (const [index, step] of (steps as unknown[]).entries()) {
+  for (const [name, definition] of Object.entries(definitions)) {
+    for (const [index, step] of definition.steps.entries()) {
       validateStep(step, `functions.${name}[${index}]`);
     }
   }

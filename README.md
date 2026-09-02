@@ -241,18 +241,22 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
 
 ```yaml
 functions:
-  login:
-    - { do: click, at: { x: 200, y: 100 } }
-    - { do: text, value: "user@example.test" }
-    - { do: key, key: Enter }
+  search:
+    params: [query]
+    steps:
+      - { do: click, at: { x: 200, y: 100 } }
+      - { do: text, value: "${query}" }
+      - { do: key, key: Enter }
 
 steps:
-  - { do: call, function: login }
-  - { do: log, message: "ログイン操作を完了しました" }
+  - { do: call, function: search, args: { query: "crer" } }
+  - { do: log, message: "検索操作を完了しました" }
 ```
 
 未定義関数や循環呼び出しは失敗として停止します。関数内には通常の操作、`if`、`repeat`、別の `call` を
-書けます。
+書けます。`params` は一意な識別子の配列、`args` はその全てを文字列で指定する mapping です。関数内の
+`${名前}` は対応する引数に置換され、`value`、`message`、`url`、テンプレートのパスを含む文字列フィールドで
+使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も引き続き利用できます。
 
 `normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
 （例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。

@@ -250,9 +250,11 @@ steps:
 親 index・反復番号・子番号をドットで結合した文字列とする。
 
 scenario トップレベルの `functions` は、識別子名をキー、ステップ配列を値とする名前付き操作列の mapping
-である。`call` は必須文字列 `function` で定義済みの名前を指定し、その操作列をその場で実行する。関数は
-引数を持たない。関数内には通常の操作、`if`、`repeat`、`call` を含められるが、直接・間接を問わず循環する
-呼び出しは action 失敗として停止する。`call` 自身と展開された子は `steps.ndjson` に記録する。
+である。値は従来形式のステップ配列、または `params`（一意な識別子の配列）と `steps` を持つ mapping である。
+`call` は必須文字列 `function` で定義済みの名前を指定し、引数付き関数では必須 mapping `args` に全 parameter
+を文字列として過不足なく指定する。関数内の文字列フィールドにある `${parameter}` は対応する引数文字列で
+置換してから実行する。関数内には通常の操作、`if`、`repeat`、`call` を含められるが、直接・間接を問わず
+循環する呼び出しは action 失敗として停止する。`call` 自身と展開された子は `steps.ndjson` に記録する。
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。
 
 `click` と `double_click` の `jitter` は `playback.jitter` と同じスキーマを持つ任意フィールド
