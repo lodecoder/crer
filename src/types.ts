@@ -31,6 +31,7 @@ export type Step = {
   delta?: Point;
   value?: string;
   message?: string;
+  function?: string;
   key?: string;
   url?: string;
   state?: string;
@@ -79,6 +80,8 @@ export type Scenario = {
     timeouts?: { navigation_ms?: number; action_ms?: number };
     on_failure?: Partial<Record<FailureKind | "default", FailurePolicy>>;
   };
+  /** Named reusable step sequences, invoked by { do: call, function: <name> }. */
+  functions?: Record<string, Step[]>;
   steps: Step[];
 };
 export type PlanNode = { scenario: string } | { serial: PlanNode[] } | {

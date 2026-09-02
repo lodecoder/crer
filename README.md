@@ -234,6 +234,26 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
 子ステップは通常の操作・`if`・さらに `repeat` を含められます。実行ログの step index は
 `<repeat-index>.<繰り返し回数>.<子-step-index>` の形式になります。
 
+### 操作列の再利用
+
+トップレベルの `functions` に名前付き操作列を定義し、`do: call` で呼び出せます。関数名は英字または
+`_` で始まり、英数字・`_`・`-` を使えます。引数は持たず、共通操作の再利用に使います。
+
+```yaml
+functions:
+  login:
+    - { do: click, at: { x: 200, y: 100 } }
+    - { do: text, value: "user@example.test" }
+    - { do: key, key: Enter }
+
+steps:
+  - { do: call, function: login }
+  - { do: log, message: "ログイン操作を完了しました" }
+```
+
+未定義関数や循環呼び出しは失敗として停止します。関数内には通常の操作、`if`、`repeat`、別の `call` を
+書けます。
+
 `normalize` が生成する YAML は、編集しやすいよう `steps` の各要素を一行の flow mapping
 （例: `{ do: click, at: { x: 10, y: 20 } }`）で出力します。
 既存の複数行形式も読み込み可能です。

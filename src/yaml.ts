@@ -133,6 +133,13 @@ export function scenarioFrom(value: unknown): Scenario {
   if (playback.seed && BigInt(playback.seed) > 0xffff_ffff_ffff_ffffn) {
     throw new Error("playback.seed exceeds uint64");
   }
+  const functions = v.functions === undefined ? {} : object(v.functions, "functions");
+  for (const [name, steps] of Object.entries(functions)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) {
+      throw new Error(`functions.${name} must be an identifier`);
+    }
+    if (!Array.isArray(steps)) throw new Error(`functions.${name} must be a step array`);
+  }
   const validateStep = (step: unknown, label: string): void => {
     const s = object(step, label);
     if (typeof s.do !== "string") throw new Error(`${label}.do is required`);
@@ -149,6 +156,13 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     if (s.do === "log" && typeof s.message !== "string") {
       throw new Error(`${label}.message must be a string for log`);
+    }
+    if (s.do === "call") {
+      if (typeof s.function !== "string" || !Object.hasOwn(functions, s.function)) {
+        throw new Error(`${label}.function must name a defined function for call`);
+      }
+    } else if (s.function !== undefined) {
+      throw new Error(`${label}.function is supported only for call`);
     }
     if (
       s.delay_ms !== undefined
@@ -234,6 +248,11 @@ export function scenarioFrom(value: unknown): Scenario {
       throw new Error(`${label}.count and steps are supported only for repeat`);
     }
   };
+  for (const [name, steps] of Object.entries(functions)) {
+    for (const [index, step] of (steps as unknown[]).entries()) {
+      validateStep(step, `functions.${name}[${index}]`);
+    }
+  }
   for (const [index, step] of v.steps.entries()) validateStep(step, `steps[${index}]`);
   return v as unknown as Scenario;
 }

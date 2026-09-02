@@ -248,6 +248,11 @@ steps:
 子ステップには通常の操作、`if`、入れ子の `repeat` を指定できる。子ステップで abort 対象の失敗が起きた
 場合は、残りの反復を実行しない。repeat 自身と子ステップは `steps.ndjson` に別々に記録し、子の index は
 親 index・反復番号・子番号をドットで結合した文字列とする。
+
+scenario トップレベルの `functions` は、識別子名をキー、ステップ配列を値とする名前付き操作列の mapping
+である。`call` は必須文字列 `function` で定義済みの名前を指定し、その操作列をその場で実行する。関数は
+引数を持たない。関数内には通常の操作、`if`、`repeat`、`call` を含められるが、直接・間接を問わず循環する
+呼び出しは action 失敗として停止する。`call` 自身と展開された子は `steps.ndjson` に記録する。
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。
 
 `click` と `double_click` の `jitter` は `playback.jitter` と同じスキーマを持つ任意フィールド

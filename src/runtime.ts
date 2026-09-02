@@ -766,6 +766,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         sun: "sun",
       } as Record<string, string>)[name];
     };
+    const callStack: string[] = [];
     const executeSteps = async (steps: Step[], parentIndex = ""): Promise<void> => {
       for (const [offset, step] of steps.entries()) {
         if (stopped) return;
@@ -777,7 +778,30 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let succeeded = false;
         try {
           if (options.signal?.aborted) throw new Error("worker timed out");
-          if (step.do === "repeat") {
+          if (step.do === "call") {
+            const name = step.function!;
+            const body = s.functions?.[name];
+            if (!body) throw new Error(`undefined function: ${name}`);
+            if (callStack.includes(name)) {
+              throw new Error(`recursive function call: ${[...callStack, name].join(" -> ")}`);
+            }
+            await appendStepLog({
+              index: i,
+              do: step.do,
+              startedAt,
+              completedAt: new Date().toISOString(),
+              function: name,
+              url: await currentUrl(browser),
+              status: "ok",
+            });
+            callStack.push(name);
+            try {
+              await executeSteps(body, `${i}.${name}`);
+            } finally {
+              callStack.pop();
+            }
+            succeeded = true;
+          } else if (step.do === "repeat") {
             await appendStepLog({
               index: i,
               do: step.do,

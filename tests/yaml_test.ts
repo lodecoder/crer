@@ -121,6 +121,27 @@ Deno.test("validates repeat steps", () => {
   );
 });
 
+Deno.test("validates named function calls", () => {
+  const scenario = {
+    version: 1,
+    name: "functions",
+    browser: { initial_url: "https://example.test" },
+    functions: { login: [{ do: "log", message: "start login" }] },
+    steps: [{ do: "call", function: "login" }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "call", function: "missing" }] }),
+    Error,
+    "steps[0].function must name a defined function for call",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, functions: { "not valid": [] } }),
+    Error,
+    "functions.not valid must be an identifier",
+  );
+});
+
 Deno.test("validates template conditional branches", () => {
   const scenario = {
     version: 1,
