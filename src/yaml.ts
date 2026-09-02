@@ -301,10 +301,10 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     if (s.do === "repeat") {
       if (
-        !(typeof s.count === "number" && Number.isInteger(s.count) && s.count >= 1)
+        !(typeof s.count === "number" && Number.isInteger(s.count) && s.count >= 0)
         && !parameterReference(s.count, parameters)
       ) {
-        throw new Error(`${label}.count must be a positive integer for repeat`);
+        throw new Error(`${label}.count must be a non-negative integer for repeat`);
       }
       if (!Array.isArray(s.steps)) {
         throw new Error(`${label}.steps must be a step array for repeat`);

@@ -835,8 +835,10 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             succeeded = true;
           } else if (step.do === "repeat") {
             const count = Number(step.count);
-            if (!Number.isInteger(count) || count < 1) {
-              throw new Error("repeat count must be a positive integer after argument expansion");
+            if (!Number.isInteger(count) || count < 0) {
+              throw new Error(
+                "repeat count must be a non-negative integer after argument expansion",
+              );
             }
             await appendStepLog({
               index: i,

@@ -109,10 +109,14 @@ Deno.test("validates repeat steps", () => {
     steps: [{ do: "repeat", count: 3, steps: [{ do: "log", message: "retry" }] }],
   };
   assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertEquals(
+    scenarioFrom({ ...scenario, steps: [{ do: "repeat", count: 0, steps: [] }] }).steps.length,
+    1,
+  );
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "repeat", count: 0, steps: [] }] }),
+    () => scenarioFrom({ ...scenario, steps: [{ do: "repeat", count: -1, steps: [] }] }),
     Error,
-    "steps[0].count must be a positive integer for repeat",
+    "steps[0].count must be a non-negative integer for repeat",
   );
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "repeat", count: 1 }] }),

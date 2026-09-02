@@ -245,10 +245,11 @@ steps:
 `log` は必須の文字列 `message` を標準出力へ `[crer] <message>` として出力する進捗確認用のステップである。
 ブラウザ・ページには操作をせず、メッセージは該当する `steps.ndjson` の記録にも含める。
 
-`repeat` は正の整数 `count` とステップ配列 `steps` を必須とし、子ステップ列を `count` 回順に実行する。
-子ステップには通常の操作、`if`、入れ子の `repeat` を指定できる。子ステップで abort 対象の失敗が起きた
-場合は、残りの反復を実行しない。repeat 自身と子ステップは `steps.ndjson` に別々に記録し、子の index は
-親 index・反復番号・子番号をドットで結合した文字列とする。
+`repeat` は 0 以上の整数 `count` とステップ配列 `steps` を必須とし、子ステップ列を `count` 回順に実行する。
+`count: 0` は正常な no-op であり、子ステップを実行しない。子ステップには通常の操作、`if`、入れ子の
+`repeat` を指定できる。子ステップで abort 対象の失敗が起きた場合は、残りの反復を実行しない。repeat 自身と
+子ステップは `steps.ndjson` に別々に記録し、子の index は親 index・反復番号・子番号をドットで結合した
+文字列とする。
 
 `repeat_until` は `template`、`state`、正の整数 `max_attempts`、`on_limit`、ステップ配列 `steps` を必須と
 する。`state` は `visible` または `hidden`、`on_limit` は `fail` または `continue` である。毎回、子ステップを
