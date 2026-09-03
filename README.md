@@ -193,6 +193,13 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
     - { do: log, message: "ログイン状態ではありません" }
 ```
 
+`if` の直下に同じ template click を 1 個だけ置く用途には、次の糖衣構文 `click_if` を使えます。
+画像が閾値未満ならクリックせず、正常に次のステップへ進みます。`on_missing` は適用されません。
+
+```yaml
+- { do: click_if, template: { path: templates/target.png, min_similarity: 0.9 }, delay_ms: 2012 }
+```
+
 条件評価時のスクリーンショットは `template-<step-index>.png`、実行・不一致の結果は `steps.ndjson` に
 残ります。画像ファイルの欠落や読み込み不能は設定エラーとして失敗します。
 

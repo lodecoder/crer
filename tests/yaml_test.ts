@@ -69,6 +69,18 @@ Deno.test("validates click template matching options", () => {
     Error,
     "playback.template.on_missing must be fail or skip",
   );
+  assertEquals(
+    scenarioFrom({
+      ...scenario,
+      steps: [{ do: "click_if", template: { path: "templates/button.png" } }],
+    }).steps.length,
+    1,
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "click_if" }] }),
+    Error,
+    "steps[0].template is required for click_if",
+  );
 });
 
 Deno.test("validates a post-operation delay", () => {

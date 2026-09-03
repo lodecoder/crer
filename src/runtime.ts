@@ -567,8 +567,9 @@ async function act(
     case "assert":
       return await assertState(b, step);
     case "click":
+    case "click_if":
     case "double_click": {
-      const n = step.do === "click" ? 1 : 2;
+      const n = step.do === "double_click" ? 2 : 1;
       for (let i = 1; i <= n; i++) {
         await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: at!.x, y: at!.y });
         await call("Input.dispatchMouseEvent", {
@@ -1034,7 +1035,20 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               succeeded = true;
             }
             if (templateMatch.similarity < threshold) {
-              if (
+              if (step.do === "click_if") {
+                await appendStepLog({
+                  index: i,
+                  do: step.do,
+                  startedAt,
+                  completedAt: new Date().toISOString(),
+                  templateMatch,
+                  url: await currentUrl(browser),
+                  status: "skipped",
+                  matched: false,
+                  reason: matchError,
+                });
+                succeeded = true;
+              } else if (
                 step.do !== "if"
                 && (template.on_missing ?? defaults?.on_missing ?? "fail") === "skip"
               ) {
@@ -1076,6 +1090,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               ...(at ? { at } : {}),
               ...(jitterOffset ? { jitterOffset } : {}),
               ...(templateMatch ? { templateMatch } : {}),
+              ...(step.do === "click_if" ? { matched: true } : {}),
               url: await currentUrl(browser),
               status: "ok",
             });

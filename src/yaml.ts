@@ -233,12 +233,17 @@ export function scenarioFrom(value: unknown): Scenario {
       validateJitter(s.jitter, `${label}.jitter`, parameters);
     }
     if (s.template) {
-      if (s.do !== "click" && s.do !== "if" && s.do !== "repeat_until") {
-        throw new Error(`${label}.template is supported only for click, if, or repeat_until`);
+      if (s.do !== "click" && s.do !== "click_if" && s.do !== "if" && s.do !== "repeat_until") {
+        throw new Error(
+          `${label}.template is supported only for click, click_if, if, or repeat_until`,
+        );
       }
       if (s.at) throw new Error(`${label} cannot specify both at and template`);
       if (s.jitter) throw new Error(`${label} cannot specify both jitter and template`);
       validateTemplateOptions(s.template, `${label}.template`, true, parameters);
+    }
+    if (s.do === "click_if" && !s.template) {
+      throw new Error(`${label}.template is required for click_if`);
     }
     if (s.do === "if") {
       const hasTemplate = s.template !== undefined;
