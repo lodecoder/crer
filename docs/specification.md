@@ -265,7 +265,15 @@ steps:
 `template-<step-index>.attempt-<試行回数>.png` として artifacts に残し、similarity と閾値を標準出力に出力する。
 `state: hidden` と同一 template の子 click を組み合わせると、クリックのたびに画面を再探索して画像がなくなる
 まで処理できる。各試行で親判定と最初の子 click の template path・実効閾値が同じ場合は一致結果を再利用する。
-静的な screenshot 内の複数矩形を重複なく列挙する機能は v1 の対象外である。
+
+`for_each_template` は `template`、1〜100 の整数 `max_matches`、ステップ配列 `steps` を必須とする。一枚の
+screenshot 内で similarity が閾値以上の template 矩形を類似度降順に最大 `max_matches` 件列挙し、各矩形に
+対して `steps` を実行する。IoU が 0.5 以上の候補は同一矩形として最高 similarity の一件へ抑制する。
+子ステップの `${match_left}`、`${match_top}`、`${match_width}`、`${match_height}`、`${match_center_x}`、
+`${match_center_y}`、`${match_similarity}` はそれぞれ当該一致の数値へ展開される。一致がない場合は
+`template.on_missing` の `fail`／`skip` に従う。検出件数と矩形は `steps.ndjson`、探索元は
+`template-<step-index>.png` に保存する。子ステップによるページ変化後に再探索はせず、列挙対象は最初の
+screenshot へ固定する。
 
 scenario トップレベルの `functions` は、識別子名をキー、ステップ配列を値とする名前付き操作列の mapping
 である。値は従来形式のステップ配列、または `params`（一意な識別子の配列）と `steps` を持つ mapping である。

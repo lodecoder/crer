@@ -198,6 +198,34 @@ Deno.test("validates template repeat-until steps", () => {
   );
 });
 
+Deno.test("validates static template iteration steps", () => {
+  const scenario = {
+    version: 1,
+    name: "for-each-template",
+    browser: { initial_url: "https://example.test" },
+    steps: [{
+      do: "for_each_template",
+      template: { path: "templates/item.png" },
+      max_matches: 10,
+      steps: [{
+        do: "click",
+        at: { x: "${match_center_x}", y: "${match_center_y}" },
+      }],
+    }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ ...scenario.steps[0], max_matches: 0 }] }),
+    Error,
+    "steps[0].max_matches must be an integer from 1 through 100 for for_each_template",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "for_each_template", max_matches: 1, steps: [] }] }),
+    Error,
+    "steps[0].template is required for for_each_template",
+  );
+});
+
 Deno.test("validates named function calls", () => {
   const scenario = {
     version: 1,

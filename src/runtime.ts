@@ -1,7 +1,12 @@
 import { Cdp } from "./cdp.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
-import { matchTemplate, randomPointInMatch, type TemplateMatch } from "./template.ts";
+import {
+  matchTemplate,
+  matchTemplates,
+  randomPointInMatch,
+  type TemplateMatch,
+} from "./template.ts";
 import type { FailureKind, Jitter, RunResult, Scenario, Step } from "./types.ts";
 
 const decoder = new TextDecoder();
@@ -993,6 +998,78 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 succeeded = true;
                 break;
               }
+            }
+          } else if (step.do === "for_each_template") {
+            const template = step.template as {
+              path: string;
+              min_similarity?: number;
+              random_inset_px?: number;
+              on_missing?: "fail" | "skip";
+            };
+            const defaults = s.playback?.template;
+            const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
+            const maxMatches = Number(step.max_matches);
+            if (!Number.isInteger(maxMatches) || maxMatches < 1 || maxMatches > 100) {
+              throw new Error(
+                "for_each_template max_matches must be an integer from 1 through 100 after argument expansion",
+              );
+            }
+            const found = await matchTemplates(
+              (method, params) => browser.cdp.call(method, params, browser.sessionId),
+              template,
+              options.templateBaseDir,
+              threshold,
+              maxMatches,
+            );
+            await Deno.writeFile(`${runDir}/template-${i}.png`, found.screenshot);
+            console.log(
+              `[crer] template: ${template.path}, matches: ${found.matches.length}, threshold: ${threshold}`,
+            );
+            if (found.matches.length === 0) {
+              const error =
+                `template match failed: ${template.path} has no matches at threshold ${threshold}`;
+              if ((template.on_missing ?? defaults?.on_missing ?? "fail") === "skip") {
+                await appendStepLog({
+                  index: i,
+                  do: step.do,
+                  startedAt,
+                  completedAt: new Date().toISOString(),
+                  url: await currentUrl(browser),
+                  status: "skipped",
+                  kind: "template",
+                  reason: error,
+                  matches: 0,
+                  templateMatches: [],
+                });
+                succeeded = true;
+              } else {
+                throw new Error(error);
+              }
+            } else {
+              await appendStepLog({
+                index: i,
+                do: step.do,
+                startedAt,
+                completedAt: new Date().toISOString(),
+                url: await currentUrl(browser),
+                status: "ok",
+                matches: found.matches.length,
+                templateMatches: found.matches,
+              });
+              for (const [matchIndex, match] of found.matches.entries()) {
+                const body = expandArguments(step.steps ?? [], {
+                  match_left: match.x,
+                  match_top: match.y,
+                  match_width: match.width,
+                  match_height: match.height,
+                  match_center_x: match.x + Math.floor(match.width / 2),
+                  match_center_y: match.y + Math.floor(match.height / 2),
+                  match_similarity: match.similarity,
+                }) as Step[];
+                await executeSteps(body, `${i}.${matchIndex}`);
+                if (stopped) break;
+              }
+              succeeded = true;
             }
           } else if (step.do === "if" && step.equals) {
             const matched = step.equals.left === step.equals.right;

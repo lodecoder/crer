@@ -312,8 +312,28 @@ template matching を行いません。コンソール出力の末尾に `(reuse
     - { do: click, template: { path: templates/item.png, min_similarity: 0.9 }, delay_ms: 500 }
 ```
 
-クリック後も同じ画像が残る静的な複数矩形を、一枚の screenshot から重複なく列挙する機能はまだありません。
-この場合は上限に達するため、対象が消える操作に限ってこの形式を使います。
+### 静的な複数 template の列挙
+
+クリック後も同じ画像が残る場合は `do: for_each_template` を使います。一枚の screenshot 内から閾値以上の
+一致矩形を類似度順に最大 `max_matches` 件（1〜100）列挙し、各矩形ごとに `steps` を実行します。重複候補は
+IoU 0.5 以上で一つにまとめます。
+
+子ステップでは `${match_left}`、`${match_top}`、`${match_width}`、`${match_height}`、
+`${match_center_x}`、`${match_center_y}`、`${match_similarity}` を数値として使えます。通常は中心座標を
+クリックに渡します。
+
+```yaml
+- do: for_each_template
+  template: { path: templates/item.png, min_similarity: 0.9, on_missing: fail }
+  max_matches: 50
+  steps:
+    - { do: click, at: { x: "${match_center_x}", y: "${match_center_y}" }, delay_ms: 500 }
+    - { do: log, message: "item (${match_left}, ${match_top}) を処理しました" }
+```
+
+一致がないときは `template.on_missing` に従います。検出件数・各矩形・similarity は `steps.ndjson` に残り、
+探索した screenshot は `template-<step-index>.png` に保存されます。ページを変える子操作があっても、
+列挙対象は開始時の screenshot に固定されます。
 
 ### 操作列の再利用
 

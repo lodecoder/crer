@@ -172,6 +172,15 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     definitions[name] = { params: params as string[], steps: definition.steps };
   }
+  const templateMatchParameters = new Set([
+    "match_left",
+    "match_top",
+    "match_width",
+    "match_height",
+    "match_center_x",
+    "match_center_y",
+    "match_similarity",
+  ]);
   const validateStep = (
     step: unknown,
     label: string,
@@ -233,8 +242,12 @@ export function scenarioFrom(value: unknown): Scenario {
       validateJitter(s.jitter, `${label}.jitter`, parameters);
     }
     if (s.template) {
-      if (s.do !== "click" && s.do !== "if" && s.do !== "repeat_until") {
-        throw new Error(`${label}.template is supported only for click, if, or repeat_until`);
+      if (
+        s.do !== "click" && s.do !== "if" && s.do !== "repeat_until" && s.do !== "for_each_template"
+      ) {
+        throw new Error(
+          `${label}.template is supported only for click, if, repeat_until, or for_each_template`,
+        );
       }
       if (s.at) throw new Error(`${label} cannot specify both at and template`);
       if (s.jitter) throw new Error(`${label} cannot specify both jitter and template`);
@@ -362,12 +375,34 @@ export function scenarioFrom(value: unknown): Scenario {
       for (const [index, child] of s.steps.entries()) {
         validateStep(child, `${label}.steps[${index}]`, parameters);
       }
+    } else if (s.do === "for_each_template") {
+      if (!s.template) throw new Error(`${label}.template is required for for_each_template`);
+      if (
+        !(typeof s.max_matches === "number" && Number.isInteger(s.max_matches)
+          && s.max_matches >= 1 && s.max_matches <= 100)
+        && !parameterReference(s.max_matches, parameters)
+      ) {
+        throw new Error(
+          `${label}.max_matches must be an integer from 1 through 100 for for_each_template`,
+        );
+      }
+      if (!Array.isArray(s.steps)) {
+        throw new Error(`${label}.steps must be a step array for for_each_template`);
+      }
+      const childParameters = new Set([...parameters, ...templateMatchParameters]);
+      for (const [index, child] of s.steps.entries()) {
+        validateStep(child, `${label}.steps[${index}]`, childParameters);
+      }
     } else {
-      if (s.max_attempts !== undefined || s.on_limit !== undefined) {
-        throw new Error(`${label}.max_attempts and on_limit are supported only for repeat_until`);
+      if (s.max_attempts !== undefined || s.on_limit !== undefined || s.max_matches !== undefined) {
+        throw new Error(
+          `${label}.max_attempts, on_limit, and max_matches are supported only for repeat_until or for_each_template`,
+        );
       }
       if (s.steps !== undefined && s.do !== "repeat") {
-        throw new Error(`${label}.steps is supported only for repeat or repeat_until`);
+        throw new Error(
+          `${label}.steps is supported only for repeat, repeat_until, or for_each_template`,
+        );
       }
     }
   };
