@@ -327,8 +327,16 @@ export function scenarioFrom(value: unknown): Scenario {
       for (const [index, child] of s.steps.entries()) {
         validateStep(child, `${label}.steps[${index}]`, parameters);
       }
+    } else if (s.do === "click") {
+      if (
+        s.count !== undefined
+        && !(typeof s.count === "number" && Number.isInteger(s.count) && s.count >= 1)
+        && !parameterReference(s.count, parameters)
+      ) {
+        throw new Error(`${label}.count must be a positive integer for click`);
+      }
     } else if (s.count !== undefined) {
-      throw new Error(`${label}.count is supported only for repeat`);
+      throw new Error(`${label}.count is supported only for repeat or click`);
     }
     if (s.do === "repeat_until") {
       if (!s.template) throw new Error(`${label}.template is required for repeat_until`);

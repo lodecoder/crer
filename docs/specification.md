@@ -251,6 +251,10 @@ steps:
 子ステップは `steps.ndjson` に別々に記録し、子の index は親 index・反復番号・子番号をドットで結合した
 文字列とする。
 
+`click` は任意の正の整数 `count` を指定でき、省略時は `1` とする。click は同じ解決済み座標を `count` 回
+実行する。`delay_ms` と `playback.step_delay_ms` は各クリックの後に適用する。jitter の結果または template
+一致矩形内で選んだ位置は、同じ click step 内の全反復で共有する。`click.count` は `0` を許可しない。
+
 `repeat_until` は `template`、`state`、正の整数 `max_attempts`、`on_limit`、ステップ配列 `steps` を必須と
 する。`state` は `visible` または `hidden`、`on_limit` は `fail` または `continue` である。毎回、子ステップを
 実行する**前**にテンプレートを探索し、`visible` なら similarity が閾値以上、`hidden` なら閾値未満になった
@@ -264,7 +268,7 @@ scenario トップレベルの `functions` は、識別子名をキー、ステ�
 `call` は必須文字列 `function` で定義済みの名前を指定し、引数付き関数では必須 mapping `args` に全 parameter
 を文字列または有限の数値として過不足なく指定する。関数内の文字列フィールドにある `${parameter}` は対応する
 引数で置換してから実行する。フィールド値全体が一つの `${parameter}` であり、引数が数値なら数値のまま保持する。
-これにより `repeat.count`、`repeat_until.max_attempts`、`delay_ms`、`sleep.ms`、座標などの数値フィールドへ渡せる。文字列中へ埋め込む場合は
+これにより `repeat.count`、`click.count`、`repeat_until.max_attempts`、`delay_ms`、`sleep.ms`、座標などの数値フィールドへ渡せる。文字列中へ埋め込む場合は
 数値を10進文字列として置換する。関数内には通常の操作、`if`、`repeat`、`call` を含められるが、直接・間接を問わず
 循環する呼び出しは action 失敗として停止する。`call` 自身と展開された子は `steps.ndjson` に記録する。
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。

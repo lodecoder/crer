@@ -1083,35 +1083,58 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             jitterOffset = { x: at.x - step.at.x, y: at.y - step.at.y };
           }
           if (!succeeded) {
-            await act(browser, step, at, s.playback?.jitter, rng, timeout, options.signal);
-            await appendStepLog({
-              index: i,
-              do: step.do,
-              startedAt,
-              completedAt: new Date().toISOString(),
-              ...(at ? { at } : {}),
-              ...(jitterOffset ? { jitterOffset } : {}),
-              ...(templateMatch ? { templateMatch } : {}),
-              url: await currentUrl(browser),
-              status: "ok",
-            });
-            succeeded = true;
-            if (step.do === "click" && step.template && step.then) {
-              if (step.delay_ms !== undefined) {
-                const delay = Number(step.delay_ms);
-                if (!Number.isFinite(delay) || delay < 0) {
-                  throw new Error(
-                    "delay_ms must be a non-negative number after argument expansion",
-                  );
+            if (step.do === "click") {
+              const count = Number(step.count ?? 1);
+              if (!Number.isInteger(count) || count < 1) {
+                throw new Error("click count must be a positive integer after argument expansion");
+              }
+              for (let iteration = 0; iteration < count; iteration++) {
+                await act(browser, step, at, s.playback?.jitter, rng, timeout, options.signal);
+                if (iteration === count - 1) {
+                  await appendStepLog({
+                    index: i,
+                    do: step.do,
+                    startedAt,
+                    completedAt: new Date().toISOString(),
+                    ...(at ? { at } : {}),
+                    ...(jitterOffset ? { jitterOffset } : {}),
+                    ...(templateMatch ? { templateMatch } : {}),
+                    ...(count === 1 ? {} : { count }),
+                    url: await currentUrl(browser),
+                    status: "ok",
+                  });
                 }
-                await sleepInterruptibly(delay, options.signal);
-                delayHandled = true;
+                if (step.delay_ms !== undefined) {
+                  const delay = Number(step.delay_ms);
+                  if (!Number.isFinite(delay) || delay < 0) {
+                    throw new Error(
+                      "delay_ms must be a non-negative number after argument expansion",
+                    );
+                  }
+                  await sleepInterruptibly(delay, options.signal);
+                }
+                if (stepDelayMs > 0) await sleepInterruptibly(stepDelayMs, options.signal);
               }
-              if (stepDelayMs > 0) {
-                await sleepInterruptibly(stepDelayMs, options.signal);
-                stepDelayHandled = true;
+              succeeded = true;
+              delayHandled = true;
+              stepDelayHandled = true;
+              if (step.template && step.then) {
+                await executeSteps(step.then, i);
               }
-              await executeSteps(step.then, i);
+            } else {
+              await act(browser, step, at, s.playback?.jitter, rng, timeout, options.signal);
+              await appendStepLog({
+                index: i,
+                do: step.do,
+                startedAt,
+                completedAt: new Date().toISOString(),
+                ...(at ? { at } : {}),
+                ...(jitterOffset ? { jitterOffset } : {}),
+                ...(templateMatch ? { templateMatch } : {}),
+                url: await currentUrl(browser),
+                status: "ok",
+              });
+              succeeded = true;
             }
           }
         } catch (e) {

@@ -251,6 +251,16 @@ template matching を行いません。コンソール出力の末尾に `(reuse
 `do: repeat` の `steps` を `count` 回（0 以上の整数）繰り返します。`count: 0` は子ステップを実行しない
 正常な no-op です。操作の間隔は、各子ステップの `delay_ms` で指定できます。
 
+同じ場所を続けてクリックするだけなら、`click.count` に 1 以上の整数を指定できます。省略時は `1` です。
+指定回数のクリックごとに `delay_ms` と全体の `step_delay_ms` を適用するため、次は同じ click を 3 ステップ
+並べる場合と同じ待機順になります。
+
+```yaml
+- { do: click, at: { x: 970, y: 689 }, count: 3, delay_ms: 8080 }
+```
+
+座標の jitter または template の一致矩形内のランダム位置は最初に一度だけ決定し、全クリックで同じ位置を使います。
+
 ```yaml
 - do: repeat
   count: 3
@@ -307,7 +317,7 @@ steps:
 書けます。`params` は一意な識別子の配列、`args` はその全てを文字列または有限の数値で指定する mapping です。関数内の
 `${名前}` は対応する引数に置換され、`value`、`message`、`url`、テンプレートのパスを含む文字列フィールドで
 使えます。プレースホルダーだけで構成される数値フィールドには数値のまま展開されるため、`repeat.count`、
-`delay_ms`、`sleep.ms`、座標、`repeat_until.max_attempts` にも使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も
+`delay_ms`、`sleep.ms`、座標、`click.count`、`repeat_until.max_attempts` にも使えます。引数を持たない従来の `functions.<名前>: [steps...]` 形式も
 引き続き利用できます。
 
 ```yaml

@@ -138,6 +138,26 @@ Deno.test("validates repeat steps", () => {
   );
 });
 
+Deno.test("validates repeated click counts", () => {
+  const scenario = {
+    version: 1,
+    name: "repeated-click",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "click", at: { x: 1, y: 2 }, count: 3 }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "click", at: { x: 1, y: 2 }, count: 0 }] }),
+    Error,
+    "steps[0].count must be a positive integer for click",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "navigate", url: "https://example.test", count: 1 }] }),
+    Error,
+    "steps[0].count is supported only for repeat or click",
+  );
+});
+
 Deno.test("validates template repeat-until steps", () => {
   const scenario = {
     version: 1,
