@@ -233,17 +233,12 @@ export function scenarioFrom(value: unknown): Scenario {
       validateJitter(s.jitter, `${label}.jitter`, parameters);
     }
     if (s.template) {
-      if (s.do !== "click" && s.do !== "click_if" && s.do !== "if" && s.do !== "repeat_until") {
-        throw new Error(
-          `${label}.template is supported only for click, click_if, if, or repeat_until`,
-        );
+      if (s.do !== "click" && s.do !== "if" && s.do !== "repeat_until") {
+        throw new Error(`${label}.template is supported only for click, if, or repeat_until`);
       }
       if (s.at) throw new Error(`${label} cannot specify both at and template`);
       if (s.jitter) throw new Error(`${label} cannot specify both jitter and template`);
       validateTemplateOptions(s.template, `${label}.template`, true, parameters);
-    }
-    if (s.do === "click_if" && !s.template) {
-      throw new Error(`${label}.template is required for click_if`);
     }
     if (s.do === "if") {
       const hasTemplate = s.template !== undefined;
@@ -296,12 +291,27 @@ export function scenarioFrom(value: unknown): Scenario {
           validateStep(child, `${label}.else[${index}]`, parameters);
         }
       }
+    } else if (s.do === "click" && s.template && s.then !== undefined) {
+      if (!Array.isArray(s.then)) {
+        throw new Error(`${label}.then must be a step array for template click`);
+      }
+      for (const [index, child] of s.then.entries()) {
+        validateStep(child, `${label}.then[${index}]`, parameters);
+      }
+      if (
+        s.else !== undefined || s.weekdays !== undefined || s.time_zone !== undefined
+        || s.equals !== undefined
+      ) {
+        throw new Error(
+          `${label}.else, weekdays, time_zone, and equals are supported only for if`,
+        );
+      }
     } else if (
       s.then !== undefined || s.else !== undefined || s.weekdays !== undefined
       || s.time_zone !== undefined || s.equals !== undefined
     ) {
       throw new Error(
-        `${label}.then, else, weekdays, time_zone, and equals are supported only for if`,
+        `${label}.then is supported for if or template click; else, weekdays, time_zone, and equals are supported only for if`,
       );
     }
     if (s.do === "repeat") {

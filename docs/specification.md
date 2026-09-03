@@ -234,7 +234,7 @@ steps:
 ```
 
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
-`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log`、`click_if`、`if`、`repeat`、`repeat_until`、`call`
+`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log`、`if`、`repeat`、`repeat_until`、`call`
 である。`wait_for` と `assert` は
 ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
 `sleep` 以外の各操作には任意の `delay_ms`（0 以上のミリ秒）を指定できる。成功した操作の直後に
@@ -284,9 +284,11 @@ scenario トップレベルの `functions` は、識別子名をキー、ステ�
 similarity・矩形を artifacts に保存する。探索ごとに標準出力へテンプレートパス・実測 similarity・適用した
 threshold を出力する。
 
-`click_if` は `template` 必須の `click` 糖衣構文である。similarity が閾値以上なら一致矩形内をクリックし、
-閾値未満ならクリックせず `matched: false`、`status: skipped` を記録して正常に次のステップへ進む。
-`on_missing` は適用しない。
+template 指定の `click` は任意の `then`（ステップ配列）を指定できる。similarity が閾値以上なら一致矩形内を
+クリックしてから `then` を順に実行する。クリック自身の `delay_ms` および全体の `step_delay_ms` は `then` の
+前に適用する。閾値未満ならクリックも `then` も実行せず、`matched: false`、`status: skipped` を記録して正常に
+次のステップへ進む。これは template 条件の `if` の `then` 内に同一 template click を置く糖衣構文であり、
+`on_missing` は適用しない。`else` は指定できない。
 
 `do: if` は `template` と `then`（ステップ配列）を必須とする条件ステップである。template の similarity が
 閾値以上なら `then` を順に実行し、閾値未満で `else` がなければ次の兄弟ステップへ進む。任意の `else`

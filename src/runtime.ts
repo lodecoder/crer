@@ -567,7 +567,6 @@ async function act(
     case "assert":
       return await assertState(b, step);
     case "click":
-    case "click_if":
     case "double_click": {
       const n = step.do === "double_click" ? 2 : 1;
       for (let i = 1; i <= n; i++) {
@@ -822,6 +821,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let jitterOffset: { x: number; y: number } | undefined;
         let templateMatch: TemplateMatch | undefined;
         let succeeded = false;
+        let delayHandled = false;
+        let stepDelayHandled = false;
         try {
           if (options.signal?.aborted) throw new Error("worker timed out");
           if (step.do === "call") {
@@ -1035,7 +1036,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               succeeded = true;
             }
             if (templateMatch.similarity < threshold) {
-              if (step.do === "click_if") {
+              if (step.do === "click" && step.then) {
                 await appendStepLog({
                   index: i,
                   do: step.do,
@@ -1048,6 +1049,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                   reason: matchError,
                 });
                 succeeded = true;
+                delayHandled = true;
               } else if (
                 step.do !== "if"
                 && (template.on_missing ?? defaults?.on_missing ?? "fail") === "skip"
@@ -1090,11 +1092,27 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               ...(at ? { at } : {}),
               ...(jitterOffset ? { jitterOffset } : {}),
               ...(templateMatch ? { templateMatch } : {}),
-              ...(step.do === "click_if" ? { matched: true } : {}),
               url: await currentUrl(browser),
               status: "ok",
             });
             succeeded = true;
+            if (step.do === "click" && step.template && step.then) {
+              if (step.delay_ms !== undefined) {
+                const delay = Number(step.delay_ms);
+                if (!Number.isFinite(delay) || delay < 0) {
+                  throw new Error(
+                    "delay_ms must be a non-negative number after argument expansion",
+                  );
+                }
+                await sleepInterruptibly(delay, options.signal);
+                delayHandled = true;
+              }
+              if (stepDelayMs > 0) {
+                await sleepInterruptibly(stepDelayMs, options.signal);
+                stepDelayHandled = true;
+              }
+              await executeSteps(step.then, i);
+            }
           }
         } catch (e) {
           const kind = failureFor(step, e);
@@ -1122,14 +1140,16 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           }
         }
         if (stopped) return;
-        if (succeeded && step.delay_ms !== undefined) {
+        if (succeeded && step.delay_ms !== undefined && !delayHandled) {
           const delay = Number(step.delay_ms);
           if (!Number.isFinite(delay) || delay < 0) {
             throw new Error("delay_ms must be a non-negative number after argument expansion");
           }
           await sleepInterruptibly(delay, options.signal);
         }
-        if (stepDelayMs > 0) await sleepInterruptibly(stepDelayMs, options.signal);
+        if (stepDelayMs > 0 && !stepDelayHandled) {
+          await sleepInterruptibly(stepDelayMs, options.signal);
+        }
       }
     };
     await executeSteps(s.steps);
