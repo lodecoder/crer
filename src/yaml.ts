@@ -240,6 +240,9 @@ export function scenarioFrom(value: unknown): Scenario {
       if (s.jitter) throw new Error(`${label} cannot specify both jitter and template`);
       validateTemplateOptions(s.template, `${label}.template`, true, parameters);
     }
+    if (s.on_missing !== undefined) {
+      throw new Error(`${label}.on_missing must be nested under template`);
+    }
     if (s.do === "if") {
       const hasTemplate = s.template !== undefined;
       const hasWeekdays = s.weekdays !== undefined;

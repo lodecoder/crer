@@ -286,7 +286,8 @@ scenario トップレベルの `functions` は、識別子名をキー、ステ�
 `on_missing: fail` の場合は `template` 失敗として扱う。`skip` の場合はクリックせず `steps.ndjson` に
 `status: skipped` として記録し、失敗にせず次のステップへ進む。どちらの場合も探索元の screenshot と
 similarity・矩形を artifacts に保存する。探索ごとに標準出力へテンプレートパス・実測 similarity・適用した
-threshold を出力する。
+threshold を出力する。`on_missing` は step 直下ではなく `template` 内に置く。`on_missing: fail` 後に
+停止するかは `playback.on_failure.template`、なければ `playback.on_failure.default` の policy に従う。
 
 template 指定の `click` は任意の `then`（ステップ配列）を指定できる。similarity が閾値以上なら一致矩形内を
 クリックしてから `then` を順に実行する。クリック自身の `delay_ms` および全体の `step_delay_ms` は `then` の

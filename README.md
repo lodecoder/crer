@@ -162,7 +162,7 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 playback:
   template: { min_similarity: 0.8, random_inset_px: 2, on_missing: skip }
 steps:
-  - { do: click, template: { path: templates/sign-in.png } }
+  - { do: click, template: { path: templates/sign-in.png, on_missing: fail } }
 ```
 
 `playback.template` は全 template click の既定値です。個別の `template` に `min_similarity`、
@@ -171,6 +171,10 @@ steps:
 失敗、`skip` ならクリックを行わず正常に次のステップへ進みます。どちらの場合も探索直前の画面を
 `template-<step-index>.png` として artifacts に残します。クリック位置は再生 seed で決まるため、同じ
 seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出してください。
+
+`on_missing` は step 直下ではなく、必ず `template` 内へ指定します。`fail` は template 失敗を発生させますが、
+停止するかどうかは `playback.on_failure.template`（なければ `playback.on_failure.default`）に従います。
+必ず停止したい場合は `playback.on_failure.template: abort` を明示してください。
 探索ごとに標準出力へ、テンプレートパス・実測類似度・適用閾値を出力します。
 
 ```text

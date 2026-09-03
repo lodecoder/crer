@@ -69,6 +69,14 @@ Deno.test("validates click template matching options", () => {
     Error,
     "playback.template.on_missing must be fail or skip",
   );
+  assertThrows(
+    () => scenarioFrom({
+      ...scenario,
+      steps: [{ do: "click", template: { path: "templates/button.png" }, on_missing: "fail" }],
+    }),
+    Error,
+    "steps[0].on_missing must be nested under template",
+  );
   assertEquals(scenarioFrom({
     ...scenario,
     steps: [{
