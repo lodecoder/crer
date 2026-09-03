@@ -213,6 +213,45 @@ async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: strin
   }
   throw new Error(`CDP endpoint on port ${port} was not available`);
 }
+
+async function waitForProcessExit(process: Deno.ChildProcess, timeoutMs: number) {
+  return await Promise.race([
+    process.status.then((status) => status),
+    sleep(timeoutMs).then(() => undefined),
+  ]);
+}
+
+async function terminateProcess(process: Deno.ChildProcess) {
+  const exited = await waitForProcessExit(process, 5_000);
+  if (exited) return exited;
+  try {
+    process.kill("SIGTERM");
+  } catch {
+    // The child may have already exited.
+  }
+  return await waitForProcessExit(process, 2_000);
+}
+
+async function closeBrowser(browser: BrowserSession) {
+  const graceful = await Promise.race([
+    browser.cdp.call("Browser.close").then(() => true, () => false),
+    sleep(5_000).then(() => false),
+  ]);
+  browser.cdp.close();
+  const status = await terminateProcess(browser.process);
+  await Deno.writeTextFile(
+    `${browser.runDir}/shutdown.json`,
+    JSON.stringify(
+      {
+        graceful,
+        exited: status !== undefined,
+        ...(status ? { code: status.code, success: status.success, signal: status.signal } : {}),
+      },
+      null,
+      2,
+    ) + "\n",
+  ).catch(() => {});
+}
 async function validateDisplay(
   cdp: Cdp,
   sessionId: string,
@@ -380,11 +419,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   } catch (error) {
     await writeLaunchDiagnostic(error).catch(() => {});
     cdp?.close();
-    try {
-      p.kill("SIGTERM");
-    } catch {
-      // The child may have already exited.
-    }
+    await terminateProcess(p);
     throw error;
   }
 }
@@ -1181,12 +1216,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     return { code: 3, failures: [String(e)], runDir };
   } finally {
     if (b) {
-      try {
-        await b.cdp.call("Browser.close");
-      } catch {
-        b.process.kill("SIGTERM");
-      }
-      b.cdp.close();
+      await closeBrowser(b);
     }
     if (
       !options.keepArtifacts && !options.profileDir && !scenarioProfileDir(s)
