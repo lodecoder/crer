@@ -196,6 +196,18 @@ seed なら同じ位置が選ばれます。テンプレートはクリック可
 条件評価時のスクリーンショットは `template-<step-index>.png`、実行・不一致の結果は `steps.ndjson` に
 残ります。画像ファイルの欠落や読み込み不能は設定エラーとして失敗します。
 
+`then` または `else` の**最初のステップ**が、条件と同じテンプレートパス・実効 `min_similarity` の
+template click なら、条件評価済みの screenshot と一致結果を再利用します。たとえば次の click は二度目の
+template matching を行いません。コンソール出力の末尾に `(reused)` と表示されます。途中に別ステップを
+挟む場合、画像または閾値が異なる場合は、ページ状態の変化を正しく扱うため再探索します。
+
+```yaml
+- do: if
+  template: { path: templates/target.png, min_similarity: 0.9 }
+  then:
+    - { do: click, template: { path: templates/target.png, min_similarity: 0.9 }, delay_ms: 2012 }
+```
+
 曜日で条件分岐する場合は `weekdays` に `mon`、`tue`、`wed`、`thu`、`fri`、`sat`、`sun` を一つ以上
 指定します。既定は実行マシンのローカル時刻ですが、再現性が必要なシナリオでは `time_zone` に IANA
 タイムゾーンを指定してください。

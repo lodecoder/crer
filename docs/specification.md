@@ -290,6 +290,10 @@ threshold を出力する。
 条件分岐であり、`on_missing` や `on_failure.template` の対象ではない。`if` では `at` と `jitter` を指定せず、
 `playback.template.min_similarity` を個別指定がない場合の既定値として用いる。条件評価の screenshot、
 similarity、実行または skip の状態は artifacts に保存する。
+条件分岐先の最初のステップが同一 template path・同一実効 `min_similarity` の template click なら、条件評価の
+screenshot と一致結果を再利用し、二度目の探索をしない。この場合も click 自身の artifact screenshot は保存し、
+標準出力の template 行末に `(reused)` を付ける。途中に別ステップを挟む場合、template path または実効閾値が
+異なる場合は再探索する。
 
 `do: if` は `template` の代わりに `weekdays` を条件にできる。`weekdays` は `mon`、`tue`、`wed`、`thu`、
 `fri`、`sat`、`sun` から一つ以上を選ぶ配列である。実行時のローカル時刻の曜日が含まれる場合だけ `then` を

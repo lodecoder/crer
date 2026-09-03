@@ -798,9 +798,23 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       } as Record<string, string>)[name];
     };
     const callStack: string[] = [];
-    const executeSteps = async (steps: Step[], parentIndex = ""): Promise<void> => {
+    type CachedTemplate = {
+      path: string;
+      threshold: number;
+      match: TemplateMatch;
+      screenshot: Uint8Array;
+    };
+    const executeSteps = async (
+      steps: Step[],
+      parentIndex = "",
+      initialTemplateCache?: CachedTemplate,
+    ): Promise<void> => {
+      let templateCache = initialTemplateCache;
       for (const [offset, step] of steps.entries()) {
         if (stopped) return;
+        // A condition's screenshot is valid only for its immediately following child step.
+        const cachedTemplate = templateCache;
+        templateCache = undefined;
         const i = parentIndex ? `${parentIndex}.${offset}` : String(offset);
         const startedAt = new Date().toISOString();
         let at: { x: number; y: number } | undefined;
@@ -972,19 +986,28 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               random_inset_px?: number;
               on_missing?: "fail" | "skip";
             };
-            const found = await matchTemplate(
-              (method, params) => browser.cdp.call(method, params, browser.sessionId),
-              template,
-              options.templateBaseDir,
-            );
-            await Deno.writeFile(`${runDir}/template-${i}.png`, found.screenshot);
-            templateMatch = found.match;
             const defaults = s.playback?.template;
             const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
+            let screenshot: Uint8Array;
+            const reused = cachedTemplate?.path === template.path
+              && cachedTemplate.threshold === threshold;
+            if (reused) {
+              screenshot = cachedTemplate.screenshot;
+              templateMatch = cachedTemplate.match;
+            } else {
+              const found = await matchTemplate(
+                (method, params) => browser.cdp.call(method, params, browser.sessionId),
+                template,
+                options.templateBaseDir,
+              );
+              screenshot = found.screenshot;
+              templateMatch = found.match;
+            }
+            await Deno.writeFile(`${runDir}/template-${i}.png`, screenshot);
             console.log(
               `[crer] template: ${template.path}, similarity: ${
                 templateMatch.similarity.toFixed(4)
-              }, threshold: ${threshold}`,
+              }, threshold: ${threshold}${reused ? " (reused)" : ""}`,
             );
             const matchError = `template match failed: ${template.path} similarity ${
               templateMatch.similarity.toFixed(4)
@@ -1003,7 +1026,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 branch: matched ? "then" : "else",
                 ...(matched ? {} : { reason: matchError }),
               });
-              await executeSteps(matched ? step.then ?? [] : step.else ?? [], i);
+              await executeSteps(
+                matched ? step.then ?? [] : step.else ?? [],
+                i,
+                { path: template.path, threshold, match: templateMatch, screenshot },
+              );
               succeeded = true;
             }
             if (templateMatch.similarity < threshold) {
