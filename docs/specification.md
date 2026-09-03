@@ -263,6 +263,9 @@ steps:
 `max_attempts` 回実行しても未達の場合、`on_limit: fail` は `template` 失敗、`on_limit: continue` は
 `status: skipped` を記録して次の兄弟ステップへ進む。探索ごとに screenshot を
 `template-<step-index>.attempt-<試行回数>.png` として artifacts に残し、similarity と閾値を標準出力に出力する。
+`state: hidden` と同一 template の子 click を組み合わせると、クリックのたびに画面を再探索して画像がなくなる
+まで処理できる。各試行で親判定と最初の子 click の template path・実効閾値が同じ場合は一致結果を再利用する。
+静的な screenshot 内の複数矩形を重複なく列挙する機能は v1 の対象外である。
 
 scenario トップレベルの `functions` は、識別子名をキー、ステップ配列を値とする名前付き操作列の mapping
 である。値は従来形式のステップ配列、または `params`（一意な識別子の配列）と `steps` を持つ mapping である。

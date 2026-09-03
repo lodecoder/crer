@@ -979,7 +979,16 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 throw new Error(error);
               }
               attempts++;
-              await executeSteps(step.steps ?? [], `${i}.${attempts - 1}`);
+              await executeSteps(
+                step.steps ?? [],
+                `${i}.${attempts - 1}`,
+                {
+                  path: template.path,
+                  threshold,
+                  match: found.match,
+                  screenshot: found.screenshot,
+                },
+              );
               if (stopped) {
                 succeeded = true;
                 break;

@@ -298,6 +298,23 @@ template matching を行いません。コンソール出力の末尾に `(reuse
 `steps.ndjson` に残して次の兄弟ステップへ進みます。各探索画面は
 `template-<step-index>.attempt-<試行回数>.png` に保存され、類似度も標準出力へ表示します。
 
+同じ画像が複数あり、クリックするたびに対象が消える／変化する場合は `state: hidden` を使います。現在の
+最良一致をクリックして画面を再探索するため、画像がなくなるまで順に処理できます。親の判定と最初の子 click が
+同じ template path・実効閾値なら、その試行では一致結果を再利用し、template matching は一度だけです。
+
+```yaml
+- do: repeat_until
+  template: { path: templates/item.png, min_similarity: 0.9 }
+  state: hidden
+  max_attempts: 50
+  on_limit: fail
+  steps:
+    - { do: click, template: { path: templates/item.png, min_similarity: 0.9 }, delay_ms: 500 }
+```
+
+クリック後も同じ画像が残る静的な複数矩形を、一枚の screenshot から重複なく列挙する機能はまだありません。
+この場合は上限に達するため、対象が消える操作に限ってこの形式を使います。
+
 ### 操作列の再利用
 
 トップレベルの `functions` に名前付き操作列を定義し、`do: call` で呼び出せます。関数名は英字または
