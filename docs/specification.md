@@ -88,10 +88,11 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 
 通常の再生は利用者の前景ウィンドウへ干渉しない。Web アプリケーションが前景状態を要求する場合だけ、
 scenario の `browser.window.foreground: true` を指定できる。この場合、Native DLL は対象 CfT の
-トップレベル HWND をプロセス ID から探索し、起動直後および各 step の直前に `SetForegroundWindow` で
-前景化する。終了後には実行開始時の前景 HWND を復元する。Windows の foreground lock などで前景化に
-失敗した場合は Win32 error code を artifacts の `foreground.json` に記録し、再生を環境エラーとして
-終了する。このモードはフォーカスだけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
+トップレベル HWND をプロセス ID から探索し、起動直後に `SetWindowPos(HWND_TOPMOST)` で常時最前面に
+固定して `SetForegroundWindow` で前景化する。終了処理では `HWND_NOTOPMOST` へ戻してから、実行開始時の
+前景 HWND を復元する。Windows の foreground lock などで設定に失敗した場合は Win32 error code を
+artifacts の `foreground.json` に記録し、再生を環境エラーとして終了する。このモードはフォーカスと
+ウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
 
 ## 4. 入力の記録と再生
 

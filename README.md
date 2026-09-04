@@ -135,11 +135,11 @@ browser:
 ```
 
 一部の Web アプリは、操作時にブラウザが前景であることを要求します。その場合だけ、scenario の
-`browser.window.foreground: true` を指定できます。CRER は各 step の直前に CfT を Win32 API で
-前景化し、終了後は実行開始時に前景だったウィンドウへ戻します。これはフォーカスを移すため、通常の
-非干渉再生では指定しません。物理マウス・キーボードの位置や入力を注入・変更するものではありません。
-Windows の foreground lock により前景化できない場合は、Win32 status を含めて再生を失敗終了します。
-この設定を使う前には、Native DLL を現在のソースから `./scripts/build-native.ps1` で再ビルドしてください。
+`browser.window.foreground: true` を指定できます。CRER は CfT を Win32 API で常時最前面
+（topmost）に固定し、終了時に解除してから実行開始時に前景だったウィンドウへ戻します。これはフォーカスと
+ウィンドウの重なり順を変えるため、通常の非干渉再生では指定しません。物理マウス・キーボードの位置や入力を
+注入・変更するものではありません。Windows の foreground lock などにより設定できない場合は、Win32 status
+を含めて再生を失敗終了します。
 
 ```yaml
 browser:

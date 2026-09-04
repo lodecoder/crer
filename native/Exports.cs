@@ -32,6 +32,7 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll", SetLastError=true)] private static extern bool SetWindowPos(IntPtr h, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
@@ -191,6 +192,24 @@ internal static class InputBridge
         if (SetForegroundWindow(_foregroundTarget)) return 0;
         var error = Marshal.GetLastWin32Error();
         return error == 0 ? 5 : error; // ERROR_ACCESS_DENIED when Windows foreground rules deny it
+    }
+    [UnmanagedCallersOnly(EntryPoint="crer_input_set_process_topmost")] public static int SetProcessTopmost(uint pid, int enabled)
+    {
+        if (pid == 0) return 87; // ERROR_INVALID_PARAMETER
+        _foregroundPid = pid;
+        _foregroundTarget = IntPtr.Zero;
+        EnumWindows(FindForeground, IntPtr.Zero);
+        if (_foregroundTarget == IntPtr.Zero) return 1168; // ERROR_NOT_FOUND
+        var insertAfter = enabled != 0 ? new IntPtr(-1) : new IntPtr(-2); // HWND_TOPMOST / HWND_NOTOPMOST
+        if (!SetWindowPos(_foregroundTarget, insertAfter, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)) {
+            var error = Marshal.GetLastWin32Error();
+            return error == 0 ? 5 : error;
+        }
+        if (enabled == 0) return 0;
+        if (IsIconic(_foregroundTarget)) ShowWindow(_foregroundTarget, 9); // SW_RESTORE
+        if (SetForegroundWindow(_foregroundTarget)) return 0;
+        var foregroundError = Marshal.GetLastWin32Error();
+        return foregroundError == 0 ? 5 : foregroundError;
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
     [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid){if(_running)return 183;_pid=pid;_error=0;_target=_content=IntPtr.Zero;Array.Clear(KeyboardState);_running=true;_thread=new Thread(Loop){IsBackground=true};_thread.Start();return 0;}
