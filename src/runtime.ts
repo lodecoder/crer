@@ -49,7 +49,10 @@ export type PlayOptions = {
 };
 type ForegroundGuard = {
   original: bigint;
-  setProcessTopmost: (pid: number, enabled: boolean) => number;
+  setProcessTopmost: (pid: number, enabled: boolean) => {
+    topmostStatus: number;
+    foregroundStatus: number;
+  };
   restore: () => number;
   close: () => void;
 };
@@ -58,13 +61,16 @@ function captureForeground(dllPath: string): ForegroundGuard {
   const lib = Deno.dlopen(dllPath, {
     crer_input_get_foreground_window: { parameters: [], result: "usize" },
     crer_input_set_process_topmost: { parameters: ["u32", "i32"], result: "i32" },
+    crer_input_last_foreground_status: { parameters: [], result: "i32" },
     crer_input_restore_foreground_window: { parameters: ["usize"], result: "i32" },
   });
   const original = lib.symbols.crer_input_get_foreground_window();
   return {
     original,
-    setProcessTopmost: (pid, enabled) =>
-      lib.symbols.crer_input_set_process_topmost(pid, enabled ? 1 : 0),
+    setProcessTopmost: (pid, enabled) => ({
+      topmostStatus: lib.symbols.crer_input_set_process_topmost(pid, enabled ? 1 : 0),
+      foregroundStatus: lib.symbols.crer_input_last_foreground_status(),
+    }),
     restore: () => lib.symbols.crer_input_restore_foreground_window(original),
     close: () => lib.close(),
   };
@@ -767,6 +773,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   let foreground: ForegroundGuard | undefined;
   const requireForeground = s.browser.window?.foreground === true;
   let topmostStatus: number | undefined;
+  let foregroundStatus: number | undefined;
   const failures: string[] = [];
   try {
     if (options.inputDllPath) {
@@ -788,7 +795,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       throw new Error("browser.window.foreground requires the crer-win-input.dll native DLL");
     }
     if (foreground && requireForeground) {
-      topmostStatus = foreground.setProcessTopmost(b.process.pid, true);
+      const topmost = foreground.setProcessTopmost(b.process.pid, true);
+      topmostStatus = topmost.topmostStatus;
+      foregroundStatus = topmost.foregroundStatus;
       await Deno.writeTextFile(
         `${runDir}/foreground.json`,
         JSON.stringify(
@@ -796,6 +805,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             before: windowHandleText(foreground.original),
             requested: true,
             topmostStatus,
+            foregroundStatus,
           },
           null,
           2,
@@ -804,6 +814,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       if (topmostStatus !== 0) {
         throw new Error(
           `could not make CfT topmost (Win32 status ${topmostStatus})`,
+        );
+      }
+      if (foregroundStatus !== 0) {
+        console.warn(
+          `Warning: CfT is topmost, but Windows did not grant foreground focus (Win32 status ${foregroundStatus})`,
         );
       }
     } else if (foreground) {
@@ -1331,7 +1346,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   } finally {
     let clearTopmostStatus: number | undefined;
     if (b && foreground && requireForeground) {
-      clearTopmostStatus = foreground.setProcessTopmost(b.process.pid, false);
+      clearTopmostStatus = foreground.setProcessTopmost(b.process.pid, false).topmostStatus;
     }
     if (b) {
       await closeBrowser(b);
@@ -1345,6 +1360,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             before: windowHandleText(foreground.original),
             requested: true,
             topmostStatus,
+            foregroundStatus,
             clearTopmostStatus,
             restoreStatus,
           },

@@ -11,7 +11,7 @@ internal static class InputBridge
     private static readonly AutoResetEvent Stopped = new(false);
     private static readonly byte[] KeyboardState = new byte[256];
     private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
-    private static uint _foregroundPid; private static IntPtr _foregroundTarget;
+    private static uint _foregroundPid; private static IntPtr _foregroundTarget; private static int _lastForegroundStatus;
     [StructLayout(LayoutKind.Sequential, Pack = 8)] internal struct CrerInputEvent { public ulong Qpc; public int X, Y; public uint Kind, Data; }
     [StructLayout(LayoutKind.Sequential)] internal struct CrerRect { public int X, Y, Width, Height; }
     [StructLayout(LayoutKind.Sequential)] private struct RawInputDevice { public ushort UsagePage, Usage; public uint Flags; public IntPtr Target; }
@@ -33,6 +33,9 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetWindowPos(IntPtr h, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+    [DllImport("user32.dll", SetLastError=true)] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
+    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr h);
+    [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
@@ -193,9 +196,32 @@ internal static class InputBridge
         var error = Marshal.GetLastWin32Error();
         return error == 0 ? 5 : error; // ERROR_ACCESS_DENIED when Windows foreground rules deny it
     }
+    private static int TryBringToForeground(IntPtr target)
+    {
+        if (IsIconic(target)) ShowWindow(target, 9); // SW_RESTORE
+        if (SetForegroundWindow(target)) return 0;
+        var active = GetForegroundWindow();
+        var targetThread = GetWindowThreadProcessId(target, out _);
+        var activeThread = active == IntPtr.Zero ? 0 : GetWindowThreadProcessId(active, out _);
+        var attached = targetThread != 0 && activeThread != 0 && targetThread != activeThread &&
+            AttachThreadInput(targetThread, activeThread, true);
+        try
+        {
+            BringWindowToTop(target);
+            SetFocus(target);
+            if (SetForegroundWindow(target)) return 0;
+            var error = Marshal.GetLastWin32Error();
+            return error == 0 ? 5 : error;
+        }
+        finally
+        {
+            if (attached) AttachThreadInput(targetThread, activeThread, false);
+        }
+    }
     [UnmanagedCallersOnly(EntryPoint="crer_input_set_process_topmost")] public static int SetProcessTopmost(uint pid, int enabled)
     {
         if (pid == 0) return 87; // ERROR_INVALID_PARAMETER
+        _lastForegroundStatus = 0;
         _foregroundPid = pid;
         _foregroundTarget = IntPtr.Zero;
         EnumWindows(FindForeground, IntPtr.Zero);
@@ -205,12 +231,10 @@ internal static class InputBridge
             var error = Marshal.GetLastWin32Error();
             return error == 0 ? 5 : error;
         }
-        if (enabled == 0) return 0;
-        if (IsIconic(_foregroundTarget)) ShowWindow(_foregroundTarget, 9); // SW_RESTORE
-        if (SetForegroundWindow(_foregroundTarget)) return 0;
-        var foregroundError = Marshal.GetLastWin32Error();
-        return foregroundError == 0 ? 5 : foregroundError;
+        _lastForegroundStatus = enabled == 0 ? 0 : TryBringToForeground(_foregroundTarget);
+        return 0; // Topmost was successfully applied even if Windows declined the focus request.
     }
+    [UnmanagedCallersOnly(EntryPoint="crer_input_last_foreground_status")] public static int LastForegroundStatus()=>_lastForegroundStatus;
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
     [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid){if(_running)return 183;_pid=pid;_error=0;_target=_content=IntPtr.Zero;Array.Clear(KeyboardState);_running=true;_thread=new Thread(Loop){IsBackground=true};_thread.Start();return 0;}
     [UnmanagedCallersOnly(EntryPoint="crer_input_stop")] public static int Stop(){_running=false;if(_threadId!=0)PostThreadMessageW(_threadId,0x0012,UIntPtr.Zero,IntPtr.Zero);Stopped.WaitOne(1000);return _error;}
