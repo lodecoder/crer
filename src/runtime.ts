@@ -764,6 +764,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   );
   let b: BrowserSession | undefined;
   let foreground: ForegroundGuard | undefined;
+  let foregroundCaptureError: string | undefined;
   const requireForeground = s.browser.window?.foreground === true;
   let foregroundAttemptCount = 0;
   let foregroundLastStatus: number | undefined;
@@ -777,6 +778,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           JSON.stringify({ before: windowHandleText(foreground.original) }, null, 2) + "\n",
         );
       } catch (error) {
+        foregroundCaptureError = String(error);
         await Deno.writeTextFile(
           `${runDir}/foreground.json`,
           JSON.stringify({ captureError: String(error) }, null, 2) + "\n",
@@ -785,7 +787,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     }
     b = await launch(s, options, runDir);
     if (requireForeground && !foreground) {
-      throw new Error("browser.window.foreground requires the crer-win-input.dll native DLL");
+      throw new Error(
+        "browser.window.foreground requires the current crer-win-input.dll native DLL; "
+          + "run .\\scripts\\build-native.ps1"
+          + (foregroundCaptureError ? ` (${foregroundCaptureError})` : ""),
+      );
     }
     if (foreground && requireForeground) {
       foregroundLastStatus = foreground.foregroundProcess(b.process.pid);
