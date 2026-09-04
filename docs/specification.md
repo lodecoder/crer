@@ -254,6 +254,11 @@ steps:
 へ出力する。先頭または単独の待機を表す場合だけ、`{ do: sleep, ms: ... }` を用いる。`sleep` と
 `delay_ms` の併用は無効である。
 
+`click` は任意の `hold_ms`（0 以上のミリ秒）を指定できる。再生は `mouseDown` 後に `hold_ms` だけ
+待機して `mouseUp` を送る。省略時は `0` で即時に mouseUp を送る。`delay_ms` は mouseUp 後に適用する
+操作間待機であり、`hold_ms` には含まれない。`click.count` の各反復にも同じ `hold_ms` を適用する。
+`double_click` および他の step に `hold_ms` は指定できない。中断時も mouseUp を送信してから終了処理へ進む。
+
 `log` は必須の文字列 `message` を標準出力へ `[crer] <message>` として出力する進捗確認用のステップである。
 ブラウザ・ページには操作をせず、メッセージは該当する `steps.ndjson` の記録にも含める。
 
@@ -291,7 +296,7 @@ scenario トップレベルの `functions` は、識別子名をキー、ステ�
 `call` は必須文字列 `function` で定義済みの名前を指定し、引数付き関数では必須 mapping `args` に全 parameter
 を文字列または有限の数値として過不足なく指定する。関数内の文字列フィールドにある `${parameter}` は対応する
 引数で置換してから実行する。フィールド値全体が一つの `${parameter}` であり、引数が数値なら数値のまま保持する。
-これにより `repeat.count`、`click.count`、`repeat_until.max_attempts`、`delay_ms`、`sleep.ms`、座標などの数値フィールドへ渡せる。文字列中へ埋め込む場合は
+これにより `repeat.count`、`click.count`、`repeat_until.max_attempts`、`delay_ms`、`hold_ms`、`sleep.ms`、座標などの数値フィールドへ渡せる。文字列中へ埋め込む場合は
 数値を10進文字列として置換する。関数内には通常の操作、`if`、`repeat`、`call` を含められるが、直接・間接を問わず
 循環する呼び出しは action 失敗として停止する。`call` 自身と展開された子は `steps.ndjson` に記録する。
 `locator_hint` は任意の `role`、`name`、`text` を持ち、指定した各値が完全一致する可視要素を条件にする。

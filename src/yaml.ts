@@ -233,6 +233,12 @@ export function scenarioFrom(value: unknown): Scenario {
     ) {
       throw new Error(`${label}.delay_ms must be a non-negative number on a non-sleep step`);
     }
+    if (
+      s.hold_ms !== undefined
+      && (s.do !== "click" || !nonNegativeNumberOrParameter(s.hold_ms, parameters))
+    ) {
+      throw new Error(`${label}.hold_ms must be a non-negative number on a click step`);
+    }
     if (s.locator_hint) {
       const hint = object(s.locator_hint, `${label}.locator_hint`);
       for (const key of ["role", "name", "text"]) {

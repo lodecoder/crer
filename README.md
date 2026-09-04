@@ -412,6 +412,15 @@ steps:
 操作の後に待機してから次の操作へ進みます。手編集で先頭や単独の待機を入れる場合は、従来どおり
 `{ do: sleep, ms: 1040 }` を使えます。
 
+クリックを押し込んだままにする時間は、`do: click` の `hold_ms`（0 以上のミリ秒）で指定できます。
+`mouseDown` の直後にこの時間だけ待機してから `mouseUp` を送ります。省略時は `0` で、従来どおり
+直ちに mouseUp します。`delay_ms` は mouseUp 後の待機時間です。`click.count` を指定した場合は各クリックに
+同じ `hold_ms` を適用します。
+
+```yaml
+- { do: click, at: { x: 970, y: 689 }, hold_ms: 1000, delay_ms: 8080 }
+```
+
 再生時に viewport mismatch を警告だけにして続行する必要がある場合は、`play` または `run` に
 `--ignore-viewport-mismatch` を指定します。`display.json` には実測値とこの指定の有無が保存されます。
 座標操作の安全性は下がるため、画面差異を確認する調査用途に限って使用してください。

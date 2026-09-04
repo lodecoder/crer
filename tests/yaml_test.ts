@@ -125,6 +125,26 @@ Deno.test("validates a post-operation delay", () => {
   );
 });
 
+Deno.test("validates a click hold duration", () => {
+  const scenario = {
+    version: 1,
+    name: "held-click",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "click", at: { x: 1, y: 2 }, hold_ms: 1_000 }],
+  };
+  assertEquals(scenarioFrom(scenario).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "double_click", at: { x: 1, y: 2 }, hold_ms: 1 }] }),
+    Error,
+    "steps[0].hold_ms must be a non-negative number on a click step",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "click", at: { x: 1, y: 2 }, hold_ms: -1 }] }),
+    Error,
+    "steps[0].hold_ms must be a non-negative number on a click step",
+  );
+});
+
 Deno.test("validates console log steps", () => {
   const scenario = {
     version: 1,

@@ -619,6 +619,10 @@ async function act(
     case "click":
     case "double_click": {
       const n = step.do === "double_click" ? 2 : 1;
+      const holdMs = Number(step.hold_ms ?? 0);
+      if (!Number.isFinite(holdMs) || holdMs < 0) {
+        throw new Error("click hold_ms must be a non-negative number after argument expansion");
+      }
       for (let i = 1; i <= n; i++) {
         await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: at!.x, y: at!.y });
         await call("Input.dispatchMouseEvent", {
@@ -628,13 +632,17 @@ async function act(
           button: "left",
           clickCount: i,
         });
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x: at!.x,
-          y: at!.y,
-          button: "left",
-          clickCount: i,
-        });
+        try {
+          if (holdMs > 0) await sleepInterruptibly(holdMs, signal);
+        } finally {
+          await call("Input.dispatchMouseEvent", {
+            type: "mouseReleased",
+            x: at!.x,
+            y: at!.y,
+            button: "left",
+            clickCount: i,
+          });
+        }
       }
       return;
     }

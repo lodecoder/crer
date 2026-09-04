@@ -42,6 +42,8 @@ export type Step = {
   state?: string;
   /** Wait after this successful operation before executing the next step. */
   delay_ms?: number;
+  /** Keep the primary button pressed for this duration on a click step. */
+  hold_ms?: number;
   jitter?: Jitter;
   locator_hint?: { role?: string; name?: string; text?: string };
   template?: { path: string } & TemplateDefaults;
