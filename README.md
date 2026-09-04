@@ -134,6 +134,19 @@ browser:
     viewport: { width: 845, height: 545 } # スクロールバーがある場合の実効 CSS 座標系
 ```
 
+一部の Web アプリは、操作時にブラウザが前景であることを要求します。その場合だけ、scenario の
+`browser.window.foreground: true` を指定できます。CRER は各 step の直前に CfT を Win32 API で
+前景化し、終了後は実行開始時に前景だったウィンドウへ戻します。これはフォーカスを移すため、通常の
+非干渉再生では指定しません。物理マウス・キーボードの位置や入力を注入・変更するものではありません。
+Windows の foreground lock により前景化できない場合は、Win32 status を含めて再生を失敗終了します。
+
+```yaml
+browser:
+  window:
+    foreground: true
+    bounds: { left: 1200, top: 80 }
+```
+
 ローカル fixture を使う手動 P0 テストは、次の補助スクリプトで一つの PowerShell から実行できます。
 
 ```powershell

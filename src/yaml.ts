@@ -115,6 +115,9 @@ export function scenarioFrom(value: unknown): Scenario {
   }
   if (browser.window !== undefined) {
     const window = object(browser.window, "browser.window");
+    if (window.foreground !== undefined && typeof window.foreground !== "boolean") {
+      throw new Error("browser.window.foreground must be a boolean");
+    }
     for (const name of ["content", "viewport"]) {
       if (window[name] === undefined) continue;
       const size = object(window[name], `browser.window.${name}`);

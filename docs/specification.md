@@ -49,7 +49,8 @@ Raw Input と HWND 操作は C ABI を公開するC# .NET 10 Native AOT DLL `cre
 
 `crer-win-input.dll` は .NET Native AOT で各 Deno 配布バイナリと同じアーキテクチャ（`win-x86_64` または
 `win-aarch64`）で同梱する。DLL は `crer_input_abi_version`、`crer_input_start`、
-`crer_input_stop`、`crer_input_read`、`crer_input_last_error` だけを C ABI で export する。
+`crer_input_stop`、`crer_input_read`、`crer_input_last_error`、前景 HWND の取得・復元用 API、
+および `crer_input_foreground_process_window` を C ABI で export する。
 イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Deno と DLL
 の間で共有しない。Deno から DLL への callback は使わず、Deno の非同期ループが
 `crer_input_read` を短い間隔で poll する。これにより DLL のスレッドから V8/Deno runtime を
@@ -84,6 +85,13 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 `Browser.close` による graceful close を要求して閉じる。CDP が応答しない場合に限り、実行
 ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。worker は子プロセスの終了を確認してから
 完了するため、同じ永続 profile を使う serial の次シナリオは profile lock 解放後に起動する。
+
+通常の再生は利用者の前景ウィンドウへ干渉しない。Web アプリケーションが前景状態を要求する場合だけ、
+scenario の `browser.window.foreground: true` を指定できる。この場合、Native DLL は対象 CfT の
+トップレベル HWND をプロセス ID から探索し、起動直後および各 step の直前に `SetForegroundWindow` で
+前景化する。終了後には実行開始時の前景 HWND を復元する。Windows の foreground lock などで前景化に
+失敗した場合は Win32 error code を artifacts の `foreground.json` に記録し、再生を環境エラーとして
+終了する。このモードはフォーカスだけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
 
 ## 4. 入力の記録と再生
 

@@ -92,6 +92,24 @@ Deno.test("validates click template matching options", () => {
   );
 });
 
+Deno.test("validates optional CfT foreground mode", () => {
+  const scenario = {
+    version: 1,
+    name: "foreground",
+    browser: {
+      initial_url: "https://example.test",
+      window: { foreground: true },
+    },
+    steps: [],
+  };
+  assertEquals(scenarioFrom(scenario).browser.window?.foreground, true);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, browser: { ...scenario.browser, window: { foreground: "always" } } }),
+    Error,
+    "browser.window.foreground must be a boolean",
+  );
+});
+
 Deno.test("validates a post-operation delay", () => {
   const scenario = {
     version: 1,

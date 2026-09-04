@@ -11,6 +11,7 @@ internal static class InputBridge
     private static readonly AutoResetEvent Stopped = new(false);
     private static readonly byte[] KeyboardState = new byte[256];
     private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
+    private static uint _foregroundPid; private static IntPtr _foregroundTarget;
     [StructLayout(LayoutKind.Sequential, Pack = 8)] internal struct CrerInputEvent { public ulong Qpc; public int X, Y; public uint Kind, Data; }
     [StructLayout(LayoutKind.Sequential)] internal struct CrerRect { public int X, Y, Width, Height; }
     [StructLayout(LayoutKind.Sequential)] private struct RawInputDevice { public ushort UsagePage, Usage; public uint Flags; public IntPtr Target; }
@@ -31,6 +32,8 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc p, IntPtr l);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumProc p, IntPtr l);
@@ -65,6 +68,16 @@ internal static class InputBridge
         if (GetClassNameW(h, name, name.Length) == 0 ||
             !new string(name).StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return true;
         _target = h;
+        return false;
+    }
+    private static bool FindForeground(IntPtr h, IntPtr _)
+    {
+        GetWindowThreadProcessId(h, out var p);
+        if (p != _foregroundPid) return true;
+        var name = new char[256];
+        if (GetClassNameW(h, name, name.Length) == 0 ||
+            !new string(name).StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return true;
+        _foregroundTarget = h;
         return false;
     }
     private static bool FindContent(IntPtr h, IntPtr output)
@@ -166,6 +179,18 @@ internal static class InputBridge
     {
         if (h == IntPtr.Zero) return 87; // ERROR_INVALID_PARAMETER
         return SetForegroundWindow(h) ? 0 : Marshal.GetLastWin32Error();
+    }
+    [UnmanagedCallersOnly(EntryPoint="crer_input_foreground_process_window")] public static int ForegroundProcessWindow(uint pid)
+    {
+        if (pid == 0) return 87; // ERROR_INVALID_PARAMETER
+        _foregroundPid = pid;
+        _foregroundTarget = IntPtr.Zero;
+        EnumWindows(FindForeground, IntPtr.Zero);
+        if (_foregroundTarget == IntPtr.Zero) return 1168; // ERROR_NOT_FOUND
+        if (IsIconic(_foregroundTarget)) ShowWindow(_foregroundTarget, 9); // SW_RESTORE
+        if (SetForegroundWindow(_foregroundTarget)) return 0;
+        var error = Marshal.GetLastWin32Error();
+        return error == 0 ? 5 : error; // ERROR_ACCESS_DENIED when Windows foreground rules deny it
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
     [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid){if(_running)return 183;_pid=pid;_error=0;_target=_content=IntPtr.Zero;Array.Clear(KeyboardState);_running=true;_thread=new Thread(Loop){IsBackground=true};_thread.Start();return 0;}

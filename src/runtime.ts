@@ -49,6 +49,7 @@ export type PlayOptions = {
 };
 type ForegroundGuard = {
   original: bigint;
+  foregroundProcess: (pid: number) => number;
   restore: () => number;
   close: () => void;
 };
@@ -56,11 +57,13 @@ const windowHandleText = (handle: bigint) => `0x${handle.toString(16)}`;
 function captureForeground(dllPath: string): ForegroundGuard {
   const lib = Deno.dlopen(dllPath, {
     crer_input_get_foreground_window: { parameters: [], result: "usize" },
+    crer_input_foreground_process_window: { parameters: ["u32"], result: "i32" },
     crer_input_restore_foreground_window: { parameters: ["usize"], result: "i32" },
   });
   const original = lib.symbols.crer_input_get_foreground_window();
   return {
     original,
+    foregroundProcess: (pid) => lib.symbols.crer_input_foreground_process_window(pid),
     restore: () => lib.symbols.crer_input_restore_foreground_window(original),
     close: () => lib.close(),
   };
@@ -761,6 +764,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   );
   let b: BrowserSession | undefined;
   let foreground: ForegroundGuard | undefined;
+  const requireForeground = s.browser.window?.foreground === true;
+  let foregroundAttemptCount = 0;
+  let foregroundLastStatus: number | undefined;
   const failures: string[] = [];
   try {
     if (options.inputDllPath) {
@@ -778,7 +784,31 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       }
     }
     b = await launch(s, options, runDir);
-    if (foreground) {
+    if (requireForeground && !foreground) {
+      throw new Error("browser.window.foreground requires the crer-win-input.dll native DLL");
+    }
+    if (foreground && requireForeground) {
+      foregroundLastStatus = foreground.foregroundProcess(b.process.pid);
+      foregroundAttemptCount++;
+      if (foregroundLastStatus !== 0) {
+        throw new Error(
+          `could not bring CfT to the foreground (Win32 status ${foregroundLastStatus})`,
+        );
+      }
+      await Deno.writeTextFile(
+        `${runDir}/foreground.json`,
+        JSON.stringify(
+          {
+            before: windowHandleText(foreground.original),
+            requested: true,
+            initialStatus: foregroundLastStatus,
+            attempts: foregroundAttemptCount,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    } else if (foreground) {
       const restoreStatus = foreground.restore();
       await Deno.writeTextFile(
         `${runDir}/foreground.json`,
@@ -865,6 +895,15 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let stepDelayHandled = false;
         try {
           if (options.signal?.aborted) throw new Error("worker timed out");
+          if (requireForeground) {
+            foregroundLastStatus = foreground!.foregroundProcess(browser.process.pid);
+            foregroundAttemptCount++;
+            if (foregroundLastStatus !== 0) {
+              throw new Error(
+                `could not bring CfT to the foreground before step ${i} (Win32 status ${foregroundLastStatus})`,
+              );
+            }
+          }
           if (step.do === "call") {
             const name = step.function!;
             const definition = functionDefinition(name);
@@ -1303,6 +1342,23 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   } finally {
     if (b) {
       await closeBrowser(b);
+    }
+    if (foreground && requireForeground) {
+      const restoreStatus = foreground.restore();
+      await Deno.writeTextFile(
+        `${runDir}/foreground.json`,
+        JSON.stringify(
+          {
+            before: windowHandleText(foreground.original),
+            requested: true,
+            attempts: foregroundAttemptCount,
+            lastStatus: foregroundLastStatus,
+            restoreStatus,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
     }
     if (
       !options.keepArtifacts && !options.profileDir && !scenarioProfileDir(s)
