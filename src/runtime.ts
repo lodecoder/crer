@@ -7,7 +7,7 @@ import {
   randomPointInMatch,
   type TemplateMatch,
 } from "./template.ts";
-import type { FailureKind, Jitter, RunResult, Scenario, Step } from "./types.ts";
+import type { FailureKind, Jitter, RunResult, Scenario, Step, WindowBounds } from "./types.ts";
 
 const decoder = new TextDecoder();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -37,6 +37,8 @@ export type PlayOptions = {
   chromePath: string;
   inputDllPath?: string;
   position?: { left: number; top: number };
+  /** run-only override that replaces, rather than merges with, scenario window bounds. */
+  boundsOverride?: WindowBounds;
   seed?: string;
   keepArtifacts?: boolean;
   stepDelayMs?: number;
@@ -378,7 +380,10 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     const window = await cdp.call<{ windowId: number }>("Browser.getWindowForTarget", {
       targetId: target.id,
     });
-    const bounds = { ...(s.browser.window?.bounds ?? {}), ...(options.position ?? {}) };
+    const bounds = options.boundsOverride ?? {
+      ...(s.browser.window?.bounds ?? {}),
+      ...(options.position ?? {}),
+    };
     if (Object.keys(bounds).length) {
       const current = await cdp.call<{ bounds: { width?: number; height?: number } }>(
         "Browser.getWindowBounds",
@@ -775,7 +780,16 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   const seed = options.seed ?? s.playback?.seed ?? randomSeed();
   await Deno.writeTextFile(
     `${runDir}/run.json`,
-    JSON.stringify({ scenario: s.name, seed, startedAt: new Date().toISOString() }, null, 2),
+    JSON.stringify(
+      {
+        scenario: s.name,
+        seed,
+        startedAt: new Date().toISOString(),
+        ...(options.boundsOverride ? { windowBoundsOverride: options.boundsOverride } : {}),
+      },
+      null,
+      2,
+    ),
   );
   let b: BrowserSession | undefined;
   let foreground: ForegroundGuard | undefined;

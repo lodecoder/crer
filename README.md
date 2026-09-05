@@ -44,6 +44,17 @@ deno task dev inspect .crer\runs\<run-id>
 deno task test
 ```
 
+`run` で plan に含まれるすべての scenario を同じウィンドウ bounds で起動するには、
+`--plan-window-bounds-override` を指定します。これは `run` 専用で、各 YAML の
+`browser.window.bounds` を**マージせず完全に置換**します。`play --position` のように位置だけを
+上書きして YAML の width / height を残すルールとは意図的に異なります。値は `left,top` または
+`left,top,width,height`（いずれも整数）です。実効値は各 run artifact の `run.json` に保存されます。
+
+```powershell
+deno task dev run .crer\daily.crer.plan.yaml `
+  --plan-window-bounds-override 10,10,1280,900
+```
+
 ローカル fixture による headful 再生と物理カーソル不変の確認は次で実行できます（実行中はマウスを動かさないでください）。
 再生前の control 観測でもカーソルが動くデスクトップ環境では、スクリプトは判定不能として警告します。
 

@@ -8,12 +8,13 @@ import {
   transformFromSidecar,
   windowBoundsFromSidecar,
 } from "./normalize.ts";
+import { parsePlanWindowBoundsOverride } from "./options.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { recordRaw } from "./record.ts";
 import { playScenario } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
-import type { FailurePolicy, PlanNode, Point, RunResult } from "./types.ts";
+import type { FailurePolicy, PlanNode, Point, RunResult, WindowBounds } from "./types.ts";
 import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
 const [command, file, ...args] = Deno.args;
 const option = (name: string) => {
@@ -429,6 +430,7 @@ async function runNode(
   ignoreViewportMismatch = false,
   muteAudio = false,
   profileDir?: string,
+  boundsOverride?: WindowBounds,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
     const controller = new AbortController();
@@ -452,6 +454,7 @@ async function runNode(
         ignoreViewportMismatch,
         muteAudio,
         profileDir,
+        boundsOverride,
         templateBaseDir: scenarioFile.replace(/[\\/][^\\/]+$/, ""),
       });
       return timedOut
@@ -473,6 +476,7 @@ async function runNode(
         ignoreViewportMismatch,
         muteAudio,
         profileDir,
+        boundsOverride,
       );
       out.push(...results);
       if (shouldAbortPlan(results, onFailure)) break;
@@ -492,6 +496,7 @@ async function runNode(
         ignoreViewportMismatch,
         muteAudio,
         profileDir,
+        boundsOverride,
       ),
     (result) =>
       node.parallel.fail_fast
@@ -564,6 +569,7 @@ async function main() {
   if (command === "run") {
     const p = planFrom(await loadYaml(file));
     const profileDir = profileDirOption();
+    const boundsOverride = parsePlanWindowBoundsOverride(option("--plan-window-bounds-override"));
     if (profileDir && (p.max_parallel ?? 1) > 1) {
       throw new Error("--profile-dir cannot be used with run max_parallel greater than 1");
     }
@@ -576,6 +582,7 @@ async function main() {
       args.includes("--ignore-viewport-mismatch"),
       args.includes("--mute-audio"),
       profileDir,
+      boundsOverride,
     );
     const code = aggregatePlanExitCode(results);
     console.log(JSON.stringify(results, null, 2));

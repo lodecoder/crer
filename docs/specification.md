@@ -416,7 +416,7 @@ crer record new orders.crer.yaml --url https://example.test/orders
 crer record resume orders.crer.yaml
 crer validate orders.crer.yaml
 crer play orders.crer.yaml --position 1640,80 --seed 42 --mute-audio
-crer run nightly.crer.plan.yaml --max-parallel 2 --mute-audio
+crer run nightly.crer.plan.yaml --max-parallel 2 --mute-audio --plan-window-bounds-override 10,10,1280,900
 crer inspect artifacts/<run-id>      # ステップ、失敗、スクリーンショットを表示
 ```
 
@@ -425,6 +425,11 @@ crer inspect artifacts/<run-id>      # ステップ、失敗、スクリーン�
 front matter を上書きし、実行ログに override を記録する。`--position` は再生ウィンドウだけを
 移動する。`--mute-audio` は再生する CfT プロセスだけへ Chrome の mute 指定を渡すため、Windows 全体や
 通常 Chrome の音量には影響しない。
+
+`run --plan-window-bounds-override <left,top[,width,height]>` は plan に含まれる全 scenario の
+`browser.window.bounds` を、その実行に限り**完全に置換**する run 専用 CLI 設定である。YAML の bounds と
+フィールド単位でマージしないため、`play --position` の優先度規則とは意図的に異なる。各値は整数、width と
+height を指定する場合は正数とする。実効 override は個々の run artifact の `run.json` に記録する。
 
 終了コードは `0` 成功、`2` YAML/CLI 検証エラー、`3` 環境・ブラウザ不一致、`4` 操作または
 assert の失敗、`5` 中断とする。

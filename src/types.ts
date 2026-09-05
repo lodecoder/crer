@@ -7,6 +7,7 @@ export type FailureKind =
   | "template";
 export type FailurePolicy = "abort" | "continue";
 export type Point = { x: number; y: number };
+export type WindowBounds = { left: number; top: number; width?: number; height?: number };
 export type Jitter = {
   enabled: false;
   distribution?: "none" | "uniform" | "normal";
@@ -69,7 +70,7 @@ export type Scenario = {
     profile?: string;
     initial_url: string;
     window?: {
-      bounds?: { left?: number; top?: number; width?: number; height?: number };
+      bounds?: WindowBounds;
       /** Bring CfT to the foreground before every replay step (Windows only). */
       foreground?: boolean;
       /** Requested CfT content size; scrollbars can make the CSS viewport smaller. */
