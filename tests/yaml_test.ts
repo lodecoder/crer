@@ -92,6 +92,30 @@ Deno.test("validates click template matching options", () => {
   );
 });
 
+Deno.test("validates template screenshot artifact policy", () => {
+  const scenario = {
+    version: 1,
+    name: "template-artifacts",
+    browser: { chrome: "chrome-for-testing@pinned", initial_url: "https://example.test" },
+    playback: { artifacts: { template_screenshots: "failure-only" } },
+    steps: [],
+  };
+  scenarioFrom(scenario);
+  scenarioFrom({
+    ...scenario,
+    playback: { artifacts: { template_screenshots: "all" } },
+  });
+  assertThrows(
+    () =>
+      scenarioFrom({
+        ...scenario,
+        playback: { artifacts: { template_screenshots: "none" } },
+      }),
+    Error,
+    "must be all or failure-only",
+  );
+});
+
 Deno.test("validates optional CfT foreground mode", () => {
   const scenario = {
     version: 1,

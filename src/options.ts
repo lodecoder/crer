@@ -1,4 +1,14 @@
-import type { WindowBounds } from "./types.ts";
+import type { TemplateScreenshotPolicy, WindowBounds } from "./types.ts";
+
+export function parseTemplateScreenshotPolicy(
+  value: string | undefined,
+): TemplateScreenshotPolicy | undefined {
+  if (value === undefined) return undefined;
+  if (value !== "all" && value !== "failure-only") {
+    throw new Error("--template-screenshots must be all or failure-only");
+  }
+  return value;
+}
 
 /** Parse the run-only, non-merging browser window bounds override. */
 export function parsePlanWindowBoundsOverride(value: string | undefined): WindowBounds | undefined {

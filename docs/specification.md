@@ -227,6 +227,8 @@ browser:
 playback:
   seed: 20260816                   # 任意。省略時は uint64 を暗号学的乱数で生成・記録
   speed: 1.0
+  artifacts:
+    template_screenshots: failure-only # all | failure-only。既定 all
   jitter:
     enabled: true
     distribution: normal              # none | uniform | normal
@@ -282,8 +284,9 @@ steps:
 実行する**前**にテンプレートを探索し、`visible` なら similarity が閾値以上、`hidden` なら閾値未満になった
 時点で成功として子ステップを実行せず終了する。未達なら `steps` を 1 回実行して再判定する。子ステップ列を
 `max_attempts` 回実行しても未達の場合、`on_limit: fail` は `template` 失敗、`on_limit: continue` は
-`status: skipped` を記録して次の兄弟ステップへ進む。探索ごとに screenshot を
-`template-<step-index>.attempt-<試行回数>.png` として artifacts に残し、similarity と閾値を標準出力に出力する。
+`status: skipped` を記録して次の兄弟ステップへ進む。`template_screenshots: all` の場合だけ探索ごとの
+screenshot を `template-<step-index>.attempt-<試行回数>.png` として artifacts に残す。similarity と閾値は
+保存方針にかかわらず標準出力に出力する。
 `state: hidden` と同一 template の子 click を組み合わせると、クリックのたびに画面を再探索して画像がなくなる
 まで処理できる。各試行で親判定と最初の子 click の template path・実効閾値が同じ場合は一致結果を再利用する。
 
@@ -292,9 +295,9 @@ screenshot 内で similarity が閾値以上の template 矩形を類似度降�
 対して `steps` を実行する。IoU が 0.5 以上の候補は同一矩形として最高 similarity の一件へ抑制する。
 子ステップの `${match_left}`、`${match_top}`、`${match_width}`、`${match_height}`、`${match_center_x}`、
 `${match_center_y}`、`${match_similarity}` はそれぞれ当該一致の数値へ展開される。一致がない場合は
-`template.on_missing` の `fail`／`skip` に従う。検出件数と矩形は `steps.ndjson`、探索元は
-`template-<step-index>.png` に保存する。子ステップによるページ変化後に再探索はせず、列挙対象は最初の
-screenshot へ固定する。
+`template.on_missing` の `fail`／`skip` に従う。検出件数と矩形は `steps.ndjson` に保存し、探索画像は
+`playback.artifacts.template_screenshots` に従って保存する。子ステップによるページ変化後に再探索はせず、
+列挙対象は最初のインメモリ screenshot へ固定する。
 
 scenario トップレベルの `functions` は、識別子名をキー、ステップ配列を値とする名前付き操作列の mapping
 である。値は従来形式のステップ配列、または `params`（一意な識別子の配列）と `steps` を持つ mapping である。
@@ -317,10 +320,18 @@ scenario トップレベルの `functions` は、識別子名をキー、ステ�
 指定する。個別の `steps[].template` はこれらを上書きする。一致矩形内の位置は実効 seed を使う一様乱数で選び、
 `random_inset_px` は各辺をクリック候補から除外する。`at`、`jitter` と `template` は併用しない。一致不足で
 `on_missing: fail` の場合は `template` 失敗として扱う。`skip` の場合はクリックせず `steps.ndjson` に
-`status: skipped` として記録し、失敗にせず次のステップへ進む。どちらの場合も探索元の screenshot と
-similarity・矩形を artifacts に保存する。探索ごとに標準出力へテンプレートパス・実測 similarity・適用した
+`status: skipped` として記録し、失敗にせず次のステップへ進む。similarity・矩形は `steps.ndjson` に保存する。
+探索ごとに標準出力へテンプレートパス・実測 similarity・適用した
 threshold を出力する。`on_missing` は step 直下ではなく `template` 内に置く。`on_missing: fail` 後に
 停止するかは `playback.on_failure.template`、なければ `playback.on_failure.default` の policy に従う。
+
+`playback.artifacts.template_screenshots` は `all` または `failure-only` とし、既定は後方互換のため `all` とする。
+`all` は各探索元を従来の `template-*.png` として保存する。`failure-only` は CDP screenshot と template を
+メモリ上で照合し、成功、正常な条件不一致、`on_missing: skip`、`on_limit: continue` ではPNGをディスクへ
+書き込まない。template失敗時は追加キャプチャをせず、当該照合に用いたPNGを
+`failure-<step-index>.png` として一度だけ保存する。照合処理自体に失敗して画像を保持できなかった場合だけ、
+通常の失敗キャプチャを試みる。`repeat_until` の `on_limit: fail` では最後の判定画像だけを保存する。
+明示的な `screenshot` step、template以外の失敗画像、最終結果画像はこの設定の対象外とする。
 
 template 指定の `click` は任意の `then`（ステップ配列）を指定できる。similarity が閾値以上なら一致矩形内を
 クリックしてから `then` を順に実行する。クリック自身の `delay_ms` および全体の `step_delay_ms` は `then` の
@@ -332,11 +343,12 @@ template 指定の `click` は任意の `then`（ステップ配列）を指定�
 閾値以上なら `then` を順に実行し、閾値未満で `else` がなければ次の兄弟ステップへ進む。任意の `else`
 （ステップ配列）を指定した場合は、閾値未満なら代わりに `else` を順に実行する。これは正常な
 条件分岐であり、`on_missing` や `on_failure.template` の対象ではない。`if` では `at` と `jitter` を指定せず、
-`playback.template.min_similarity` を個別指定がない場合の既定値として用いる。条件評価の screenshot、
-similarity、実行または skip の状態は artifacts に保存する。
+`playback.template.min_similarity` を個別指定がない場合の既定値として用いる。条件評価の similarity と
+実行または skip の状態は `steps.ndjson` に保存し、screenshot の保存は
+`playback.artifacts.template_screenshots` に従う。
 条件分岐先の最初のステップが同一 template path・同一実効 `min_similarity` の template click なら、条件評価の
-screenshot と一致結果を再利用し、二度目の探索をしない。この場合も click 自身の artifact screenshot は保存し、
-標準出力の template 行末に `(reused)` を付ける。途中に別ステップを挟む場合、template path または実効閾値が
+screenshot と一致結果を再利用し、二度目の探索をしない。`template_screenshots: all` の場合は click 自身の
+artifact screenshot も保存し、標準出力の template 行末に `(reused)` を付ける。途中に別ステップを挟む場合、template path または実効閾値が
 異なる場合は再探索する。
 
 `do: if` は `template` の代わりに `weekdays` を条件にできる。`weekdays` は `mon`、`tue`、`wed`、`thu`、
@@ -455,6 +467,10 @@ front matter を上書きし、実行ログに override を記録する。`--pos
 フィールド単位でマージしないため、`play --position` の優先度規則とは意図的に異なる。各値は整数、width と
 height を指定する場合は正数とする。実効 override は個々の run artifact の `run.json` に記録する。
 
+`play` / `run --template-screenshots <all|failure-only>` は scenario の
+`playback.artifacts.template_screenshots` をその実行に限り上書きする。`run` では全 leaf scenario に適用する。
+実効値は各 run artifact の `run.json.templateScreenshots` に記録する。
+
 終了コードは `0` 成功、`2` YAML/CLI 検証エラー、`3` 環境・ブラウザ不一致、`4` 操作または
 assert の失敗、`5` 中断とする。
 
@@ -465,7 +481,8 @@ assert の失敗、`5` 中断とする。
   デバッグ目的で残す。`persistent:<directory>` または `--profile-dir` のプロファイルは常に残す。
 - URL は既定で `http` / `https` のみ。`file:`、拡張機能、ダウンロード、権限要求は明示フラグを
   必要とする。
-- 各ステップに時刻、実効座標、jitter offset、CDP 応答、URL、スクリーンショットをログする。
+- 各ステップに時刻、実効座標、jitter offset、CDP 応答、URLをログする。スクリーンショットは明示的な
+  screenshot step、失敗時、および設定で保存を有効にしたtemplate探索時に記録する。
   入力テキストと環境変数の値は既定でマスクする。
 - `on_failure` が `abort` の失敗、または続行不能な失敗時は、以後の同一シナリオ手順を停止する。
   `continue` の失敗時も、最終スクリーンショットと診断（viewport、DPR、URL、locator hint）を
@@ -487,6 +504,8 @@ assert の失敗、`5` 中断とする。
    または後続 job が実行される。CDP 接続喪失など続行不能な失敗では実行されない。
 9. `browser_session.reuse: same-profile` の plan では、同一永続 profile の連続 scenario が一つの CfT
    ウィンドウを再利用し、最後の scenario 後にだけ graceful close される。
+10. `template_screenshots: failure-only` では成功したtemplate探索画像をディスクへ保存せず、template失敗時に
+    照合で使用した画像だけを `failure-*.png` として保存する。
 
 ## 11. 段階的実装
 

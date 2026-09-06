@@ -6,6 +6,7 @@ export type FailureKind =
   | "jitter_bounds"
   | "template";
 export type FailurePolicy = "abort" | "continue";
+export type TemplateScreenshotPolicy = "all" | "failure-only";
 export type Point = { x: number; y: number };
 export type WindowBounds = { left: number; top: number; width?: number; height?: number };
 export type Jitter = {
@@ -90,6 +91,7 @@ export type Scenario = {
     step_delay_ms?: number;
     /** Defaults for click steps that use image template matching. */
     template?: TemplateDefaults;
+    artifacts?: { template_screenshots?: TemplateScreenshotPolicy };
     jitter?: Jitter;
     timeouts?: { navigation_ms?: number; action_ms?: number };
     on_failure?: Partial<Record<FailureKind | "default", FailurePolicy>>;

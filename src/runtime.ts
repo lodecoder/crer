@@ -6,8 +6,17 @@ import {
   matchTemplates,
   randomPointInMatch,
   type TemplateMatch,
+  TemplateMatchError,
 } from "./template.ts";
-import type { FailureKind, Jitter, RunResult, Scenario, Step, WindowBounds } from "./types.ts";
+import type {
+  FailureKind,
+  Jitter,
+  RunResult,
+  Scenario,
+  Step,
+  TemplateScreenshotPolicy,
+  WindowBounds,
+} from "./types.ts";
 
 const decoder = new TextDecoder();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,6 +57,7 @@ export type PlayOptions = {
   muteAudio?: boolean;
   profileDir?: string;
   templateBaseDir?: string;
+  templateScreenshots?: TemplateScreenshotPolicy;
   signal?: AbortSignal;
   sharedSession?: SharedBrowserSession;
 };
@@ -696,6 +706,10 @@ async function capture(b: BrowserSession, name: string, required = false) {
   }
   if (required) throw lastError;
 }
+
+async function writeBase64Png(path: string, base64: string) {
+  await Deno.writeFile(path, Uint8Array.from(atob(base64), (x) => x.charCodeAt(0)));
+}
 function failureFor(step: Step, error: unknown): FailureKind {
   const e = String(error);
   if (e.includes("template")) return "template";
@@ -1003,6 +1017,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   const runDir = `.crer/runs/${crypto.randomUUID()}`;
   await Deno.mkdir(runDir, { recursive: true });
   const seed = options.seed ?? s.playback?.seed ?? randomSeed();
+  const templateScreenshots = options.templateScreenshots
+    ?? s.playback?.artifacts?.template_screenshots
+    ?? "all";
   await Deno.writeTextFile(
     `${runDir}/run.json`,
     JSON.stringify(
@@ -1010,6 +1027,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         scenario: s.name,
         seed,
         startedAt: new Date().toISOString(),
+        templateScreenshots,
         ...(options.boundsOverride ? { windowBoundsOverride: options.boundsOverride } : {}),
       },
       null,
@@ -1047,6 +1065,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             scenario: s.name,
             seed,
             startedAt: new Date().toISOString(),
+            templateScreenshots,
             browserSession: { reused: acquired.reused, profile: profileDir },
             ...(options.boundsOverride ? { windowBoundsOverride: options.boundsOverride } : {}),
           },
@@ -1185,7 +1204,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       path: string;
       threshold: number;
       match: TemplateMatch;
-      screenshot: Uint8Array;
+      screenshot: string;
     };
     const executeSteps = async (
       steps: Step[],
@@ -1203,6 +1222,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let at: { x: number; y: number } | undefined;
         let jitterOffset: { x: number; y: number } | undefined;
         let templateMatch: TemplateMatch | undefined;
+        let templateFailureScreenshot: string | undefined;
         let succeeded = false;
         let delayHandled = false;
         let stepDelayHandled = false;
@@ -1304,10 +1324,12 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 template,
                 options.templateBaseDir,
               );
-              await Deno.writeFile(
-                `${runDir}/template-${i}.attempt-${attempts}.png`,
-                found.screenshot,
-              );
+              if (templateScreenshots === "all") {
+                await writeBase64Png(
+                  `${runDir}/template-${i}.attempt-${attempts}.png`,
+                  found.screenshot,
+                );
+              }
               templateMatch = found.match;
               console.log(
                 `[crer] template: ${template.path}, similarity: ${
@@ -1352,6 +1374,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                   succeeded = true;
                   break;
                 }
+                templateFailureScreenshot = found.screenshot;
                 throw new Error(error);
               }
               attempts++;
@@ -1392,7 +1415,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               threshold,
               maxMatches,
             );
-            await Deno.writeFile(`${runDir}/template-${i}.png`, found.screenshot);
+            if (templateScreenshots === "all") {
+              await writeBase64Png(`${runDir}/template-${i}.png`, found.screenshot);
+            }
             console.log(
               `[crer] template: ${template.path}, matches: ${found.matches.length}, threshold: ${threshold}`,
             );
@@ -1414,6 +1439,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 });
                 succeeded = true;
               } else {
+                templateFailureScreenshot = found.screenshot;
                 throw new Error(error);
               }
             } else {
@@ -1482,7 +1508,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             };
             const defaults = s.playback?.template;
             const threshold = template.min_similarity ?? defaults?.min_similarity ?? 0.8;
-            let screenshot: Uint8Array;
+            let screenshot: string;
             const reused = cachedTemplate?.path === template.path
               && cachedTemplate.threshold === threshold;
             if (reused) {
@@ -1497,7 +1523,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               screenshot = found.screenshot;
               templateMatch = found.match;
             }
-            await Deno.writeFile(`${runDir}/template-${i}.png`, screenshot);
+            if (templateScreenshots === "all") {
+              await writeBase64Png(`${runDir}/template-${i}.png`, screenshot);
+            }
             console.log(
               `[crer] template: ${template.path}, similarity: ${
                 templateMatch.similarity.toFixed(4)
@@ -1559,6 +1587,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 });
                 succeeded = true;
               } else if (step.do !== "if") {
+                templateFailureScreenshot = screenshot;
                 throw new Error(matchError);
               }
             }
@@ -1631,6 +1660,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           }
         } catch (e) {
           if (e instanceof EnvironmentError) throw e;
+          if (e instanceof TemplateMatchError) templateFailureScreenshot ??= e.screenshot;
           const kind = failureFor(step, e);
           await appendStepLog({
             index: i,
@@ -1646,7 +1676,14 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             kind,
             error: String(e),
           });
-          await capture(browser, `failure-${i}`);
+          if (kind === "template" && templateFailureScreenshot) {
+            await writeBase64Png(
+              `${runDir}/failure-${i}.png`,
+              templateFailureScreenshot,
+            ).catch(() => capture(browser, `failure-${i}`));
+          } else {
+            await capture(browser, `failure-${i}`);
+          }
           failures.push(`${i}:${kind}:${e}`);
           const policy = s.playback?.on_failure?.[kind] ?? s.playback?.on_failure?.default
             ?? "abort";

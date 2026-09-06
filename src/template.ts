@@ -14,6 +14,31 @@ export type TemplateMatch = {
   similarity: number;
 };
 
+export class TemplateMatchError extends Error {
+  constructor(message: string, public readonly screenshot: string) {
+    super(message);
+    this.name = "TemplateMatchError";
+  }
+}
+
+type Evaluation<T> = {
+  result: { value?: T; description?: string };
+  exceptionDetails?: { text?: string; exception?: { description?: string } };
+};
+
+function evaluationFailure<T>(evaluation: Evaluation<T>): string | undefined {
+  return evaluation.exceptionDetails?.exception?.description
+    ?? evaluation.exceptionDetails?.text;
+}
+
+function validMatch(value: unknown): value is TemplateMatch {
+  if (!value || typeof value !== "object") return false;
+  const match = value as Record<string, unknown>;
+  return [match.x, match.y, match.width, match.height, match.similarity].every((part) =>
+    typeof part === "number" && Number.isFinite(part)
+  ) && (match.width as number) > 0 && (match.height as number) > 0;
+}
+
 const toBase64 = (bytes: Uint8Array) => {
   let text = "";
   for (let offset = 0; offset < bytes.length; offset += 0x8000) {
@@ -52,13 +77,13 @@ export async function matchTemplate(
   cdpCall: <T>(method: string, params: Record<string, unknown>) => Promise<T>,
   options: TemplateOptions,
   base: string | undefined,
-): Promise<{ match: TemplateMatch; screenshot: Uint8Array }> {
+): Promise<{ match: TemplateMatch; screenshot: string }> {
   const [screenshot, template] = await Promise.all([
     cdpCall<{ data: string }>("Page.captureScreenshot", { format: "png" }),
     Deno.readFile(templatePath(base, options.path)),
   ]);
   const templateUrl = `data:image/png;base64,${toBase64(template)}`;
-  const result = await cdpCall<{ result: { value?: TemplateMatch } }>("Runtime.evaluate", {
+  const result = await cdpCall<Evaluation<TemplateMatch>>("Runtime.evaluate", {
     expression: `(async () => {
       const load = (url) => new Promise((resolve, reject) => {
         const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error("image decode failed")); image.src = url;
@@ -93,9 +118,15 @@ export async function matchTemplate(
     awaitPromise: true,
     returnByValue: true,
   });
+  const failure = evaluationFailure(result);
+  if (failure) {
+    throw new TemplateMatchError(`template match evaluation failed: ${failure}`, screenshot.data);
+  }
   const match = result.result.value;
-  if (!match) throw new Error("template match returned no result");
-  return { match, screenshot: Uint8Array.from(atob(screenshot.data), (x) => x.charCodeAt(0)) };
+  if (!validMatch(match)) {
+    throw new TemplateMatchError("template match returned an invalid result", screenshot.data);
+  }
+  return { match, screenshot: screenshot.data };
 }
 
 /** Finds distinct template rectangles at or above a threshold in one screenshot. */
@@ -105,13 +136,13 @@ export async function matchTemplates(
   base: string | undefined,
   minSimilarity: number,
   maxMatches: number,
-): Promise<{ matches: TemplateMatch[]; screenshot: Uint8Array }> {
+): Promise<{ matches: TemplateMatch[]; screenshot: string }> {
   const [screenshot, template] = await Promise.all([
     cdpCall<{ data: string }>("Page.captureScreenshot", { format: "png" }),
     Deno.readFile(templatePath(base, options.path)),
   ]);
   const templateUrl = `data:image/png;base64,${toBase64(template)}`;
-  const result = await cdpCall<{ result: { value?: TemplateMatch[] } }>("Runtime.evaluate", {
+  const result = await cdpCall<Evaluation<TemplateMatch[]>>("Runtime.evaluate", {
     expression: `(async () => {
       const load = (url) => new Promise((resolve, reject) => {
         const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error("image decode failed")); image.src = url;
@@ -165,8 +196,15 @@ export async function matchTemplates(
     awaitPromise: true,
     returnByValue: true,
   });
+  const failure = evaluationFailure(result);
+  if (failure) {
+    throw new TemplateMatchError(`template match evaluation failed: ${failure}`, screenshot.data);
+  }
+  if (!Array.isArray(result.result.value) || !result.result.value.every(validMatch)) {
+    throw new TemplateMatchError("template matching returned an invalid result", screenshot.data);
+  }
   return {
-    matches: result.result.value ?? [],
-    screenshot: Uint8Array.from(atob(screenshot.data), (x) => x.charCodeAt(0)),
+    matches: result.result.value,
+    screenshot: screenshot.data,
   };
 }

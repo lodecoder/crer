@@ -8,7 +8,7 @@ import {
   transformFromSidecar,
   windowBoundsFromSidecar,
 } from "./normalize.ts";
-import { parsePlanWindowBoundsOverride } from "./options.ts";
+import { parsePlanWindowBoundsOverride, parseTemplateScreenshotPolicy } from "./options.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { recordRaw } from "./record.ts";
@@ -19,7 +19,14 @@ import {
   type SharedBrowserSession,
 } from "./runtime.ts";
 import { mapWithConcurrency } from "./scheduler.ts";
-import type { FailurePolicy, PlanNode, Point, RunResult, WindowBounds } from "./types.ts";
+import type {
+  FailurePolicy,
+  PlanNode,
+  Point,
+  RunResult,
+  TemplateScreenshotPolicy,
+  WindowBounds,
+} from "./types.ts";
 import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
 const [command, file, ...args] = Deno.args;
 const option = (name: string) => {
@@ -426,6 +433,10 @@ const positionOption = (): Point | undefined => {
   return position;
 };
 const profileDirOption = () => option("--profile-dir");
+const templateScreenshotsOption = () =>
+  parseTemplateScreenshotPolicy(
+    args.includes("--template-screenshots") ? option("--template-screenshots") ?? "" : undefined,
+  );
 async function runNode(
   node: PlanNode,
   base: string,
@@ -437,6 +448,7 @@ async function runNode(
   profileDir?: string,
   boundsOverride?: WindowBounds,
   sharedSession?: SharedBrowserSession,
+  templateScreenshots?: TemplateScreenshotPolicy,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
     const controller = new AbortController();
@@ -462,6 +474,7 @@ async function runNode(
         profileDir,
         boundsOverride,
         sharedSession,
+        templateScreenshots,
         templateBaseDir: scenarioFile.replace(/[\\/][^\\/]+$/, ""),
       });
       if (timedOut && sharedSession) await closeSharedBrowserSession(sharedSession);
@@ -486,6 +499,7 @@ async function runNode(
         profileDir,
         boundsOverride,
         sharedSession,
+        templateScreenshots,
       );
       out.push(...results);
       if (shouldAbortPlan(results, onFailure)) break;
@@ -507,6 +521,7 @@ async function runNode(
         profileDir,
         boundsOverride,
         sharedSession,
+        templateScreenshots,
       ),
     (result) =>
       node.parallel.fail_fast
@@ -570,6 +585,7 @@ async function main() {
       ignoreViewportMismatch: args.includes("--ignore-viewport-mismatch"),
       muteAudio: args.includes("--mute-audio"),
       profileDir: profileDirOption(),
+      templateScreenshots: templateScreenshotsOption(),
       templateBaseDir: file.replace(/[\\/][^\\/]+$/, ""),
     });
     console.log(JSON.stringify(r, null, 2));
@@ -599,6 +615,7 @@ async function main() {
         profileDir,
         boundsOverride,
         sharedSession,
+        templateScreenshotsOption(),
       );
     } finally {
       if (sharedSession) await closeSharedBrowserSession(sharedSession);

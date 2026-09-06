@@ -1,5 +1,8 @@
 import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.14";
-import { parsePlanWindowBoundsOverride } from "../src/options.ts";
+import {
+  parsePlanWindowBoundsOverride,
+  parseTemplateScreenshotPolicy,
+} from "../src/options.ts";
 
 Deno.test("parses a run-only window bounds override", () => {
   assertEquals(parsePlanWindowBoundsOverride(undefined), undefined);
@@ -17,5 +20,16 @@ Deno.test("parses a run-only window bounds override", () => {
     () => parsePlanWindowBoundsOverride("10,20,0,900"),
     Error,
     "width and height must be positive",
+  );
+});
+
+Deno.test("parses template screenshot policy", () => {
+  assertEquals(parseTemplateScreenshotPolicy(undefined), undefined);
+  assertEquals(parseTemplateScreenshotPolicy("all"), "all");
+  assertEquals(parseTemplateScreenshotPolicy("failure-only"), "failure-only");
+  assertThrows(
+    () => parseTemplateScreenshotPolicy("none"),
+    Error,
+    "must be all or failure-only",
   );
 });

@@ -218,6 +218,7 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 ```yaml
 playback:
   template: { min_similarity: 0.8, random_inset_px: 2, on_missing: skip }
+  artifacts: { template_screenshots: failure-only }
 steps:
   - { do: click, template: { path: templates/sign-in.png, on_missing: fail } }
 ```
@@ -225,9 +226,20 @@ steps:
 `playback.template` は全 template click の既定値です。個別の `template` に `min_similarity`、
 `random_inset_px`、`on_missing` を指定するとその値を優先します。`min_similarity` は 0〜1、既定値は
 `0.8`、`random_inset_px` の既定値は `0` です。`on_missing` は既定の `fail` なら `template` 種別の
-失敗、`skip` ならクリックを行わず正常に次のステップへ進みます。どちらの場合も探索直前の画面を
-`template-<step-index>.png` として artifacts に残します。クリック位置は再生 seed で決まるため、同じ
-seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出してください。
+失敗、`skip` ならクリックを行わず正常に次のステップへ進みます。クリック位置は再生 seed で決まるため、
+同じ seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出してください。
+
+`playback.artifacts.template_screenshots` は探索画像の保存方針です。`all`（既定）は従来どおり探索ごとに
+`template-*.png` を保存します。`failure-only` は照合をインメモリで行い、成功、条件不一致、
+`on_missing: skip` では画像を保存せず、template失敗時だけ照合に使った画像を `failure-<step-index>.png`
+として保存します。`repeat_until` の上限失敗では最後の判定画像だけが残ります。明示的な `do: screenshot`、
+template以外の失敗画像、`result.png` には影響しません。
+
+CLIはYAMLより優先し、`play` と `run` の全scenarioへ適用できます。
+
+```powershell
+deno task dev run plan.crer.plan.yaml --template-screenshots failure-only
+```
 
 `on_missing` は step 直下ではなく、必ず `template` 内へ指定します。`fail` は template 失敗を発生させますが、
 停止するかどうかは `playback.on_failure.template`（なければ `playback.on_failure.default`）に従います。
@@ -266,8 +278,9 @@ template click に `then` を指定すると、画像が見つかった場合だ
     - { do: log, message: "target をクリックしました" }
 ```
 
-条件評価時のスクリーンショットは `template-<step-index>.png`、実行・不一致の結果は `steps.ndjson` に
-残ります。画像ファイルの欠落や読み込み不能は設定エラーとして失敗します。
+条件評価の実行・不一致結果は `steps.ndjson` に残ります。探索画像の保存は
+`playback.artifacts.template_screenshots` に従います。画像ファイルの欠落や読み込み不能は設定エラーとして
+失敗します。
 
 `then` または `else` の**最初のステップ**が、条件と同じテンプレートパス・実効 `min_similarity` の
 template click なら、条件評価済みの screenshot と一致結果を再利用します。たとえば次の click は二度目の
@@ -352,8 +365,9 @@ template matching を行いません。コンソール出力の末尾に `(reuse
 
 `max_attempts` は子ステップ列を実行する最大回数（1 以上の整数）です。上限後も状態を満たさない場合、
 `on_limit: fail` は `template` 種別の失敗にし、`on_limit: continue` は `status: skipped` を
-`steps.ndjson` に残して次の兄弟ステップへ進みます。各探索画面は
-`template-<step-index>.attempt-<試行回数>.png` に保存され、類似度も標準出力へ表示します。
+`steps.ndjson` に残して次の兄弟ステップへ進みます。`template_screenshots: all` では各探索画面を
+`template-<step-index>.attempt-<試行回数>.png` に保存します。`failure-only` では上限失敗時の最後の画像だけを
+`failure-<step-index>.png` に保存します。類似度はどちらでも標準出力へ表示します。
 
 同じ画像が複数あり、クリックするたびに対象が消える／変化する場合は `state: hidden` を使います。現在の
 最良一致をクリックして画面を再探索するため、画像がなくなるまで順に処理できます。親の判定と最初の子 click が
@@ -388,9 +402,9 @@ IoU 0.5 以上で一つにまとめます。
     - { do: log, message: "item (${match_left}, ${match_top}) を処理しました" }
 ```
 
-一致がないときは `template.on_missing` に従います。検出件数・各矩形・similarity は `steps.ndjson` に残り、
-探索した screenshot は `template-<step-index>.png` に保存されます。ページを変える子操作があっても、
-列挙対象は開始時の screenshot に固定されます。
+一致がないときは `template.on_missing` に従います。検出件数・各矩形・similarity は `steps.ndjson` に残ります。
+探索画像の保存は `playback.artifacts.template_screenshots` に従います。ページを変える子操作があっても、列挙対象は
+開始時のインメモリ screenshot に固定されます。
 
 ### 操作列の再利用
 

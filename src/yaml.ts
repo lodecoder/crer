@@ -132,6 +132,16 @@ export function scenarioFrom(value: unknown): Scenario {
   const playback = v.playback ? object(v.playback, "playback") : {};
   if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
   if (playback.template) validateTemplateOptions(playback.template, "playback.template", false);
+  if (playback.artifacts !== undefined) {
+    const artifacts = object(playback.artifacts, "playback.artifacts");
+    if (
+      artifacts.template_screenshots !== undefined
+      && artifacts.template_screenshots !== "all"
+      && artifacts.template_screenshots !== "failure-only"
+    ) {
+      throw new Error("playback.artifacts.template_screenshots must be all or failure-only");
+    }
+  }
   if (playback.on_failure) {
     validateFailurePolicies(
       playback.on_failure,
