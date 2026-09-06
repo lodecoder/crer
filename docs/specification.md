@@ -50,7 +50,8 @@ Raw Input と HWND 操作は C ABI を公開するC# .NET 10 Native AOT DLL `cre
 `crer-win-input.dll` は .NET Native AOT で各 Deno 配布バイナリと同じアーキテクチャ（`win-x86_64` または
 `win-aarch64`）で同梱する。DLL は `crer_input_abi_version`、`crer_input_start`、
 `crer_input_stop`、`crer_input_read`、`crer_input_last_error`、前景 HWND の取得・復元用 API、
-および `crer_input_foreground_process_window` を C ABI で export する。
+`crer_input_foreground_process_window`、フォーカスを変更せず topmost だけを設定する
+`crer_input_set_process_topmost_only` を C ABI で export する。
 イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Deno と DLL
 の間で共有しない。Deno から DLL への callback は使わず、Deno の非同期ループが
 `crer_input_read` を短い間隔で poll する。これにより DLL のスレッドから V8/Deno runtime を
@@ -81,10 +82,12 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 実体が外部を指すシンボリックリンクを拒否する。永続プロファイルは実行後も削除しない。通常 Chrome の
 既存プロファイルは対象外とする。
 同一の永続プロファイルを並列起動すると Chrome のプロファイルロックとデータ競合を起こすため、
-`run` では `max_parallel: 1` を必須とする。CfT プロセスは成功・失敗・中断のいずれでも、終了処理で CDP
-`Browser.close` による graceful close を要求して閉じる。CDP が応答しない場合に限り、実行
-ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。worker は子プロセスの終了を確認してから
-完了するため、同じ永続 profile を使う serial の次シナリオは profile lock 解放後に起動する。
+`run` では `max_parallel: 1` を必須とする。通常は CfT プロセスを scenario の成功・失敗・中断のいずれでも、
+終了処理で CDP `Browser.close` による graceful close を要求して閉じる。plan で
+`browser_session.reuse: same-profile` が有効な場合だけ、同じ永続 profile を使う連続 scenario の間では
+CfT プロセス・ウィンドウ・CDP
+session を維持し、グループ終端、profile 変更、ephemeral scenario、続行不能エラー、plan 終了時に閉じる。
+CDP が応答しない場合に限り、実行ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。
 
 通常の再生は利用者の前景ウィンドウへ干渉しない。Web アプリケーションが前景状態を要求する場合だけ、
 scenario の `browser.window.foreground: true` を指定できる。この場合、Native DLL は対象 CfT の
@@ -94,8 +97,9 @@ scenario の `browser.window.foreground: true` を指定できる。この場合
 Native DLL は `AttachThreadInput` を使って再試行する。それでも拒否された場合は、topmost 化を維持したまま
 Win32 error code を artifacts の `foreground.json` と警告へ記録し、再生は続行する。topmost 化そのものに
 失敗した場合だけ再生を環境エラーとして終了する。起動直後と各 step の直前に HWND をプロセス ID から再探索し
-topmost を再適用するため、serial plan で新しく起動した各 CfT ウィンドウにも同じ設定を適用する。このモードはフォーカスと
-ウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
+topmost を再適用する。session 再利用時は 250 ms 間隔の watchdog でも topmost だけを再適用し、HWND の再生成に
+追従する。前景フォーカスの取得は topmost 設定と分離し、plan の `browser_session.focus` に従う。このモードは
+フォーカスとウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
 
 ## 4. 入力の記録と再生
 
@@ -368,9 +372,9 @@ scenario の最終結果は `failed`、CLI 終了コードは `4` とする。`c
 
 ## 7. 実行計画（直列・並列）
 
-`.crer.plan.yaml` はシナリオを合成する。各 leaf は別 CfT プロセスなので並列枝は独立しており、
+`.crer.plan.yaml` はシナリオを合成する。既定では各 leaf は別 CfT プロセスなので並列枝は独立しており、
 物理マウスを奪い合わない。1 ブラウザ内での並列タブ実行は座標・フォーカスが競合するため v1
-では禁止する。
+では禁止する。`browser_session` は `max_parallel: 1` の場合だけ指定できる。
 
 ```yaml
 version: 1
@@ -407,6 +411,25 @@ plan の `on_failure` では、`scenario_failure` は child scenario が終了�
 省略した場合は `0`（無制限）であり、`timeout` は発生しない。`continue` の child があっても、
 plan は一件でも失敗を集約した場合は終了コード `4` を返す。ただし `environment` の失敗は常に
 終了コード `3` を返す。`fail_fast: true` は `on_failure: continue` より優先する。
+
+同じ永続 profile を使う連続 leaf のウィンドウ生成とフォーカス移動を避けたい場合は、次の session 再利用を
+指定できる。
+
+```yaml
+max_parallel: 1
+browser_session:
+  reuse: same-profile
+  focus: once # once | before-step
+```
+
+`reuse: same-profile` は同じ正規化済み profile path が続く間だけ、CfT プロセス、トップレベルウィンドウ、CDP
+接続を再利用する。各 scenario の開始時に `initial_url` へ遷移し、`window.bounds`（run 専用 override を含む）、
+`window.content` を再適用し、実効 viewport、DPR、browser zoom を再検証する。profile が変わる場合、ephemeral
+scenario を挟む場合、続行不能エラー、worker timeout、plan 終了時は保持中の CfT を graceful close する。
+`focus: once` は session 中に最初の `browser.window.foreground: true` を処理する時だけ前景化を試みる。
+`focus: before-step` は該当 scenario の各 step の直前にも前景化する。topmost watchdog はどちらでも
+250 ms 間隔で動作するが、フォーカスは行わない。実際に session を再利用したかは各 run の `run.json` の
+`browserSession.reused` に記録する。
 
 ## 8. CLI
 
@@ -462,6 +485,8 @@ assert の失敗、`5` 中断とする。
    再実行で jitter 後の座標列が一致する。
 8. `on_failure.<kind>: continue` を指定した続行可能な失敗では、失敗が記録されつつ後続ステップ
    または後続 job が実行される。CDP 接続喪失など続行不能な失敗では実行されない。
+9. `browser_session.reuse: same-profile` の plan では、同一永続 profile の連続 scenario が一つの CfT
+   ウィンドウを再利用し、最後の scenario 後にだけ graceful close される。
 
 ## 11. 段階的実装
 

@@ -55,6 +55,36 @@ deno task dev run .crer\daily.crer.plan.yaml `
   --plan-window-bounds-override 10,10,1280,900
 ```
 
+同じ永続プロファイルを使う連続 scenario では、plan に `browser_session` を指定すると一つの CfT
+プロセス・ウィンドウ・CDP session を再利用できます。scenario ごとの URL、ウィンドウ bounds、content は
+切替時に再適用し、viewport / DPR / zoom は再検証します。異なるプロファイルまたは ephemeral scenario に
+切り替わると、それまでの CfT を graceful close して新しい session を開始します。この機能は
+`max_parallel: 1` 専用です。
+
+```yaml
+version: 1
+name: daily
+max_parallel: 1
+browser_session:
+  reuse: same-profile
+  focus: once # once | before-step
+run:
+  serial:
+    - scenario: login.crer.yaml
+    - scenario: work.crer.yaml
+```
+
+`focus: once`（既定）は、`browser.window.foreground: true` が初めて必要になった時だけ CfT の前景化を
+試みます。`focus: before-step` は各 step の直前にも前景化します。どちらも topmost は 250 ms 間隔の
+watchdog と各 step の直前に再適用するため、Chrome が HWND を作り直した場合にも追従します。
+プロファイルを CLI の `--profile-dir` で全 scenario に指定しても再利用できます。
+
+同じ CfT ウィンドウが2つの scenario で再利用され、最後にだけ閉じられることは次で確認できます。
+
+```powershell
+.\scripts\test-session-reuse-fixture.ps1
+```
+
 ローカル fixture による headful 再生と物理カーソル不変の確認は次で実行できます（実行中はマウスを動かさないでください）。
 再生前の control 観測でもカーソルが動くデスクトップ環境では、スクリプトは判定不能として警告します。
 
@@ -151,8 +181,8 @@ browser:
 ウィンドウの重なり順を変えるため、通常の非干渉再生では指定しません。物理マウス・キーボードの位置や入力を
 注入・変更するものではありません。Windows の foreground lock などにより設定できない場合は、Win32 status
 を `foreground.json` と警告へ記録しますが、topmost 化に成功していれば再生は続行します。
-起動直後だけでなく、各 step の直前に新しい CfT HWND を再探索して topmost を再適用します。これは plan の
-serial 実行で前の CfT を閉じた後に起動する次の scenario にも適用されます。
+起動直後と各 step の直前に CfT HWND を再探索して topmost を再適用します。`browser_session` を使う plan では
+さらに 250 ms 間隔の watchdog が topmost だけを再適用し、フォーカス取得の頻度は plan の `focus` で制御します。
 
 ```yaml
 browser:

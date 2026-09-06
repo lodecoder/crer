@@ -434,6 +434,20 @@ export function planFrom(value: unknown): Plan {
       typeof v.max_parallel !== "number" || !Number.isInteger(v.max_parallel) || v.max_parallel < 1
     )
   ) throw new Error("plan.max_parallel must be a positive integer");
+  if (v.browser_session !== undefined) {
+    const session = object(v.browser_session, "plan.browser_session");
+    if (session.reuse !== "same-profile") {
+      throw new Error("plan.browser_session.reuse must be same-profile");
+    }
+    if (
+      session.focus !== undefined && session.focus !== "once" && session.focus !== "before-step"
+    ) {
+      throw new Error("plan.browser_session.focus must be once or before-step");
+    }
+    if ((v.max_parallel ?? 1) !== 1) {
+      throw new Error("plan.browser_session requires max_parallel: 1");
+    }
+  }
   if (v.timeouts) {
     const timeouts = object(v.timeouts, "plan.timeouts");
     if (

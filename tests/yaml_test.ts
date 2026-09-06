@@ -446,3 +446,33 @@ Deno.test("validates plan failure policies and nodes", () => {
     "exactly one",
   );
 });
+
+Deno.test("validates reusable plan browser sessions", () => {
+  const plan = {
+    version: 1,
+    name: "reused-session",
+    max_parallel: 1,
+    browser_session: { reuse: "same-profile", focus: "once" },
+    run: { serial: [{ scenario: "one.crer.yaml" }, { scenario: "two.crer.yaml" }] },
+  };
+  planFrom(plan);
+  planFrom({
+    ...plan,
+    browser_session: { reuse: "same-profile", focus: "before-step" },
+  });
+  assertThrows(
+    () => planFrom({ ...plan, browser_session: { reuse: "always" } }),
+    Error,
+    "reuse must be same-profile",
+  );
+  assertThrows(
+    () => planFrom({ ...plan, browser_session: { reuse: "same-profile", focus: "scenario" } }),
+    Error,
+    "focus must be once or before-step",
+  );
+  assertThrows(
+    () => planFrom({ ...plan, max_parallel: 2 }),
+    Error,
+    "requires max_parallel: 1",
+  );
+});

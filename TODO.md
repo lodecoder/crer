@@ -54,6 +54,9 @@
 - [x] scenario / plan の `on_failure` と終了コード集約を仕様どおり実装する。
   - 2026-08-26: `continue-after-failure` plan fixture で、失敗 artifact を残して後続 scenario を
     実行し、plan 全体が code 4 になることを headful CfT で確認済み。
+- [x] 同じ永続 profile の連続 scenario で CfT process / window / CDP session を再利用する。
+  - `browser_session.reuse: same-profile`、`focus: once | before-step`、topmost watchdog を実装。
+    2026-09-06 に headful fixture で2 scenario が一つの CfT を使い、最後にだけ close されることを確認済み。
 
 ## P2 — 配布と堅牢化
 

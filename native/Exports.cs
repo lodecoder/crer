@@ -191,10 +191,7 @@ internal static class InputBridge
         _foregroundTarget = IntPtr.Zero;
         EnumWindows(FindForeground, IntPtr.Zero);
         if (_foregroundTarget == IntPtr.Zero) return 1168; // ERROR_NOT_FOUND
-        if (IsIconic(_foregroundTarget)) ShowWindow(_foregroundTarget, 9); // SW_RESTORE
-        if (SetForegroundWindow(_foregroundTarget)) return 0;
-        var error = Marshal.GetLastWin32Error();
-        return error == 0 ? 5 : error; // ERROR_ACCESS_DENIED when Windows foreground rules deny it
+        return TryBringToForeground(_foregroundTarget);
     }
     private static int TryBringToForeground(IntPtr target)
     {
@@ -220,8 +217,17 @@ internal static class InputBridge
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_set_process_topmost")] public static int SetProcessTopmost(uint pid, int enabled)
     {
-        if (pid == 0) return 87; // ERROR_INVALID_PARAMETER
         _lastForegroundStatus = 0;
+        var status = SetProcessTopmostCore(pid, enabled);
+        if (status != 0 || enabled == 0) return status;
+        _lastForegroundStatus = TryBringToForeground(_foregroundTarget);
+        return 0;
+    }
+    [UnmanagedCallersOnly(EntryPoint="crer_input_set_process_topmost_only")] public static int SetProcessTopmostOnly(uint pid, int enabled)
+        => SetProcessTopmostCore(pid, enabled);
+    private static int SetProcessTopmostCore(uint pid, int enabled)
+    {
+        if (pid == 0) return 87; // ERROR_INVALID_PARAMETER
         _foregroundPid = pid;
         _foregroundTarget = IntPtr.Zero;
         EnumWindows(FindForeground, IntPtr.Zero);
@@ -231,8 +237,7 @@ internal static class InputBridge
             var error = Marshal.GetLastWin32Error();
             return error == 0 ? 5 : error;
         }
-        _lastForegroundStatus = enabled == 0 ? 0 : TryBringToForeground(_foregroundTarget);
-        return 0; // Topmost was successfully applied even if Windows declined the focus request.
+        return 0;
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_foreground_status")] public static int LastForegroundStatus()=>_lastForegroundStatus;
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }

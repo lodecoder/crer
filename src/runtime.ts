@@ -11,6 +11,7 @@ import type { FailureKind, Jitter, RunResult, Scenario, Step, WindowBounds } fro
 
 const decoder = new TextDecoder();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+class EnvironmentError extends Error {}
 async function fetchWithin(url: string, timeoutMs: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -48,13 +49,12 @@ export type PlayOptions = {
   profileDir?: string;
   templateBaseDir?: string;
   signal?: AbortSignal;
+  sharedSession?: SharedBrowserSession;
 };
 type ForegroundGuard = {
   original: bigint;
-  setProcessTopmost: (pid: number, enabled: boolean) => {
-    topmostStatus: number;
-    foregroundStatus: number;
-  };
+  setProcessTopmost: (pid: number, enabled: boolean) => number;
+  foregroundProcess: (pid: number) => number;
   restore: () => number;
   close: () => void;
 };
@@ -62,17 +62,16 @@ const windowHandleText = (handle: bigint) => `0x${handle.toString(16)}`;
 function captureForeground(dllPath: string): ForegroundGuard {
   const lib = Deno.dlopen(dllPath, {
     crer_input_get_foreground_window: { parameters: [], result: "usize" },
-    crer_input_set_process_topmost: { parameters: ["u32", "i32"], result: "i32" },
-    crer_input_last_foreground_status: { parameters: [], result: "i32" },
+    crer_input_set_process_topmost_only: { parameters: ["u32", "i32"], result: "i32" },
+    crer_input_foreground_process_window: { parameters: ["u32"], result: "i32" },
     crer_input_restore_foreground_window: { parameters: ["usize"], result: "i32" },
   });
   const original = lib.symbols.crer_input_get_foreground_window();
   return {
     original,
-    setProcessTopmost: (pid, enabled) => ({
-      topmostStatus: lib.symbols.crer_input_set_process_topmost(pid, enabled ? 1 : 0),
-      foregroundStatus: lib.symbols.crer_input_last_foreground_status(),
-    }),
+    setProcessTopmost: (pid, enabled) =>
+      lib.symbols.crer_input_set_process_topmost_only(pid, enabled ? 1 : 0),
+    foregroundProcess: (pid) => lib.symbols.crer_input_foreground_process_window(pid),
     restore: () => lib.symbols.crer_input_restore_foreground_window(original),
     close: () => lib.close(),
   };
@@ -87,6 +86,32 @@ type BrowserSession = {
   viewport: { x: number; y: number };
   network: NetworkTracker;
 };
+
+export type SharedBrowserSession = {
+  focusPolicy: "once" | "before-step";
+  browser?: BrowserSession;
+  profileDir?: string;
+  foreground?: ForegroundGuard;
+  topmostTimer?: ReturnType<typeof setInterval>;
+  topmostRequested: boolean;
+  topmostAttempts: number;
+  topmostStatus?: number;
+  foregroundStatus?: number;
+  focusedOnce: boolean;
+  lastWarnedTopmostStatus?: number;
+  lastWarnedForegroundStatus?: number;
+};
+
+export function createSharedBrowserSession(
+  focusPolicy: "once" | "before-step" = "once",
+): SharedBrowserSession {
+  return {
+    focusPolicy,
+    topmostRequested: false,
+    topmostAttempts: 0,
+    focusedOnce: false,
+  };
+}
 
 function scenarioProfileDir(s: Scenario): string | undefined {
   const profile = s.browser.profile;
@@ -118,6 +143,10 @@ class NetworkTracker {
   }
   idleFor(ms: number) {
     return this.#requests.size === 0 && Date.now() - this.#lastActivity >= ms;
+  }
+  reset() {
+    this.#requests.clear();
+    this.#lastActivity = Date.now();
   }
 }
 
@@ -269,6 +298,107 @@ async function closeBrowser(browser: BrowserSession) {
     ) + "\n",
   ).catch(() => {});
 }
+
+function stopTopmostMonitor(shared: SharedBrowserSession) {
+  if (shared.topmostTimer !== undefined) clearInterval(shared.topmostTimer);
+  shared.topmostTimer = undefined;
+}
+
+function applySharedTopmost(shared: SharedBrowserSession): number {
+  if (!shared.browser || !shared.foreground) return 1168;
+  let status: number;
+  try {
+    status = shared.foreground.setProcessTopmost(shared.browser.process.pid, true);
+  } catch (error) {
+    console.warn(`Warning: could not keep CfT topmost (${error})`);
+    status = 1;
+  }
+  shared.topmostAttempts++;
+  shared.topmostStatus = status;
+  if (status !== 0 && status !== shared.lastWarnedTopmostStatus) {
+    console.warn(`Warning: could not keep CfT topmost (Win32 status ${status})`);
+    shared.lastWarnedTopmostStatus = status;
+  }
+  return status;
+}
+
+function focusSharedBrowser(shared: SharedBrowserSession): number {
+  if (!shared.browser || !shared.foreground) return 1168;
+  const status = shared.foreground.foregroundProcess(shared.browser.process.pid);
+  shared.foregroundStatus = status;
+  if (status !== 0 && status !== shared.lastWarnedForegroundStatus) {
+    console.warn(`Warning: Windows did not grant CfT foreground focus (Win32 status ${status})`);
+    shared.lastWarnedForegroundStatus = status;
+  }
+  shared.focusedOnce = true;
+  return status;
+}
+
+function startTopmostMonitor(shared: SharedBrowserSession) {
+  if (shared.topmostTimer !== undefined) return;
+  shared.topmostTimer = setInterval(() => {
+    if (!shared.topmostRequested || !shared.browser || !shared.foreground) return;
+    applySharedTopmost(shared);
+  }, 250);
+}
+
+async function writeSharedForeground(shared: SharedBrowserSession, runDir: string) {
+  await Deno.writeTextFile(
+    `${runDir}/foreground.json`,
+    JSON.stringify(
+      {
+        before: shared.foreground ? windowHandleText(shared.foreground.original) : undefined,
+        requested: shared.topmostRequested,
+        sharedSession: true,
+        topmostAttempts: shared.topmostAttempts,
+        topmostStatus: shared.topmostStatus,
+        foregroundStatus: shared.foregroundStatus,
+        focusPolicy: shared.focusPolicy,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+}
+
+export async function closeSharedBrowserSession(shared: SharedBrowserSession): Promise<void> {
+  stopTopmostMonitor(shared);
+  const browser = shared.browser;
+  const foreground = shared.foreground;
+  let clearTopmostStatus: number | undefined;
+  if (browser && foreground && shared.topmostRequested) {
+    clearTopmostStatus = foreground.setProcessTopmost(browser.process.pid, false);
+  }
+  if (browser) await closeBrowser(browser);
+  const restoreStatus = shared.focusedOnce ? foreground?.restore() : undefined;
+  if (browser) {
+    await Deno.writeTextFile(
+      `${browser.runDir}/foreground.json`,
+      JSON.stringify(
+        {
+          before: foreground ? windowHandleText(foreground.original) : undefined,
+          requested: shared.topmostRequested,
+          sharedSession: true,
+          topmostAttempts: shared.topmostAttempts,
+          topmostStatus: shared.topmostStatus,
+          foregroundStatus: shared.foregroundStatus,
+          focusPolicy: shared.focusPolicy,
+          clearTopmostStatus,
+          restoreStatus,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  }
+  foreground?.close();
+  shared.browser = undefined;
+  shared.profileDir = undefined;
+  shared.foreground = undefined;
+  shared.topmostRequested = false;
+  shared.focusedOnce = false;
+}
+
 async function validateDisplay(
   cdp: Cdp,
   sessionId: string,
@@ -440,6 +570,101 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     await writeLaunchDiagnostic(error).catch(() => {});
     cdp?.close();
     await terminateProcess(p);
+    throw error;
+  }
+}
+
+async function prepareReusedBrowser(
+  browser: BrowserSession,
+  s: Scenario,
+  options: PlayOptions,
+  runDir: string,
+) {
+  browser.runDir = runDir;
+  browser.network.reset();
+  await Deno.writeTextFile(
+    `${runDir}/launch.json`,
+    JSON.stringify({ stage: "reusing_browser_session", profile: options.profileDir }, null, 2)
+      + "\n",
+  );
+  await browser.cdp.call("Page.navigate", { url: s.browser.initial_url }, browser.sessionId);
+  const bounds = options.boundsOverride ?? {
+    ...(s.browser.window?.bounds ?? {}),
+    ...(options.position ?? {}),
+  };
+  if (Object.keys(bounds).length) {
+    await browser.cdp.call("Browser.setWindowBounds", {
+      windowId: browser.windowId,
+      bounds: { windowState: "normal", ...bounds },
+    });
+  }
+  if (s.browser.window?.content) {
+    await setContentSize(
+      browser.cdp,
+      browser.sessionId,
+      browser.windowId,
+      s.browser.window.content,
+    );
+  }
+  await waitForDocumentReady(browser.cdp, browser.sessionId);
+  const expectedViewport = s.browser.window?.viewport ?? s.browser.window?.content;
+  if (expectedViewport && !options.ignoreViewportMismatch) {
+    await waitForExpectedViewport(browser.cdp, browser.sessionId, expectedViewport);
+  } else {
+    await waitForStableViewport(browser.cdp, browser.sessionId);
+  }
+  browser.viewport = await validateDisplay(
+    browser.cdp,
+    browser.sessionId,
+    s,
+    runDir,
+    options.ignoreViewportMismatch ?? false,
+  );
+  await Deno.writeTextFile(
+    `${runDir}/launch.json`,
+    JSON.stringify({ stage: "ready", reused: true, profile: options.profileDir }, null, 2) + "\n",
+  );
+}
+
+async function acquireSharedBrowser(
+  shared: SharedBrowserSession,
+  s: Scenario,
+  options: PlayOptions,
+  runDir: string,
+  profileDir: string,
+): Promise<{ browser: BrowserSession; reused: boolean }> {
+  if (
+    shared.browser && shared.profileDir
+    && shared.profileDir.toLowerCase() === profileDir.toLowerCase()
+  ) {
+    await prepareReusedBrowser(shared.browser, s, { ...options, profileDir }, runDir);
+    return { browser: shared.browser, reused: true };
+  }
+  if (shared.browser || shared.foreground) await closeSharedBrowserSession(shared);
+  if (options.inputDllPath) {
+    try {
+      shared.foreground = captureForeground(options.inputDllPath);
+    } catch (error) {
+      await Deno.writeTextFile(
+        `${runDir}/foreground.json`,
+        JSON.stringify({ captureError: String(error), sharedSession: true }, null, 2) + "\n",
+      );
+    }
+  }
+  try {
+    const browser = await launch(s, { ...options, profileDir }, runDir);
+    shared.browser = browser;
+    shared.profileDir = profileDir;
+    shared.topmostAttempts = 0;
+    shared.topmostStatus = undefined;
+    shared.foregroundStatus = undefined;
+    shared.focusedOnce = false;
+    shared.lastWarnedTopmostStatus = undefined;
+    shared.lastWarnedForegroundStatus = undefined;
+    return { browser, reused: false };
+  } catch (error) {
+    shared.foreground?.close();
+    shared.foreground = undefined;
     throw error;
   }
 }
@@ -798,30 +1023,78 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   let foregroundStatus: number | undefined;
   let topmostAttempts = 0;
   let lastWarnedForegroundStatus: number | undefined;
+  let sharedManaged = false;
+  let discardShared = false;
   const failures: string[] = [];
   try {
-    if (options.inputDllPath) {
-      try {
-        foreground = captureForeground(options.inputDllPath);
-        await Deno.writeTextFile(
-          `${runDir}/foreground.json`,
-          JSON.stringify({ before: windowHandleText(foreground.original) }, null, 2) + "\n",
-        );
-      } catch (error) {
-        await Deno.writeTextFile(
-          `${runDir}/foreground.json`,
-          JSON.stringify({ captureError: String(error) }, null, 2) + "\n",
-        );
+    const configuredProfile = options.profileDir ?? scenarioProfileDir(s);
+    if (options.sharedSession && configuredProfile) {
+      sharedManaged = true;
+      const profileDir = await persistentProfileDirectory(configuredProfile);
+      const acquired = await acquireSharedBrowser(
+        options.sharedSession,
+        s,
+        options,
+        runDir,
+        profileDir,
+      );
+      b = acquired.browser;
+      foreground = options.sharedSession.foreground;
+      await Deno.writeTextFile(
+        `${runDir}/run.json`,
+        JSON.stringify(
+          {
+            scenario: s.name,
+            seed,
+            startedAt: new Date().toISOString(),
+            browserSession: { reused: acquired.reused, profile: profileDir },
+            ...(options.boundsOverride ? { windowBoundsOverride: options.boundsOverride } : {}),
+          },
+          null,
+          2,
+        ),
+      );
+    } else {
+      // Reuse is deliberately limited to consecutive scenarios with the same persistent
+      // profile. An ephemeral scenario forms a session boundary and closes any retained CfT.
+      if (options.sharedSession?.browser || options.sharedSession?.foreground) {
+        await closeSharedBrowserSession(options.sharedSession);
       }
+      if (options.inputDllPath) {
+        try {
+          foreground = captureForeground(options.inputDllPath);
+          await Deno.writeTextFile(
+            `${runDir}/foreground.json`,
+            JSON.stringify({ before: windowHandleText(foreground.original) }, null, 2) + "\n",
+          );
+        } catch (error) {
+          await Deno.writeTextFile(
+            `${runDir}/foreground.json`,
+            JSON.stringify({ captureError: String(error) }, null, 2) + "\n",
+          );
+        }
+      }
+      b = await launch(s, options, runDir);
     }
-    b = await launch(s, options, runDir);
     if (requireForeground && !foreground) {
       throw new Error("browser.window.foreground requires the crer-win-input.dll native DLL");
     }
-    if (foreground && requireForeground) {
-      const topmost = foreground.setProcessTopmost(b.process.pid, true);
-      topmostStatus = topmost.topmostStatus;
-      foregroundStatus = topmost.foregroundStatus;
+    if (sharedManaged) {
+      const shared = options.sharedSession!;
+      if (requireForeground) {
+        shared.topmostRequested = true;
+        topmostStatus = applySharedTopmost(shared);
+        if (!shared.focusedOnce) foregroundStatus = focusSharedBrowser(shared);
+        startTopmostMonitor(shared);
+      } else if (shared.topmostRequested && foreground && b) {
+        stopTopmostMonitor(shared);
+        topmostStatus = foreground.setProcessTopmost(b.process.pid, false);
+        shared.topmostRequested = false;
+      }
+      await writeSharedForeground(shared, runDir);
+    } else if (foreground && requireForeground) {
+      topmostStatus = foreground.setProcessTopmost(b!.process.pid, true);
+      foregroundStatus = foreground.foregroundProcess(b!.process.pid);
       topmostAttempts++;
       await Deno.writeTextFile(
         `${runDir}/foreground.json`,
@@ -936,16 +1209,27 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         try {
           if (options.signal?.aborted) throw new Error("worker timed out");
           if (foreground && requireForeground) {
-            const topmost = foreground.setProcessTopmost(browser.process.pid, true);
-            topmostStatus = topmost.topmostStatus;
-            foregroundStatus = topmost.foregroundStatus;
-            topmostAttempts++;
+            if (sharedManaged) {
+              const shared = options.sharedSession!;
+              topmostStatus = applySharedTopmost(shared);
+              foregroundStatus = shared.foregroundStatus;
+              if (shared.focusPolicy === "before-step") {
+                foregroundStatus = focusSharedBrowser(shared);
+              }
+            } else {
+              topmostStatus = foreground.setProcessTopmost(browser.process.pid, true);
+              foregroundStatus = foreground.foregroundProcess(browser.process.pid);
+              topmostAttempts++;
+            }
             if (topmostStatus !== 0) {
-              throw new Error(
+              throw new EnvironmentError(
                 `could not make CfT topmost before step ${i} (Win32 status ${topmostStatus})`,
               );
             }
-            if (foregroundStatus !== 0 && foregroundStatus !== lastWarnedForegroundStatus) {
+            if (
+              !sharedManaged && foregroundStatus !== 0
+              && foregroundStatus !== lastWarnedForegroundStatus
+            ) {
               console.warn(
                 `Warning: CfT is topmost before step ${i}, but Windows did not grant foreground focus (Win32 status ${foregroundStatus})`,
               );
@@ -1346,6 +1630,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             }
           }
         } catch (e) {
+          if (e instanceof EnvironmentError) throw e;
           const kind = failureFor(step, e);
           await appendStepLog({
             index: i,
@@ -1386,33 +1671,39 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     await executeSteps(s.steps);
     return { code: failures.length ? 4 : 0, failures, runDir };
   } catch (e) {
+    discardShared = sharedManaged;
     return { code: 3, failures: [String(e)], runDir };
   } finally {
-    let clearTopmostStatus: number | undefined;
-    if (b && foreground && requireForeground) {
-      clearTopmostStatus = foreground.setProcessTopmost(b.process.pid, false).topmostStatus;
-    }
-    if (b) {
-      await closeBrowser(b);
-    }
-    if (foreground && requireForeground) {
-      const restoreStatus = foreground.restore();
-      await Deno.writeTextFile(
-        `${runDir}/foreground.json`,
-        JSON.stringify(
-          {
-            before: windowHandleText(foreground.original),
-            requested: true,
-            topmostStatus,
-            foregroundStatus,
-            topmostAttempts,
-            clearTopmostStatus,
-            restoreStatus,
-          },
-          null,
-          2,
-        ) + "\n",
-      );
+    if (sharedManaged) {
+      const shared = options.sharedSession!;
+      await writeSharedForeground(shared, runDir).catch(() => {});
+      if (discardShared) await closeSharedBrowserSession(shared);
+    } else {
+      let clearTopmostStatus: number | undefined;
+      if (b && foreground && requireForeground) {
+        clearTopmostStatus = foreground.setProcessTopmost(b.process.pid, false);
+      }
+      if (b) await closeBrowser(b);
+      if (foreground && requireForeground) {
+        const restoreStatus = foreground.restore();
+        await Deno.writeTextFile(
+          `${runDir}/foreground.json`,
+          JSON.stringify(
+            {
+              before: windowHandleText(foreground.original),
+              requested: true,
+              topmostStatus,
+              foregroundStatus,
+              topmostAttempts,
+              clearTopmostStatus,
+              restoreStatus,
+            },
+            null,
+            2,
+          ) + "\n",
+        );
+      }
+      foreground?.close();
     }
     if (
       !options.keepArtifacts && !options.profileDir && !scenarioProfileDir(s)
@@ -1421,6 +1712,5 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         await Deno.remove(`${runDir}/profile`, { recursive: true });
       } catch { /* ignored */ }
     }
-    foreground?.close();
   }
 }

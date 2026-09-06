@@ -71,7 +71,7 @@ export type Scenario = {
     initial_url: string;
     window?: {
       bounds?: WindowBounds;
-      /** Bring CfT to the foreground before every replay step (Windows only). */
+      /** Keep CfT topmost; standalone playback focuses before steps and plans can select a session focus policy. */
       foreground?: boolean;
       /** Requested CfT content size; scrollbars can make the CSS viewport smaller. */
       content?: { width: number; height: number };
@@ -105,6 +105,10 @@ export type Plan = {
   version: 1;
   name: string;
   max_parallel?: number;
+  browser_session?: {
+    reuse: "same-profile";
+    focus?: "once" | "before-step";
+  };
   timeouts?: { worker_ms?: number };
   on_failure?: Partial<
     Record<"default" | "scenario_failure" | "timeout" | "environment", FailurePolicy>

@@ -1,0 +1,10 @@
+version: 1
+name: playback-fixture-session-reuse
+max_parallel: 1
+browser_session:
+  reuse: same-profile
+  focus: once
+run:
+  serial:
+    - scenario: session-reuse.crer.yaml
+    - scenario: session-reuse.crer.yaml
