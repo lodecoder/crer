@@ -796,6 +796,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   const requireForeground = s.browser.window?.foreground === true;
   let topmostStatus: number | undefined;
   let foregroundStatus: number | undefined;
+  let topmostAttempts = 0;
+  let lastWarnedForegroundStatus: number | undefined;
   const failures: string[] = [];
   try {
     if (options.inputDllPath) {
@@ -820,6 +822,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       const topmost = foreground.setProcessTopmost(b.process.pid, true);
       topmostStatus = topmost.topmostStatus;
       foregroundStatus = topmost.foregroundStatus;
+      topmostAttempts++;
       await Deno.writeTextFile(
         `${runDir}/foreground.json`,
         JSON.stringify(
@@ -828,20 +831,22 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             requested: true,
             topmostStatus,
             foregroundStatus,
+            topmostAttempts,
           },
           null,
           2,
         ) + "\n",
       );
       if (topmostStatus !== 0) {
-        throw new Error(
-          `could not make CfT topmost (Win32 status ${topmostStatus})`,
+        console.warn(
+          `Warning: initial CfT topmost request failed (Win32 status ${topmostStatus}); retrying before steps`,
         );
       }
       if (foregroundStatus !== 0) {
         console.warn(
           `Warning: CfT is topmost, but Windows did not grant foreground focus (Win32 status ${foregroundStatus})`,
         );
+        lastWarnedForegroundStatus = foregroundStatus;
       }
     } else if (foreground) {
       const restoreStatus = foreground.restore();
@@ -930,6 +935,23 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let stepDelayHandled = false;
         try {
           if (options.signal?.aborted) throw new Error("worker timed out");
+          if (foreground && requireForeground) {
+            const topmost = foreground.setProcessTopmost(browser.process.pid, true);
+            topmostStatus = topmost.topmostStatus;
+            foregroundStatus = topmost.foregroundStatus;
+            topmostAttempts++;
+            if (topmostStatus !== 0) {
+              throw new Error(
+                `could not make CfT topmost before step ${i} (Win32 status ${topmostStatus})`,
+              );
+            }
+            if (foregroundStatus !== 0 && foregroundStatus !== lastWarnedForegroundStatus) {
+              console.warn(
+                `Warning: CfT is topmost before step ${i}, but Windows did not grant foreground focus (Win32 status ${foregroundStatus})`,
+              );
+              lastWarnedForegroundStatus = foregroundStatus;
+            }
+          }
           if (step.do === "call") {
             const name = step.function!;
             const definition = functionDefinition(name);
@@ -1383,6 +1405,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             requested: true,
             topmostStatus,
             foregroundStatus,
+            topmostAttempts,
             clearTopmostStatus,
             restoreStatus,
           },

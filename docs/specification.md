@@ -93,7 +93,8 @@ scenario の `browser.window.foreground: true` を指定できる。この場合
 前景 HWND を復元する。Windows の foreground lock などで前景フォーカスだけを取得できない場合は、
 Native DLL は `AttachThreadInput` を使って再試行する。それでも拒否された場合は、topmost 化を維持したまま
 Win32 error code を artifacts の `foreground.json` と警告へ記録し、再生は続行する。topmost 化そのものに
-失敗した場合だけ再生を環境エラーとして終了する。このモードはフォーカスと
+失敗した場合だけ再生を環境エラーとして終了する。起動直後と各 step の直前に HWND をプロセス ID から再探索し
+topmost を再適用するため、serial plan で新しく起動した各 CfT ウィンドウにも同じ設定を適用する。このモードはフォーカスと
 ウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
 
 ## 4. 入力の記録と再生

@@ -151,6 +151,8 @@ browser:
 ウィンドウの重なり順を変えるため、通常の非干渉再生では指定しません。物理マウス・キーボードの位置や入力を
 注入・変更するものではありません。Windows の foreground lock などにより設定できない場合は、Win32 status
 を `foreground.json` と警告へ記録しますが、topmost 化に成功していれば再生は続行します。
+起動直後だけでなく、各 step の直前に新しい CfT HWND を再探索して topmost を再適用します。これは plan の
+serial 実行で前の CfT を閉じた後に起動する次の scenario にも適用されます。
 
 ```yaml
 browser:
