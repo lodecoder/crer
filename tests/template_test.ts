@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@^1.0.14";
+import { assertEquals, assertRejects } from "@std/assert";
 import {
   matchTemplate,
   matchTemplates,
@@ -6,6 +6,7 @@ import {
   TemplateMatchError,
   templatePath,
 } from "../src/template.ts";
+import { resolve } from "node:path";
 
 Deno.test("selects a deterministic point within a template match", () => {
   assertEquals(
@@ -21,12 +22,14 @@ Deno.test("retains the in-memory screenshot when template evaluation fails", asy
     const error = await assertRejects(
       () =>
         matchTemplate(
-          async <T>(method: string) => {
-            if (method === "Page.captureScreenshot") return { data: btoa("failure") } as T;
-            return {
+          <T>(method: string): Promise<T> => {
+            if (method === "Page.captureScreenshot") {
+              return Promise.resolve({ data: btoa("failure") } as T);
+            }
+            return Promise.resolve({
               result: { description: "Error" },
               exceptionDetails: { exception: { description: "template is too large" } },
-            } as T;
+            } as T);
           },
           { path },
           undefined,
@@ -41,7 +44,10 @@ Deno.test("retains the in-memory screenshot when template evaluation fails", asy
 });
 
 Deno.test("resolves a relative template against the scenario directory", () => {
-  assertEquals(templatePath("fixtures/playback", "templates/button.png"), "fixtures/playback/templates/button.png");
+  assertEquals(
+    templatePath("fixtures/playback", "templates/button.png"),
+    resolve("fixtures/playback", "templates/button.png"),
+  );
 });
 
 Deno.test("returns all template matches supplied by the browser evaluation", async () => {
@@ -53,9 +59,11 @@ Deno.test("returns all template matches supplied by the browser evaluation", asy
       { x: 50, y: 60, width: 30, height: 40, similarity: 0.98 },
     ];
     const result = await matchTemplates(
-      async <T>(method: string) => {
-        if (method === "Page.captureScreenshot") return { data: btoa("screen") } as T;
-        return { result: { value: matches } } as T;
+      <T>(method: string): Promise<T> => {
+        if (method === "Page.captureScreenshot") {
+          return Promise.resolve({ data: btoa("screen") } as T);
+        }
+        return Promise.resolve({ result: { value: matches } } as T);
       },
       { path },
       undefined,

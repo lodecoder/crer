@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "@std/assert";
 import { inspectRun } from "../src/inspect.ts";
 
 Deno.test("inspects run artifacts without exposing profile contents", async () => {

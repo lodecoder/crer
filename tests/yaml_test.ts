@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert@^1.0.14";
+import { assertEquals, assertThrows } from "@std/assert";
 import { loadYaml, saveYaml, scenarioFrom } from "../src/yaml.ts";
 import { planFrom } from "../src/yaml.ts";
 
@@ -14,6 +14,69 @@ Deno.test("validates key_chord keys", () => {
     () => scenarioFrom({ ...scenario, steps: [{ do: "key_chord", keys: ["Control"] }] }),
     Error,
     "requires at least two strings",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "key_chord", keys: ["A", "B"] }] }),
+    Error,
+    "must contain modifiers",
+  );
+});
+
+Deno.test("rejects unsupported or incomplete atomic steps", () => {
+  const scenario = {
+    version: 1,
+    name: "strict-steps",
+    browser: { initial_url: "https://example.test" },
+    steps: [],
+  };
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "clik", at: { x: 1, y: 2 } }] }),
+    Error,
+    "do is not supported",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "click" }] }),
+    Error,
+    "requires at or template",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "scroll", at: { x: 1, y: 2 } }] }),
+    Error,
+    "delta is required",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "text" }] }),
+    Error,
+    "value must be a string",
+  );
+});
+
+Deno.test("rejects unsafe scenario resources and unknown fields", () => {
+  const scenario = {
+    version: 1,
+    name: "safe-resources",
+    browser: { initial_url: "https://example.test" },
+    steps: [],
+  };
+  assertThrows(
+    () => scenarioFrom({ ...scenario, browser: { initial_url: "file:///secret.txt" } }),
+    Error,
+    "must use http or https",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, browser: { ...scenario.browser, profile: "Default" } }),
+    Error,
+    "must be ephemeral or persistent",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "screenshot", name: "../../outside" }] }),
+    Error,
+    "safe artifact filename",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "log", message: "ok", typo: true }] }),
+    Error,
+    "typo is not supported",
   );
 });
 
@@ -88,7 +151,7 @@ Deno.test("validates click template matching options", () => {
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "click", then: [] }] }),
     Error,
-    "steps[0].then is supported for if or template click",
+    "steps[0] requires at or template",
   );
 });
 

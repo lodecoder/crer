@@ -10,7 +10,7 @@ internal static class InputBridge
     private static readonly ConcurrentQueue<CrerInputEvent> Queue = new();
     private static readonly AutoResetEvent Stopped = new(false);
     private static readonly byte[] KeyboardState = new byte[256];
-    private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
+    private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static volatile int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
     private static uint _foregroundPid; private static IntPtr _foregroundTarget; private static int _lastForegroundStatus;
     [StructLayout(LayoutKind.Sequential, Pack = 8)] internal struct CrerInputEvent { public ulong Qpc; public int X, Y; public uint Kind, Data; }
     [StructLayout(LayoutKind.Sequential)] internal struct CrerRect { public int X, Y, Width, Height; }
@@ -57,7 +57,7 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern IntPtr DefWindowProcW(IntPtr h,uint m,UIntPtr w,IntPtr l);
     private delegate IntPtr WndProc(IntPtr h,uint m,UIntPtr w,IntPtr l);
     private delegate IntPtr HookProc(int code, UIntPtr w, IntPtr l);
-    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] private struct WndClass { public uint Style; public WndProc Proc; public int ClsExtra, WndExtra; public IntPtr Instance, Icon, Cursor, Background; public string Name; }
+    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] private struct WndClass { public uint Style; public WndProc Proc; public int ClsExtra, WndExtra; public IntPtr Instance, Icon, Cursor, Background; public string? MenuName; public string Name; }
     [DllImport("kernel32.dll")] private static extern IntPtr GetModuleHandleW(string? n);
     [DllImport("kernel32.dll")] private static extern bool QueryPerformanceCounter(out long n);
     [DllImport("kernel32.dll")] private static extern bool QueryPerformanceFrequency(out long n);
@@ -118,7 +118,13 @@ internal static class InputBridge
         return true;
     }
     private static Point GetPoint(){ GetCursorPos(out var p); return p; }
-    private static void Push(uint kind,uint data=0){ if(Queue.Count>=8192){_error=111;_running=false;return;} QueryPerformanceCounter(out var q); var p=GetPoint(); Queue.Enqueue(new(){Qpc=(ulong)q,X=p.X,Y=p.Y,Kind=kind,Data=data}); }
+    private static void Fail(int error)
+    {
+        _error = error;
+        _running = false;
+        if (_threadId != 0) PostThreadMessageW(_threadId, 0x0012, UIntPtr.Zero, IntPtr.Zero);
+    }
+    private static void Push(uint kind,uint data=0){ if(Queue.Count>=8192){Fail(111);return;} QueryPerformanceCounter(out var q); var p=GetPoint(); Queue.Enqueue(new(){Qpc=(ulong)q,X=p.X,Y=p.Y,Kind=kind,Data=data}); }
     private static IntPtr MouseHook(int code, UIntPtr w, IntPtr l)
     {
         if (code >= 0 && Active(true)) {
@@ -176,7 +182,44 @@ internal static class InputBridge
         }
     }
     private static IntPtr Proc(IntPtr h,uint m,UIntPtr w,IntPtr l){ if(m!=0x00FF) return DefWindowProcW(h,m,w,l); uint size=0; GetRawInputData(l,0x10000003,IntPtr.Zero,ref size,(uint)Marshal.SizeOf<RawInputHeader>()); var mem=Marshal.AllocHGlobal((int)size); try { if(GetRawInputData(l,0x10000003,mem,ref size,(uint)Marshal.SizeOf<RawInputHeader>())!=(int)size)return IntPtr.Zero; var r=Marshal.PtrToStructure<RawInput>(mem); if(r.Header.Type==RIM_TYPEMOUSE&&Active(true)){var x=r.Mouse;if(x.LastX!=0||x.LastY!=0)Push(1);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_DOWN)!=0)Push(2);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_UP)!=0)Push(3);if((x.ButtonFlags&RI_MOUSE_WHEEL)!=0)Push(6,x.ButtonData);}else if(r.Header.Type==RIM_TYPEKEYBOARD&&Active(false))Push((r.Keyboard.Flags&1)!=0?8u:7u,((uint)r.Keyboard.VKey<<16)|r.Keyboard.MakeCode); } finally{Marshal.FreeHGlobal(mem);} return IntPtr.Zero; }
-    private static void Loop(){ _threadId=GetCurrentThreadId(); var wc=new WndClass{Name="crer.raw.input",Proc=Proc,Instance=GetModuleHandleW(null)};RegisterClassW(ref wc);var h=CreateWindowExW(0,wc.Name,wc.Name,0,0,0,0,0,new IntPtr(-3),IntPtr.Zero,wc.Instance,IntPtr.Zero);_mouseHook=SetWindowsHookExW(14,MouseHookProc,IntPtr.Zero,0);_keyboardHook=SetWindowsHookExW(13,KeyboardHookProc,IntPtr.Zero,0);if(_mouseHook==IntPtr.Zero||_keyboardHook==IntPtr.Zero){_error=Marshal.GetLastWin32Error();_running=false;}while(_running&&GetMessageW(out _,IntPtr.Zero,0,0)>0){}if(_mouseHook!=IntPtr.Zero)UnhookWindowsHookEx(_mouseHook);if(_keyboardHook!=IntPtr.Zero)UnhookWindowsHookEx(_keyboardHook);_mouseHook=_keyboardHook=IntPtr.Zero;Stopped.Set(); }
+    private static void Loop()
+    {
+        _threadId = GetCurrentThreadId();
+        try
+        {
+            var wc = new WndClass { Name = "crer.raw.input", Proc = Proc, Instance = GetModuleHandleW(null) };
+            RegisterClassW(ref wc);
+            var window = CreateWindowExW(0, wc.Name, wc.Name, 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, wc.Instance, IntPtr.Zero);
+            if (window == IntPtr.Zero) { Fail(Marshal.GetLastWin32Error()); return; }
+            _mouseHook = SetWindowsHookExW(14, MouseHookProc, IntPtr.Zero, 0);
+            _keyboardHook = SetWindowsHookExW(13, KeyboardHookProc, IntPtr.Zero, 0);
+            if (_mouseHook == IntPtr.Zero || _keyboardHook == IntPtr.Zero)
+            {
+                Fail(Marshal.GetLastWin32Error());
+                return;
+            }
+            while (_running)
+            {
+                var messageStatus = GetMessageW(out _, IntPtr.Zero, 0, 0);
+                if (messageStatus > 0) continue;
+                if (messageStatus < 0) Fail(Marshal.GetLastWin32Error());
+                break;
+            }
+        }
+        catch
+        {
+            Fail(Marshal.GetLastWin32Error() is var error && error != 0 ? error : 31);
+        }
+        finally
+        {
+            if (_mouseHook != IntPtr.Zero) UnhookWindowsHookEx(_mouseHook);
+            if (_keyboardHook != IntPtr.Zero) UnhookWindowsHookEx(_keyboardHook);
+            _mouseHook = _keyboardHook = IntPtr.Zero;
+            _running = false;
+            _threadId = 0;
+            Stopped.Set();
+        }
+    }
     [UnmanagedCallersOnly(EntryPoint="crer_input_abi_version")] public static uint Version()=>1;
     [UnmanagedCallersOnly(EntryPoint="crer_input_get_foreground_window")] public static nint GetForegroundWindowHandle()=>GetForegroundWindow();
     [UnmanagedCallersOnly(EntryPoint="crer_input_restore_foreground_window")] public static int RestoreForegroundWindow(nint h)
@@ -241,8 +284,32 @@ internal static class InputBridge
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_foreground_status")] public static int LastForegroundStatus()=>_lastForegroundStatus;
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
-    [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid){if(_running)return 183;_pid=pid;_error=0;_target=_content=IntPtr.Zero;Array.Clear(KeyboardState);_running=true;_thread=new Thread(Loop){IsBackground=true};_thread.Start();return 0;}
-    [UnmanagedCallersOnly(EntryPoint="crer_input_stop")] public static int Stop(){_running=false;if(_threadId!=0)PostThreadMessageW(_threadId,0x0012,UIntPtr.Zero,IntPtr.Zero);Stopped.WaitOne(1000);return _error;}
+    [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid)
+    {
+        if (_running || (_thread?.IsAlive ?? false)) return 183;
+        while (Queue.TryDequeue(out _)) { }
+        Stopped.Reset();
+        _pid = pid;
+        _error = 0;
+        _threadId = 0;
+        _target = _content = IntPtr.Zero;
+        _mouseHook = _keyboardHook = IntPtr.Zero;
+        Array.Clear(KeyboardState);
+        _running = true;
+        _thread = new Thread(Loop) { IsBackground = true };
+        _thread.Start();
+        return 0;
+    }
+    [UnmanagedCallersOnly(EntryPoint="crer_input_is_running")] public static int IsRunning()=>_running ? 1 : 0;
+    [UnmanagedCallersOnly(EntryPoint="crer_input_stop")] public static int Stop()
+    {
+        var thread = _thread;
+        if (thread is null || !thread.IsAlive) return _error;
+        _running = false;
+        if (_threadId != 0) PostThreadMessageW(_threadId, 0x0012, UIntPtr.Zero, IntPtr.Zero);
+        if (!Stopped.WaitOne(5000)) return 1460; // ERROR_TIMEOUT
+        return _error;
+    }
     [UnmanagedCallersOnly(EntryPoint="crer_input_read")] public static unsafe uint Read(CrerInputEvent* output,uint capacity){uint n=0;while(n<capacity&&Queue.TryDequeue(out var e))output[n++]=e;return n;}
     [UnmanagedCallersOnly(EntryPoint="crer_input_get_content_rect")] public static unsafe int GetContentRect(CrerRect* output)
     {

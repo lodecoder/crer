@@ -1,3 +1,4 @@
+import { resolveFromDirectory } from "./paths.ts";
 import type { Point } from "./types.ts";
 
 export type TemplateOptions = {
@@ -48,8 +49,7 @@ const toBase64 = (bytes: Uint8Array) => {
 };
 
 export function templatePath(base: string | undefined, path: string) {
-  if (/^(?:[A-Za-z]:[\\/]|\\\\)/.test(path)) return path;
-  return `${base ?? Deno.cwd()}${base ? "/" : ""}${path}`;
+  return resolveFromDirectory(base, path);
 }
 
 export function randomPointInMatch(

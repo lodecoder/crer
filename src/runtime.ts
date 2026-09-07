@@ -1,4 +1,7 @@
+import { executeAtomicAction } from "./actions.ts";
 import { Cdp } from "./cdp.ts";
+import { EnvironmentError, ExecutionAbortedError, InterruptedError } from "./errors.ts";
+import { cleanupErrors } from "./input_guard.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import {
@@ -18,10 +21,28 @@ import type {
   WindowBounds,
 } from "./types.ts";
 
-const decoder = new TextDecoder();
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-class EnvironmentError extends Error {}
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 class ForEachBreak {}
+async function collectText(
+  stream: ReadableStream<Uint8Array>,
+  limit = 64 * 1024,
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+      if (text.length > limit) text = text.slice(-limit);
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
+  }
+}
 async function fetchWithin(url: string, timeoutMs: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -35,14 +56,23 @@ async function fetchWithin(url: string, timeoutMs: number) {
     if (timer !== undefined) clearTimeout(timer);
   }
 }
-async function sleepInterruptibly(ms: number, signal?: AbortSignal) {
+async function sleepInterruptibly(ms: number, signal?: AbortSignal): Promise<void> {
   if (!signal) return await sleep(ms);
-  await Promise.race([
-    sleep(ms),
-    new Promise<void>((_, reject) =>
-      signal.addEventListener("abort", () => reject(new Error("worker timed out")), { once: true })
-    ),
-  ]);
+  const interrupted = () =>
+    signal.reason instanceof Error ? signal.reason : new InterruptedError("interrupted");
+  if (signal.aborted) throw interrupted();
+  let onAbort: (() => void) | undefined;
+  try {
+    await Promise.race([
+      sleep(ms),
+      new Promise<void>((_, reject) => {
+        onAbort = () => reject(interrupted());
+        signal.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
 }
 export type PlayOptions = {
   chromePath: string;
@@ -93,6 +123,7 @@ type BrowserSession = {
   pageDebuggerUrl: string;
   windowId: number;
   process: Deno.ChildProcess;
+  stderr: Promise<string>;
   runDir: string;
   viewport: { x: number; y: number };
   network: NetworkTracker;
@@ -124,7 +155,7 @@ export function createSharedBrowserSession(
   };
 }
 
-function scenarioProfileDir(s: Scenario): string | undefined {
+export function scenarioProfileDirectory(s: Scenario): string | undefined {
   const profile = s.browser.profile;
   if (!profile?.startsWith("persistent:")) return undefined;
   const directory = profile.slice("persistent:".length).trim();
@@ -271,6 +302,23 @@ async function waitEndpoint(port: number): Promise<{ webSocketDebuggerUrl: strin
   throw new Error(`CDP endpoint on port ${port} was not available`);
 }
 
+export async function awaitChromeEndpoint<T>(
+  endpoint: Promise<T>,
+  processStatus: Promise<{ code: number; signal?: string | null }>,
+): Promise<T> {
+  const outcome = await Promise.race([
+    endpoint.then((value) => ({ value })),
+    processStatus.then((status) => ({ status })),
+  ]);
+  if ("status" in outcome) {
+    const signal = outcome.status.signal ? `, signal ${outcome.status.signal}` : "";
+    throw new EnvironmentError(
+      `Chrome exited before the CDP endpoint was ready (code ${outcome.status.code}${signal})`,
+    );
+  }
+  return outcome.value;
+}
+
 async function waitForProcessExit(process: Deno.ChildProcess, timeoutMs: number) {
   return await Promise.race([
     process.status.then((status) => status),
@@ -296,12 +344,14 @@ async function closeBrowser(browser: BrowserSession) {
   ]);
   browser.cdp.close();
   const status = await terminateProcess(browser.process);
+  const stderr = await browser.stderr.catch((error) => `could not read Chrome stderr: ${error}`);
   await Deno.writeTextFile(
     `${browser.runDir}/shutdown.json`,
     JSON.stringify(
       {
         graceful,
         exited: status !== undefined,
+        ...(stderr ? { stderr } : {}),
         ...(status ? { code: status.code, success: status.success, signal: status.signal } : {}),
       },
       null,
@@ -463,7 +513,7 @@ async function validateDisplay(
   return { x: actual.width, y: actual.height };
 }
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
-  const configuredProfile = options.profileDir ?? scenarioProfileDir(s);
+  const configuredProfile = options.profileDir ?? scenarioProfileDirectory(s);
   const profile = configuredProfile
     ? await persistentProfileDirectory(configuredProfile)
     : `${await Deno.realPath(runDir)}/profile`;
@@ -491,16 +541,25 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     stdout: "null",
     stderr: "piped",
   }).spawn();
+  const stderr = collectText(p.stderr);
   let cdp: Cdp | undefined;
   let stage = "chrome_started";
-  const writeLaunchDiagnostic = async (error?: unknown) => {
+  const writeLaunchDiagnostic = async (error?: unknown, chromeStderr?: string) => {
     await Deno.writeTextFile(
       `${runDir}/launch.json`,
-      JSON.stringify({ stage, ...(error ? { error: String(error) } : {}) }, null, 2) + "\n",
+      JSON.stringify(
+        {
+          stage,
+          ...(error ? { error: String(error) } : {}),
+          ...(chromeStderr ? { stderr: chromeStderr } : {}),
+        },
+        null,
+        2,
+      ) + "\n",
     );
   };
   try {
-    const version = await waitEndpoint(port);
+    const version = await awaitChromeEndpoint(waitEndpoint(port), p.status);
     stage = "endpoint_ready";
     await writeLaunchDiagnostic();
     cdp = new Cdp(version.webSocketDebuggerUrl);
@@ -573,14 +632,15 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       pageDebuggerUrl: target.webSocketDebuggerUrl,
       windowId: window.windowId,
       process: p,
+      stderr,
       runDir,
       viewport,
       network,
     };
   } catch (error) {
-    await writeLaunchDiagnostic(error).catch(() => {});
     cdp?.close();
     await terminateProcess(p);
+    await writeLaunchDiagnostic(error, await stderr.catch(() => "")).catch(() => {});
     throw error;
   }
 }
@@ -726,7 +786,9 @@ function failureFor(step: Step, error: unknown): FailureKind {
 async function waitFor(b: BrowserSession, step: Step, timeout: number, signal?: AbortSignal) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    if (signal?.aborted) throw new Error("worker timed out");
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new InterruptedError("interrupted");
+    }
     const hint = step.locator_hint;
     const expression = `(() => {
       const hint = ${JSON.stringify(hint ?? {})};
@@ -796,55 +858,7 @@ async function assertState(b: BrowserSession, step: Step) {
     throw new Error("assert locator failed");
   }
 }
-type KeyInfo = { key: string; vk: number; code: string; text?: string };
-const keys: Record<string, KeyInfo> = {
-  Enter: { key: "Enter", vk: 13, code: "Enter", text: "\r" },
-  Tab: { key: "Tab", vk: 9, code: "Tab" },
-  Escape: { key: "Escape", vk: 27, code: "Escape" },
-  Backspace: { key: "Backspace", vk: 8, code: "Backspace" },
-  Delete: { key: "Delete", vk: 46, code: "Delete" },
-  ArrowDown: { key: "ArrowDown", vk: 40, code: "ArrowDown" },
-  ArrowUp: { key: "ArrowUp", vk: 38, code: "ArrowUp" },
-  ArrowLeft: { key: "ArrowLeft", vk: 37, code: "ArrowLeft" },
-  ArrowRight: { key: "ArrowRight", vk: 39, code: "ArrowRight" },
-  Control: { key: "Control", vk: 17, code: "ControlLeft" },
-  Alt: { key: "Alt", vk: 18, code: "AltLeft" },
-  Shift: { key: "Shift", vk: 16, code: "ShiftLeft" },
-  Meta: { key: "Meta", vk: 91, code: "MetaLeft" },
-};
-const modifierBits: Record<string, number> = { Alt: 1, Control: 2, Meta: 4, Shift: 8 };
-const keyInfo = (key: string): KeyInfo =>
-  keys[key] ?? {
-    key,
-    vk: key.length === 1 ? key.toUpperCase().charCodeAt(0) : 0,
-    code: key.length === 1 && /^[a-z]$/i.test(key)
-      ? `Key${key.toUpperCase()}`
-      : key.length === 1 && /^\d$/.test(key)
-      ? `Digit${key}`
-      : key,
-  };
-// Match Chromium's keyboard protocol: non-text physical keys use rawKeyDown;
-// Enter carries CR text and must use keyDown so its native button activation runs.
-const keyEvent = (type: "rawKeyDown" | "keyUp", info: KeyInfo, modifiers?: number) => ({
-  type,
-  key: info.key,
-  code: info.code,
-  windowsVirtualKeyCode: info.vk,
-  ...(modifiers === undefined ? {} : { modifiers }),
-});
-const keyDownEvent = (info: KeyInfo, modifiers = 0) =>
-  info.text && modifiers === 0
-    ? {
-      type: "keyDown",
-      key: info.key,
-      code: info.code,
-      windowsVirtualKeyCode: info.vk,
-      text: info.text,
-      unmodifiedText: info.text,
-      modifiers,
-    }
-    : keyEvent("rawKeyDown", info, modifiers);
-async function act(
+async function executeLeafStep(
   b: BrowserSession,
   step: Step,
   at: { x: number; y: number } | undefined,
@@ -854,153 +868,22 @@ async function act(
   signal?: AbortSignal,
 ) {
   const call = (m: string, p: Record<string, unknown>) => b.cdp.call(m, p, b.sessionId);
-  switch (step.do) {
-    case "navigate":
-      return await call("Page.navigate", { url: step.url });
-    case "wait_for":
-      return await waitFor(b, step, timeout, signal);
-    case "assert":
-      return await assertState(b, step);
-    case "click":
-    case "double_click": {
-      const n = step.do === "double_click" ? 2 : 1;
-      const holdMs = Number(step.hold_ms ?? 0);
-      if (!Number.isFinite(holdMs) || holdMs < 0) {
-        throw new Error("click hold_ms must be a non-negative number after argument expansion");
-      }
-      for (let i = 1; i <= n; i++) {
-        await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: at!.x, y: at!.y });
-        await call("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x: at!.x,
-          y: at!.y,
-          button: "left",
-          clickCount: i,
-        });
-        try {
-          if (holdMs > 0) await sleepInterruptibly(holdMs, signal);
-        } finally {
-          await call("Input.dispatchMouseEvent", {
-            type: "mouseReleased",
-            x: at!.x,
-            y: at!.y,
-            button: "left",
-            clickCount: i,
-          });
-        }
-      }
-      return;
-    }
-    case "mouse_move":
-      return await call("Input.dispatchMouseEvent", { type: "mouseMoved", x: at!.x, y: at!.y });
-    case "drag": {
-      const from = step.from as { x?: number; y?: number } | undefined;
-      const to = step.to as { x?: number; y?: number } | undefined;
-      if (
-        !from || !to || !Number.isFinite(from.x) || !Number.isFinite(from.y)
-        || !Number.isFinite(to.x) || !Number.isFinite(to.y)
-      ) {
-        throw new Error("drag requires from and to points");
-      }
-      const fromPoint = { x: from.x!, y: from.y! };
-      const toPoint = { x: to.x!, y: to.y! };
-      const jitteredFrom = jitter(fromPoint, j, rng, b.viewport);
-      if (!jitteredFrom) throw new Error("jitter bounds failure");
-      const offset = { x: jitteredFrom.x - fromPoint.x, y: jitteredFrom.y - fromPoint.y };
-      const jitteredTo = { x: toPoint.x + offset.x, y: toPoint.y + offset.y };
-      if (
-        jitteredTo.x < 0 || jitteredTo.y < 0 || jitteredTo.x > b.viewport.x
-        || jitteredTo.y > b.viewport.y
-      ) {
-        throw new Error("jitter bounds failure");
-      }
-      await call("Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x: jitteredFrom.x,
-        y: jitteredFrom.y,
-      });
-      await call("Input.dispatchMouseEvent", {
-        type: "mousePressed",
-        x: jitteredFrom.x,
-        y: jitteredFrom.y,
-        button: "left",
-        buttons: 1,
-        clickCount: 1,
-      });
-      for (let i = 1; i <= 10; i++) {
-        const ratio = i / 10;
-        await call("Input.dispatchMouseEvent", {
-          type: "mouseMoved",
-          x: jitteredFrom.x + (jitteredTo.x - jitteredFrom.x) * ratio,
-          y: jitteredFrom.y + (jitteredTo.y - jitteredFrom.y) * ratio,
-          button: "left",
-          buttons: 1,
-        });
-      }
-      return await call("Input.dispatchMouseEvent", {
-        type: "mouseReleased",
-        x: jitteredTo.x,
-        y: jitteredTo.y,
-        button: "left",
-        buttons: 0,
-        clickCount: 1,
-      });
-    }
-    case "scroll":
-      return await call("Input.dispatchMouseEvent", {
-        type: "mouseWheel",
-        x: at!.x,
-        y: at!.y,
-        deltaX: step.delta?.x ?? 0,
-        deltaY: step.delta?.y ?? 0,
-      });
-    case "text":
-      return await call("Input.insertText", { text: step.value ?? "" });
-    case "key": {
-      const info = keyInfo(step.key ?? "");
-      await call("Input.dispatchKeyEvent", keyDownEvent(info));
-      return await call("Input.dispatchKeyEvent", keyEvent("keyUp", info));
-    }
-    case "key_chord": {
-      const chord = step.keys;
-      if (
-        !Array.isArray(chord) || chord.length < 2 || !chord.every((key) => typeof key === "string")
-      ) {
-        throw new Error("key_chord requires keys with one or more modifiers and a final key");
-      }
-      const modifiers = chord.slice(0, -1) as string[];
-      if (!modifiers.every((key) => key in modifierBits)) {
-        throw new Error("key_chord modifiers must be Alt, Control, Meta, or Shift");
-      }
-      let mask = 0;
-      for (const modifier of modifiers) {
-        await call("Input.dispatchKeyEvent", keyDownEvent(keyInfo(modifier), mask));
-        mask |= modifierBits[modifier];
-      }
-      const info = keyInfo(chord.at(-1)! as string);
-      await call("Input.dispatchKeyEvent", keyDownEvent(info, mask));
-      await call("Input.dispatchKeyEvent", keyEvent("keyUp", info, mask));
-      for (const modifier of modifiers.toReversed()) {
-        mask &= ~modifierBits[modifier];
-        await call("Input.dispatchKeyEvent", keyEvent("keyUp", keyInfo(modifier), mask));
-      }
-      return;
-    }
-    case "sleep": {
-      const ms = Number(step.ms ?? 0);
-      if (!Number.isFinite(ms) || ms < 0) {
-        throw new Error("sleep ms must be a non-negative number after argument expansion");
-      }
-      return await sleepInterruptibly(ms, signal);
-    }
-    case "log":
-      console.log(`[crer] ${step.message}`);
-      return;
-    case "screenshot":
-      return await capture(b, String(step.name ?? "screenshot"), true);
-    default:
-      throw new Error(`unsupported step: ${step.do}`);
-  }
+  return await executeAtomicAction(
+    {
+      call,
+      viewport: b.viewport,
+      waitFor: (candidate, limit, abort) => waitFor(b, candidate, limit, abort),
+      assertState: (candidate) => assertState(b, candidate),
+      capture: (name) => capture(b, name, true),
+      sleep: sleepInterruptibly,
+    },
+    step,
+    at,
+    j,
+    rng,
+    timeout,
+    signal,
+  );
 }
 async function currentUrl(b: BrowserSession): Promise<string | undefined> {
   try {
@@ -1045,8 +928,12 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   let sharedManaged = false;
   let discardShared = false;
   const failures: string[] = [];
+  const abortBrowser = () => {
+    if (b) void b.cdp.call("Browser.close").catch(() => {});
+  };
+  options.signal?.addEventListener("abort", abortBrowser, { once: true });
   try {
-    const configuredProfile = options.profileDir ?? scenarioProfileDir(s);
+    const configuredProfile = options.profileDir ?? scenarioProfileDirectory(s);
     if (options.sharedSession && configuredProfile) {
       sharedManaged = true;
       const profileDir = await persistentProfileDirectory(configuredProfile);
@@ -1228,7 +1115,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         let delayHandled = false;
         let stepDelayHandled = false;
         try {
-          if (options.signal?.aborted) throw new Error("worker timed out");
+          if (options.signal?.aborted) {
+            throw options.signal.reason instanceof Error
+              ? options.signal.reason
+              : new InterruptedError("interrupted");
+          }
           if (foreground && requireForeground) {
             if (sharedManaged) {
               const shared = options.sharedSession!;
@@ -1627,7 +1518,15 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 throw new Error("click count must be a positive integer after argument expansion");
               }
               for (let iteration = 0; iteration < count; iteration++) {
-                await act(browser, step, at, s.playback?.jitter, rng, timeout, options.signal);
+                await executeLeafStep(
+                  browser,
+                  step,
+                  at,
+                  s.playback?.jitter,
+                  rng,
+                  timeout,
+                  options.signal,
+                );
                 if (iteration === count - 1) {
                   await appendStepLog({
                     index: i,
@@ -1660,7 +1559,15 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 await executeSteps(step.then, i);
               }
             } else {
-              await act(browser, step, at, s.playback?.jitter, rng, timeout, options.signal);
+              await executeLeafStep(
+                browser,
+                step,
+                at,
+                s.playback?.jitter,
+                rng,
+                timeout,
+                options.signal,
+              );
               await appendStepLog({
                 index: i,
                 do: step.do,
@@ -1677,7 +1584,15 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           }
         } catch (e) {
           if (e instanceof ForEachBreak) throw e;
-          if (e instanceof EnvironmentError) throw e;
+          if (
+            options.signal?.aborted
+            && (options.signal.reason instanceof InterruptedError
+              || options.signal.reason instanceof ExecutionAbortedError)
+          ) throw options.signal.reason;
+          if (
+            e instanceof EnvironmentError || e instanceof InterruptedError
+            || e instanceof ExecutionAbortedError
+          ) throw e;
           if (e instanceof TemplateMatchError) templateFailureScreenshot ??= e.screenshot;
           const kind = failureFor(step, e);
           await appendStepLog({
@@ -1693,6 +1608,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             status: "failed",
             kind,
             error: String(e),
+            ...(cleanupErrors(e) ? { cleanupErrors: cleanupErrors(e) } : {}),
           });
           if (kind === "template" && templateFailureScreenshot) {
             await writeBase64Png(
@@ -1727,8 +1643,17 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     return { code: failures.length ? 4 : 0, failures, runDir };
   } catch (e) {
     discardShared = sharedManaged;
-    return { code: 3, failures: [String(e)], runDir };
+    const terminal = options.signal?.aborted && options.signal.reason instanceof Error
+      ? options.signal.reason
+      : e;
+    const code = terminal instanceof InterruptedError
+      ? 5
+      : terminal instanceof ExecutionAbortedError
+      ? 4
+      : 3;
+    return { code, failures: [String(terminal)], runDir };
   } finally {
+    options.signal?.removeEventListener("abort", abortBrowser);
     if (sharedManaged) {
       const shared = options.sharedSession!;
       await writeSharedForeground(shared, runDir).catch(() => {});
@@ -1761,7 +1686,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       foreground?.close();
     }
     if (
-      !options.keepArtifacts && !options.profileDir && !scenarioProfileDir(s)
+      !options.keepArtifacts && !options.profileDir && !scenarioProfileDirectory(s)
     ) {
       /* run metadata and diagnostics stay; only browser profile is disposable */ try {
         await Deno.remove(`${runDir}/profile`, { recursive: true });

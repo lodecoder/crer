@@ -1,14 +1,24 @@
 import { Cdp } from "./cdp.ts";
+import { commandTakesFile, validateCommandOptions } from "./cli.ts";
+import {
+  EnvironmentError,
+  ExecutionAbortedError,
+  exitCodeFor,
+  InterruptedError,
+  ValidationError,
+} from "./errors.ts";
 import { inspectRun } from "./inspect.ts";
 import {
   normalizeRawWithWarnings,
   profileDirFromSidecar,
   qpcFrequencyFromSidecar,
+  recordingWarningFromSidecar,
   requestedContentFromSidecar,
   transformFromSidecar,
   windowBoundsFromSidecar,
 } from "./normalize.ts";
 import { parsePlanWindowBoundsOverride, parseTemplateScreenshotPolicy } from "./options.ts";
+import { fileDirectory, resolveFromDirectory } from "./paths.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { recordRaw } from "./record.ts";
@@ -16,9 +26,10 @@ import {
   closeSharedBrowserSession,
   createSharedBrowserSession,
   playScenario,
+  scenarioProfileDirectory,
   type SharedBrowserSession,
 } from "./runtime.ts";
-import { mapWithConcurrency } from "./scheduler.ts";
+import { KeyedLock, mapWithCancellation, Semaphore } from "./scheduler.ts";
 import type {
   FailurePolicy,
   PlanNode,
@@ -28,7 +39,11 @@ import type {
   WindowBounds,
 } from "./types.ts";
 import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
-const [command, file, ...args] = Deno.args;
+const [command, ...commandArgs] = Deno.args;
+const file = commandTakesFile(command) && !commandArgs[0]?.startsWith("--")
+  ? commandArgs.shift()
+  : undefined;
+const args = commandArgs;
 const option = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
@@ -36,7 +51,9 @@ const option = (name: string) => {
 const configuredChromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME");
 const chromePath = () => {
   const path = configuredChromePath();
-  if (!path) throw new Error("Chrome for Testing must be specified with --chrome or CRER_CHROME");
+  if (!path) {
+    throw new EnvironmentError("Chrome for Testing must be specified with --chrome or CRER_CHROME");
+  }
   return path;
 };
 const inputDllPath = () => {
@@ -437,10 +454,27 @@ const templateScreenshotsOption = () =>
   parseTemplateScreenshotPolicy(
     args.includes("--template-screenshots") ? option("--template-screenshots") ?? "" : undefined,
   );
+async function loadScenarioFile(path: string) {
+  try {
+    return scenarioFrom(await loadYaml(path));
+  } catch (error) {
+    throw new ValidationError(`invalid scenario ${path}: ${error}`, { cause: error });
+  }
+}
+async function loadPlanFile(path: string) {
+  try {
+    return planFrom(await loadYaml(path));
+  } catch (error) {
+    throw new ValidationError(`invalid plan ${path}: ${error}`, { cause: error });
+  }
+}
 async function runNode(
   node: PlanNode,
   base: string,
   maxParallel: number,
+  gate: Semaphore,
+  profileLocks: KeyedLock,
+  signal?: AbortSignal,
   workerMs?: number,
   onFailure?: Record<string, FailurePolicy | undefined>,
   ignoreViewportMismatch = false,
@@ -451,39 +485,54 @@ async function runNode(
   templateScreenshots?: TemplateScreenshotPolicy,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = workerMs && workerMs > 0
-      ? setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, workerMs)
+    const scenarioFile = resolveFromDirectory(base, node.scenario);
+    const scenario = await loadScenarioFile(scenarioFile);
+    const configuredProfile = profileDir ?? scenarioProfileDirectory(scenario);
+    const persistentProfile = configuredProfile
+      ? await persistentProfileDirectory(configuredProfile)
       : undefined;
-    try {
-      const scenarioFile = `${base}/${node.scenario}`;
-      const scenario = scenarioFrom(await loadYaml(scenarioFile));
-      if (maxParallel > 1 && (profileDir || scenario.browser.profile?.startsWith("persistent:"))) {
-        throw new Error("persistent profile cannot be used with run max_parallel greater than 1");
-      }
-      const result = await playScenario(scenario, {
-        chromePath: chromePath(),
-        inputDllPath: inputDllPath(),
-        signal: controller.signal,
-        ignoreViewportMismatch,
-        muteAudio,
-        profileDir,
-        boundsOverride,
-        sharedSession,
-        templateScreenshots,
-        templateBaseDir: scenarioFile.replace(/[\\/][^\\/]+$/, ""),
-      });
-      if (timedOut && sharedSession) await closeSharedBrowserSession(sharedSession);
-      return timedOut
-        ? [{ ...result, code: 4, failures: [...result.failures, "plan:timeout:worker_ms"] }]
-        : [result];
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
+    const runLeaf = () =>
+      gate.run(async () => {
+        const controller = new AbortController();
+        const combinedSignal = signal
+          ? AbortSignal.any([signal, controller.signal])
+          : controller.signal;
+        let timedOut = false;
+        const timer = workerMs && workerMs > 0
+          ? setTimeout(() => {
+            timedOut = true;
+            controller.abort(new ExecutionAbortedError("plan worker timeout"));
+          }, workerMs)
+          : undefined;
+        try {
+          const result = await playScenario(scenario, {
+            chromePath: chromePath(),
+            inputDllPath: inputDllPath(),
+            signal: combinedSignal,
+            ignoreViewportMismatch,
+            muteAudio,
+            profileDir,
+            boundsOverride,
+            sharedSession,
+            templateScreenshots,
+            templateBaseDir: fileDirectory(scenarioFile),
+          });
+          if (timedOut && sharedSession) await closeSharedBrowserSession(sharedSession);
+          return timedOut
+            ? [{
+              ...result,
+              code: 4 as const,
+              failures: [...result.failures, "plan:timeout:worker_ms"],
+            }]
+            : [result];
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      }, signal);
+    const result = persistentProfile
+      ? await profileLocks.run(persistentProfile, runLeaf, signal)
+      : await runLeaf();
+    return result ?? [];
   }
   if ("serial" in node) {
     const out: RunResult[] = [];
@@ -492,6 +541,9 @@ async function runNode(
         child,
         base,
         maxParallel,
+        gate,
+        profileLocks,
+        signal,
         workerMs,
         onFailure,
         ignoreViewportMismatch,
@@ -502,18 +554,21 @@ async function runNode(
         templateScreenshots,
       );
       out.push(...results);
-      if (shouldAbortPlan(results, onFailure)) break;
+      if (signal?.aborted || shouldAbortPlan(results, onFailure)) break;
     }
     return out;
   }
-  const results = await mapWithConcurrency(
+  const results = await mapWithCancellation(
     node.parallel.jobs,
     maxParallel,
-    (child) =>
-      runNode(
+    async (child, groupSignal) => {
+      const childResults = await runNode(
         child,
         base,
         maxParallel,
+        gate,
+        profileLocks,
+        groupSignal,
         workerMs,
         onFailure,
         ignoreViewportMismatch,
@@ -522,11 +577,14 @@ async function runNode(
         boundsOverride,
         sharedSession,
         templateScreenshots,
-      ),
-    (result) =>
+      );
+      return childResults;
+    },
+    (childResults) =>
       node.parallel.fail_fast
-        ? result.some((run) => run.code !== 0)
-        : shouldAbortPlan(result, onFailure),
+        ? childResults.some((run) => run.code !== 0)
+        : shouldAbortPlan(childResults, onFailure),
+    signal,
   );
   return results.flat();
 }
@@ -535,6 +593,7 @@ async function main() {
     console.log("crer <doctor|inspect|validate|play|run|record|normalize> <file> [options]");
     return;
   }
+  validateCommandOptions(command, args);
   if (command === "doctor") {
     const configured = configuredChromePath();
     const ffi = inputDllPath();
@@ -561,11 +620,15 @@ async function main() {
   }
   if (!file) throw new Error("scenario or plan path is required");
   if (command === "validate") {
-    const v = await loadYaml(file);
     try {
-      scenarioFrom(v);
-    } catch {
-      planFrom(v);
+      const value = await loadYaml(file);
+      try {
+        scenarioFrom(value);
+      } catch {
+        planFrom(value);
+      }
+    } catch (error) {
+      throw new ValidationError(`invalid scenario or plan ${file}: ${error}`, { cause: error });
     }
     console.log(`${file}: valid`);
     return;
@@ -574,40 +637,63 @@ async function main() {
     const stepDelay = option("--step-delay-ms");
     const stepDelayMs = stepDelay === undefined ? undefined : Number(stepDelay);
     if (stepDelayMs !== undefined && (!Number.isFinite(stepDelayMs) || stepDelayMs < 0)) {
-      throw new Error("--step-delay-ms must be a non-negative number");
+      throw new ValidationError("--step-delay-ms must be a non-negative number");
     }
-    const r = await playScenario(scenarioFrom(await loadYaml(file)), {
-      chromePath: chromePath(),
-      inputDllPath: inputDllPath(),
-      seed: option("--seed"),
-      keepArtifacts: args.includes("--keep-artifacts"),
-      stepDelayMs,
-      ignoreViewportMismatch: args.includes("--ignore-viewport-mismatch"),
-      muteAudio: args.includes("--mute-audio"),
-      profileDir: profileDirOption(),
-      templateScreenshots: templateScreenshotsOption(),
-      templateBaseDir: file.replace(/[\\/][^\\/]+$/, ""),
-    });
+    const configuredSeed = option("--seed");
+    if (
+      configuredSeed !== undefined
+      && (!/^\d+$/.test(configuredSeed) || BigInt(configuredSeed) > 0xffff_ffff_ffff_ffffn)
+    ) {
+      throw new ValidationError("--seed must be a uint64 decimal string");
+    }
+    const configuredPosition = positionOption();
+    const controller = new AbortController();
+    const onInterrupt = () => controller.abort(new InterruptedError("interrupted by user"));
+    Deno.addSignalListener("SIGINT", onInterrupt);
+    let r: RunResult;
+    try {
+      r = await playScenario(await loadScenarioFile(file), {
+        chromePath: chromePath(),
+        inputDllPath: inputDllPath(),
+        seed: configuredSeed,
+        position: configuredPosition
+          ? { left: configuredPosition.x, top: configuredPosition.y }
+          : undefined,
+        keepArtifacts: args.includes("--keep-artifacts"),
+        stepDelayMs,
+        ignoreViewportMismatch: args.includes("--ignore-viewport-mismatch"),
+        muteAudio: args.includes("--mute-audio"),
+        profileDir: profileDirOption(),
+        templateScreenshots: templateScreenshotsOption(),
+        templateBaseDir: fileDirectory(file),
+        signal: controller.signal,
+      });
+    } finally {
+      Deno.removeSignalListener("SIGINT", onInterrupt);
+    }
     console.log(JSON.stringify(r, null, 2));
     Deno.exitCode = r.code;
     return;
   }
   if (command === "run") {
-    const p = planFrom(await loadYaml(file));
+    const p = await loadPlanFile(file);
     const profileDir = profileDirOption();
     const boundsOverride = parsePlanWindowBoundsOverride(option("--plan-window-bounds-override"));
-    if (profileDir && (p.max_parallel ?? 1) > 1) {
-      throw new Error("--profile-dir cannot be used with run max_parallel greater than 1");
-    }
     const sharedSession = p.browser_session
       ? createSharedBrowserSession(p.browser_session.focus ?? "once")
       : undefined;
+    const controller = new AbortController();
+    const onInterrupt = () => controller.abort(new InterruptedError("interrupted by user"));
+    Deno.addSignalListener("SIGINT", onInterrupt);
     let results: RunResult[];
     try {
       results = await runNode(
         p.run,
-        file.replace(/[\\/][^\\/]+$/, ""),
+        fileDirectory(file),
         p.max_parallel ?? 1,
+        new Semaphore(p.max_parallel ?? 1),
+        new KeyedLock(),
+        controller.signal,
         p.timeouts?.worker_ms,
         p.on_failure,
         args.includes("--ignore-viewport-mismatch"),
@@ -618,9 +704,12 @@ async function main() {
         templateScreenshotsOption(),
       );
     } finally {
+      Deno.removeSignalListener("SIGINT", onInterrupt);
       if (sharedSession) await closeSharedBrowserSession(sharedSession);
     }
-    const code = aggregatePlanExitCode(results);
+    const code = controller.signal.reason instanceof InterruptedError
+      ? 5
+      : aggregatePlanExitCode(results);
     console.log(JSON.stringify(results, null, 2));
     Deno.exitCode = code;
     return;
@@ -660,7 +749,11 @@ async function main() {
     const onInterrupt = () => controller.abort();
     Deno.addSignalListener("SIGINT", onInterrupt);
     const duration = option("--duration-ms");
-    const timer = duration ? setTimeout(() => controller.abort(), Number(duration)) : undefined;
+    const durationMs = duration === undefined ? undefined : Number(duration);
+    if (durationMs !== undefined && (!Number.isFinite(durationMs) || durationMs < 0)) {
+      throw new ValidationError("--duration-ms must be a non-negative number");
+    }
+    const timer = durationMs ? setTimeout(() => controller.abort(), durationMs) : undefined;
     const stopFile = option("--stop-file");
     const stopFileTimer = stopFile
       ? setInterval(async () => {
@@ -713,7 +806,7 @@ async function main() {
     const output = option("--output");
     const url = option("--url");
     if (!output || !url) {
-      throw new Error("normalize requires --output <scenario.crer.yaml> and --url <URL>");
+      throw new ValidationError("normalize requires --output <scenario.crer.yaml> and --url <URL>");
     }
     const origin = pointOption("--client-origin");
     const clientSize = pointOption("--client-size");
@@ -728,6 +821,7 @@ async function main() {
     const windowBounds = origin ? undefined : await windowBoundsFromSidecar(file);
     const requestedContent = origin ? undefined : await requestedContentFromSidecar(file);
     const profileDir = origin ? undefined : await profileDirFromSidecar(file);
+    const recordingWarning = origin ? undefined : await recordingWarningFromSidecar(file);
     if (!origin && !sidecarTransform) {
       console.error(
         "Warning: recording metadata is unavailable; output coordinates remain physical screen pixels.",
@@ -744,6 +838,7 @@ async function main() {
       requestedContent,
       profileDir,
     );
+    if (recordingWarning) normalized.warnings.unshift(recordingWarning);
     if (windowBounds) {
       normalized.scenario.browser.window = {
         ...(normalized.scenario.browser.window ?? {}),
@@ -757,4 +852,13 @@ async function main() {
   }
   throw new Error(`unknown command: ${command}`);
 }
-await main();
+try {
+  await main();
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(`crer: ${message}`);
+  if (Deno.env.get("CRER_DEBUG") === "1" && error instanceof Error && error.stack) {
+    console.error(error.stack);
+  }
+  Deno.exitCode = exitCodeFor(error);
+}

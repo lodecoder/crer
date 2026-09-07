@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert@^1.0.14";
+import { assertEquals, assertRejects } from "@std/assert";
 import { persistentProfileDirectory, prepareChromeProfile } from "../src/profiles.ts";
 
 Deno.test("accepts a persistent profile below .crer/profiles", async () => {

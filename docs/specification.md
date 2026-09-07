@@ -49,7 +49,7 @@ Raw Input と HWND 操作は C ABI を公開するC# .NET 10 Native AOT DLL `cre
 
 `crer-win-input.dll` は .NET Native AOT で各 Deno 配布バイナリと同じアーキテクチャ（`win-x86_64` または
 `win-aarch64`）で同梱する。DLL は `crer_input_abi_version`、`crer_input_start`、
-`crer_input_stop`、`crer_input_read`、`crer_input_last_error`、前景 HWND の取得・復元用 API、
+`crer_input_stop`、`crer_input_read`、`crer_input_is_running`、`crer_input_last_error`、前景 HWND の取得・復元用 API、
 `crer_input_foreground_process_window`、フォーカスを変更せず topmost だけを設定する
 `crer_input_set_process_topmost_only` を C ABI で export する。
 イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Deno と DLL
@@ -59,7 +59,7 @@ Raw Input と HWND 操作は C ABI を公開するC# .NET 10 Native AOT DLL `cre
 
 DLL は専用 native thread 上の message-only window で Raw Input を受信し、時刻は
 `QueryPerformanceCounter` を単調時刻として記録する。`start` は Per-Monitor-V2 DPI awareness
-を設定済みのプロセスで一度だけ成功できる。二重起動、イベントバッファのあふれ、Windows API
+を設定済みのプロセスで同時に一つだけ成功し、正常な `stop` 後は再開できる。二重起動、イベントバッファのあふれ、Windows API
 失敗は構造化した error code を返し、バッファあふれは記録を続けず `record` を失敗終了する。
 
 ### 3.2 プロセス分離
@@ -82,7 +82,8 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 実体が外部を指すシンボリックリンクを拒否する。永続プロファイルは実行後も削除しない。通常 Chrome の
 既存プロファイルは対象外とする。
 同一の永続プロファイルを並列起動すると Chrome のプロファイルロックとデータ競合を起こすため、
-`run` では `max_parallel: 1` を必須とする。通常は CfT プロセスを scenario の成功・失敗・中断のいずれでも、
+`run` は同じ永続プロファイルを使う leaf だけを直列化する。異なる永続プロファイルまたは一時プロファイルは
+plan 全体の `max_parallel` 上限まで並列実行できる。通常は CfT プロセスを scenario の成功・失敗・中断のいずれでも、
 終了処理で CDP `Browser.close` による graceful close を要求して閉じる。plan で
 `browser_session.reuse: same-profile` が有効な場合だけ、同じ永続 profile を使う連続 scenario の間では
 CfT プロセス・ウィンドウ・CDP
@@ -207,7 +208,7 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 ## 6. シナリオ形式
 
 拡張子は `.crer.yaml`。UTF-8、改行 LF、スキーマバージョン `1` を必須とする。機密値は書かず、
-環境変数参照 `${ENV:NAME}` のみを許可する。シークレットを含むシナリオは Git にコミットしない。
+シークレットを含むシナリオは Git にコミットしない。
 
 ```yaml
 version: 1
@@ -246,7 +247,7 @@ playback:
 steps:
   - { do: wait_for, url: "https://example.test/orders*", state: network_idle }
   - { do: click, at: { x: 211, y: 182 }, delay_ms: 1040 }
-  - { do: text, value: "${ENV:ORDER_ID}" }
+  - { do: text, value: "ORD-12345" }
   - { do: key, key: Enter }
   - { do: wait_for, locator_hint: { role: table, name: Results, text: "10 results" }, state: visible }
   - { do: scroll, at: { x: 920, y: 620 }, delta: { x: 0, y: 561 } }
@@ -487,8 +488,8 @@ assert の失敗、`5` 中断とする。
 - URL は既定で `http` / `https` のみ。`file:`、拡張機能、ダウンロード、権限要求は明示フラグを
   必要とする。
 - 各ステップに時刻、実効座標、jitter offset、CDP 応答、URLをログする。スクリーンショットは明示的な
-  screenshot step、失敗時、および設定で保存を有効にしたtemplate探索時に記録する。
-  入力テキストと環境変数の値は既定でマスクする。
+  screenshot step、失敗時、および設定で保存を有効にしたtemplate探索時に記録する。入力テキストの値は
+  `steps.ndjson` に記録しない。
 - `on_failure` が `abort` の失敗、または続行不能な失敗時は、以後の同一シナリオ手順を停止する。
   `continue` の失敗時も、最終スクリーンショットと診断（viewport、DPR、URL、locator hint）を
   artifacts に残して次のステップへ進む。終了時は成否を問わず CfT を graceful close する。

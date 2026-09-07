@@ -51,6 +51,13 @@ function validateJitter(
   parameters: ReadonlySet<string> = new Set(),
 ) {
   const jitter = object(value, label);
+  validateKeys(jitter, label, [
+    "enabled",
+    "distribution",
+    "radius_px",
+    "min_distance_from_edge_px",
+    "out_of_bounds",
+  ]);
   if (jitter.enabled === false) return;
   if (
     jitter.enabled !== true
@@ -67,6 +74,7 @@ function validateTemplateOptions(
   parameters: ReadonlySet<string> = new Set(),
 ) {
   const template = object(value, label);
+  validateKeys(template, label, ["path", "min_similarity", "random_inset_px", "on_missing"]);
   if (pathRequired && (typeof template.path !== "string" || !template.path)) {
     throw new Error(`${label}.path is required`);
   }
@@ -97,16 +105,108 @@ function validateFailurePolicies(value: unknown, label: string, allowed: readonl
   }
 }
 
+function validateKeys(value: Record<string, unknown>, label: string, allowed: readonly string[]) {
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) throw new Error(`${label}.${key} is not supported`);
+  }
+}
+
+function validateHttpUrl(value: unknown, label: string, wildcard = false) {
+  if (typeof value !== "string" || !value) throw new Error(`${label} must be a URL string`);
+  const candidate = wildcard ? value.replaceAll("*", "x") : value;
+  let url: URL;
+  try {
+    url = new URL(candidate);
+  } catch {
+    throw new Error(`${label} must be a valid http or https URL`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`${label} must use http or https`);
+  }
+}
+
+function validatePoint(
+  value: unknown,
+  label: string,
+  parameters: ReadonlySet<string> = new Set(),
+) {
+  const point = object(value, label);
+  validateKeys(point, label, ["x", "y"]);
+  for (const axis of ["x", "y"]) {
+    if (
+      !(typeof point[axis] === "number" && Number.isFinite(point[axis]))
+      && !parameterReference(point[axis], parameters)
+    ) throw new Error(`${label}.${axis} must be a finite number`);
+  }
+}
+
+const supportedSteps = [
+  "navigate",
+  "wait_for",
+  "click",
+  "double_click",
+  "mouse_move",
+  "drag",
+  "scroll",
+  "text",
+  "key",
+  "key_chord",
+  "screenshot",
+  "assert",
+  "sleep",
+  "log",
+  "if",
+  "repeat",
+  "repeat_until",
+  "for_each_template",
+  "call",
+  "break",
+] as const;
+
+const withDelay = (...keys: string[]) => ["do", ...keys, "delay_ms"];
+const stepKeys: Record<string, readonly string[]> = {
+  navigate: withDelay("url"),
+  wait_for: withDelay("url", "state", "locator_hint"),
+  click: withDelay("at", "template", "jitter", "count", "hold_ms", "then"),
+  double_click: withDelay("at", "jitter"),
+  mouse_move: withDelay("at"),
+  drag: withDelay("from", "to"),
+  scroll: withDelay("at", "delta"),
+  text: withDelay("value"),
+  key: withDelay("key"),
+  key_chord: withDelay("keys"),
+  screenshot: withDelay("name"),
+  assert: withDelay("url", "state", "locator_hint"),
+  sleep: ["do", "ms"],
+  log: withDelay("message"),
+  if: withDelay("template", "weekdays", "time_zone", "equals", "then", "else"),
+  repeat: withDelay("count", "steps"),
+  repeat_until: withDelay("template", "state", "max_attempts", "on_limit", "steps"),
+  for_each_template: withDelay("template", "max_matches", "steps"),
+  call: withDelay("function", "args"),
+  break: ["do"],
+};
+
 export function scenarioFrom(value: unknown): Scenario {
   const v = object(value, "scenario");
+  validateKeys(v, "scenario", ["version", "name", "browser", "playback", "functions", "steps"]);
   if (v.version !== 1 || typeof v.name !== "string" || !Array.isArray(v.steps)) {
     throw new Error("scenario requires version: 1, name, and steps");
   }
   const browser = object(v.browser, "browser");
+  validateKeys(browser, "browser", ["chrome", "profile", "initial_url", "window", "display"]);
+  if (browser.chrome !== undefined && typeof browser.chrome !== "string") {
+    throw new Error("browser.chrome must be a string");
+  }
   if (typeof browser.initial_url !== "string") throw new Error("browser.initial_url is required");
+  validateHttpUrl(browser.initial_url, "browser.initial_url");
   if (browser.profile !== undefined && typeof browser.profile !== "string") {
     throw new Error("browser.profile must be a string");
   }
+  if (
+    typeof browser.profile === "string" && browser.profile !== "ephemeral"
+    && !browser.profile.startsWith("persistent:")
+  ) throw new Error("browser.profile must be ephemeral or persistent:<directory>");
   if (
     typeof browser.profile === "string" && browser.profile.startsWith("persistent:")
     && !browser.profile.slice("persistent:".length).trim()
@@ -115,12 +215,29 @@ export function scenarioFrom(value: unknown): Scenario {
   }
   if (browser.window !== undefined) {
     const window = object(browser.window, "browser.window");
+    validateKeys(window, "browser.window", ["bounds", "foreground", "content", "viewport"]);
+    if (window.bounds !== undefined) {
+      const bounds = object(window.bounds, "browser.window.bounds");
+      validateKeys(bounds, "browser.window.bounds", ["left", "top", "width", "height"]);
+      for (const key of ["left", "top"]) {
+        if (typeof bounds[key] !== "number" || !Number.isInteger(bounds[key])) {
+          throw new Error(`browser.window.bounds.${key} must be an integer`);
+        }
+      }
+      for (const key of ["width", "height"]) {
+        if (
+          bounds[key] !== undefined
+          && (typeof bounds[key] !== "number" || !Number.isInteger(bounds[key]) || bounds[key] <= 0)
+        ) throw new Error(`browser.window.bounds.${key} must be a positive integer`);
+      }
+    }
     if (window.foreground !== undefined && typeof window.foreground !== "boolean") {
       throw new Error("browser.window.foreground must be a boolean");
     }
     for (const name of ["content", "viewport"]) {
       if (window[name] === undefined) continue;
       const size = object(window[name], `browser.window.${name}`);
+      validateKeys(size, `browser.window.${name}`, ["width", "height"]);
       if (
         typeof size.width !== "number" || !Number.isFinite(size.width) || size.width <= 0
         || typeof size.height !== "number" || !Number.isFinite(size.height) || size.height <= 0
@@ -129,11 +246,52 @@ export function scenarioFrom(value: unknown): Scenario {
       }
     }
   }
+  if (browser.display !== undefined) {
+    const display = object(browser.display, "browser.display");
+    validateKeys(display, "browser.display", ["expected_dpr", "browser_zoom", "zoom_check"]);
+    for (const key of ["expected_dpr", "browser_zoom"]) {
+      if (
+        display[key] !== undefined
+        && (typeof display[key] !== "number" || !Number.isFinite(display[key]) || display[key] <= 0)
+      ) throw new Error(`browser.display.${key} must be a positive number`);
+    }
+    if (
+      display.zoom_check !== undefined
+      && !["strict", "advisory", "off"].includes(String(display.zoom_check))
+    ) throw new Error("browser.display.zoom_check must be strict, advisory, or off");
+  }
   const playback = v.playback ? object(v.playback, "playback") : {};
+  validateKeys(playback, "playback", [
+    "seed",
+    "speed",
+    "step_delay_ms",
+    "template",
+    "artifacts",
+    "jitter",
+    "timeouts",
+    "on_failure",
+  ]);
+  if (
+    playback.speed !== undefined
+    && (typeof playback.speed !== "number" || !Number.isFinite(playback.speed)
+      || playback.speed <= 0)
+  ) throw new Error("playback.speed must be a positive number");
+  if (playback.timeouts !== undefined) {
+    const timeouts = object(playback.timeouts, "playback.timeouts");
+    validateKeys(timeouts, "playback.timeouts", ["navigation_ms", "action_ms"]);
+    for (const key of ["navigation_ms", "action_ms"]) {
+      if (
+        timeouts[key] !== undefined
+        && (typeof timeouts[key] !== "number" || !Number.isFinite(timeouts[key])
+          || timeouts[key] < 0)
+      ) throw new Error(`playback.timeouts.${key} must be a non-negative number`);
+    }
+  }
   if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
   if (playback.template) validateTemplateOptions(playback.template, "playback.template", false);
   if (playback.artifacts !== undefined) {
     const artifacts = object(playback.artifacts, "playback.artifacts");
+    validateKeys(artifacts, "playback.artifacts", ["template_screenshots"]);
     if (
       artifacts.template_screenshots !== undefined
       && artifacts.template_screenshots !== "all"
@@ -172,6 +330,7 @@ export function scenarioFrom(value: unknown): Scenario {
       continue;
     }
     const definition = object(raw, `functions.${name}`);
+    validateKeys(definition, `functions.${name}`, ["params", "steps"]);
     if (!Array.isArray(definition.steps)) {
       throw new Error(`functions.${name}.steps must be a step array`);
     }
@@ -202,6 +361,50 @@ export function scenarioFrom(value: unknown): Scenario {
   ): void => {
     const s = object(step, label);
     if (typeof s.do !== "string") throw new Error(`${label}.do is required`);
+    if (!(supportedSteps as readonly string[]).includes(s.do)) {
+      throw new Error(`${label}.do is not supported: ${s.do}`);
+    }
+    if (s.at !== undefined) validatePoint(s.at, `${label}.at`, parameters);
+    if (s.from !== undefined) validatePoint(s.from, `${label}.from`, parameters);
+    if (s.to !== undefined) validatePoint(s.to, `${label}.to`, parameters);
+    if (s.delta !== undefined) validatePoint(s.delta, `${label}.delta`, parameters);
+    if (s.do === "navigate") validateHttpUrl(s.url, `${label}.url`);
+    if (s.do === "wait_for" || s.do === "assert") {
+      if (s.url !== undefined) validateHttpUrl(s.url, `${label}.url`, true);
+      if (s.url === undefined && s.state === undefined && s.locator_hint === undefined) {
+        throw new Error(`${label} requires url, state, or locator_hint`);
+      }
+      const states = s.do === "wait_for" ? ["complete", "network_idle", "visible"] : ["complete"];
+      if (s.state !== undefined && !states.includes(String(s.state))) {
+        throw new Error(`${label}.state is not supported for ${s.do}`);
+      }
+      if (s.state === "visible" && s.locator_hint === undefined) {
+        throw new Error(`${label}.state visible requires locator_hint`);
+      }
+    }
+    if (["click", "double_click", "mouse_move", "scroll"].includes(s.do)) {
+      const hasPoint = s.at !== undefined;
+      const hasTemplate = s.do === "click" && s.template !== undefined;
+      if (!hasPoint && !hasTemplate) throw new Error(`${label} requires at or template`);
+    }
+    if (s.do === "drag" && (s.from === undefined || s.to === undefined)) {
+      throw new Error(`${label} requires from and to`);
+    }
+    if (s.do === "scroll" && s.delta === undefined) throw new Error(`${label}.delta is required`);
+    if (s.do === "text" && typeof s.value !== "string") {
+      throw new Error(`${label}.value must be a string for text`);
+    }
+    if (s.do === "key" && (typeof s.key !== "string" || !s.key)) {
+      throw new Error(`${label}.key must be a non-empty string for key`);
+    }
+    if (s.do === "screenshot") {
+      if (typeof s.name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(s.name)) {
+        throw new Error(`${label}.name must be a safe artifact filename`);
+      }
+      if (s.name === "." || s.name === "..") {
+        throw new Error(`${label}.name must be a safe artifact filename`);
+      }
+    }
     if (s.do === "break" && !breakAllowed) {
       throw new Error(`${label}.break is supported only inside for_each_template.steps`);
     }
@@ -211,6 +414,10 @@ export function scenarioFrom(value: unknown): Scenario {
         || !s.keys.every((key) => typeof key === "string")
       ) {
         throw new Error(`${label}.keys requires at least two strings`);
+      }
+      const modifiers = s.keys.slice(0, -1);
+      if (!modifiers.every((key) => ["Alt", "Control", "Meta", "Shift"].includes(key))) {
+        throw new Error(`${label}.keys must contain modifiers followed by a final key`);
       }
     }
     if (s.do === "sleep" && !nonNegativeNumberOrParameter(s.ms, parameters)) {
@@ -255,6 +462,7 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     if (s.locator_hint) {
       const hint = object(s.locator_hint, `${label}.locator_hint`);
+      validateKeys(hint, `${label}.locator_hint`, ["role", "name", "text"]);
       for (const key of ["role", "name", "text"]) {
         if (hint[key] !== undefined && typeof hint[key] !== "string") {
           throw new Error(`${label}.locator_hint.${key} must be a string`);
@@ -288,6 +496,7 @@ export function scenarioFrom(value: unknown): Scenario {
       }
       if (hasEquals) {
         const equals = object(s.equals, `${label}.equals`);
+        validateKeys(equals, `${label}.equals`, ["left", "right"]);
         if (
           ![equals.left, equals.right].every((part) =>
             typeof part === "string" || typeof part === "number" && Number.isFinite(part)
@@ -428,6 +637,7 @@ export function scenarioFrom(value: unknown): Scenario {
         );
       }
     }
+    validateKeys(s, label, stepKeys[s.do]);
   };
   for (const [name, definition] of Object.entries(definitions)) {
     for (const [index, step] of definition.steps.entries()) {
@@ -440,6 +650,15 @@ export function scenarioFrom(value: unknown): Scenario {
 
 export function planFrom(value: unknown): Plan {
   const v = object(value, "plan");
+  validateKeys(v, "plan", [
+    "version",
+    "name",
+    "max_parallel",
+    "browser_session",
+    "timeouts",
+    "on_failure",
+    "run",
+  ]);
   if (v.version !== 1 || typeof v.name !== "string" || !v.run) {
     throw new Error("plan requires version: 1, name, and run");
   }
@@ -450,6 +669,7 @@ export function planFrom(value: unknown): Plan {
   ) throw new Error("plan.max_parallel must be a positive integer");
   if (v.browser_session !== undefined) {
     const session = object(v.browser_session, "plan.browser_session");
+    validateKeys(session, "plan.browser_session", ["reuse", "focus"]);
     if (session.reuse !== "same-profile") {
       throw new Error("plan.browser_session.reuse must be same-profile");
     }
@@ -464,6 +684,7 @@ export function planFrom(value: unknown): Plan {
   }
   if (v.timeouts) {
     const timeouts = object(v.timeouts, "plan.timeouts");
+    validateKeys(timeouts, "plan.timeouts", ["worker_ms"]);
     if (
       timeouts.worker_ms !== undefined
       && (typeof timeouts.worker_ms !== "number" || !Number.isFinite(timeouts.worker_ms)
@@ -483,6 +704,7 @@ export function planFrom(value: unknown): Plan {
 
 function validatePlanNode(value: unknown, label: string) {
   const node = object(value, label);
+  validateKeys(node, label, ["scenario", "serial", "parallel"]);
   const variants = ["scenario", "serial", "parallel"].filter((key) => node[key] !== undefined);
   if (variants.length !== 1) {
     throw new Error(`${label} must have exactly one of scenario, serial, or parallel`);
@@ -497,6 +719,7 @@ function validatePlanNode(value: unknown, label: string) {
     return;
   }
   const parallel = object(node.parallel, `${label}.parallel`);
+  validateKeys(parallel, `${label}.parallel`, ["fail_fast", "jobs"]);
   if (!Array.isArray(parallel.jobs)) throw new Error(`${label}.parallel.jobs must be an array`);
   if (parallel.fail_fast !== undefined && typeof parallel.fail_fast !== "boolean") {
     throw new Error(`${label}.parallel.fail_fast must be a boolean`);

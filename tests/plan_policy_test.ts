@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.14";
+import { assertEquals } from "@std/assert";
 import { aggregatePlanExitCode, planFailureKind, shouldAbortPlan } from "../src/plan_policy.ts";
 
 Deno.test("classifies and continues a plan timeout", () => {

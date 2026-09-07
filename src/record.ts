@@ -3,6 +3,19 @@ export type MarkerCalibration = {
   cssPoint: { x: number; y: number };
 };
 
+async function markIncompleteRecording(output: string, error: string) {
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = JSON.parse(await Deno.readTextFile(`${output}.meta.json`));
+  } catch (readError) {
+    if (!(readError instanceof Deno.errors.NotFound)) throw readError;
+  }
+  await Deno.writeTextFile(
+    `${output}.meta.json`,
+    JSON.stringify({ ...metadata, incomplete: true, recording_error: error }, null, 2) + "\n",
+  );
+}
+
 export async function recordRaw(
   dllPath: string,
   pid: number,
@@ -19,11 +32,15 @@ export async function recordRaw(
     crer_input_abi_version: { parameters: [], result: "u32" },
     crer_input_qpc_frequency: { parameters: [], result: "u64" },
     crer_input_start: { parameters: ["u32"], result: "i32" },
+    crer_input_is_running: { parameters: [], result: "i32" },
     crer_input_stop: { parameters: [], result: "i32" },
     crer_input_read: { parameters: ["buffer", "u32"], result: "u32" },
     crer_input_get_content_rect: { parameters: ["buffer"], result: "i32" },
     crer_input_last_error: { parameters: [], result: "i32" },
   });
+  let started = false;
+  let primaryError: unknown;
+  let stopStatus = 0;
   try {
     if (lib.symbols.crer_input_abi_version() !== 1) {
       throw new Error("unsupported crer-win-input ABI");
@@ -31,6 +48,7 @@ export async function recordRaw(
     const qpcFrequencyHz = lib.symbols.crer_input_qpc_frequency().toString();
     const start = lib.symbols.crer_input_start(pid);
     if (start) throw new Error(`Raw Input start failed: ${start}`);
+    started = true;
     console.error(`Recording target Chrome process: ${pid}`);
     let markerCalibration: MarkerCalibration | undefined;
     let activeViewport = viewport;
@@ -70,10 +88,9 @@ export async function recordRaw(
         console.log(`[crer] click screen_px: { x: ${point.x}, y: ${point.y} }`);
       }
     };
-    const writeMetadata = async () => {
+    const writeMetadata = async (recordingError?: unknown) => {
       const rect = contentRect();
       const validRect = rect.status === 0 && rect.width >= 32 && rect.height >= 32;
-      if (!validRect && !viewport) return { rectStatus: rect.status, validRect };
       await Deno.writeTextFile(
         `${output}.meta.json`,
         JSON.stringify(
@@ -96,6 +113,9 @@ export async function recordRaw(
             ...(profileDir ? { profile_dir: profileDir } : {}),
             ...(windowBounds ? { window_bounds: windowBounds } : {}),
             ...(markerCalibration ? { marker_calibration: markerCalibration } : {}),
+            ...(recordingError === undefined
+              ? {}
+              : { incomplete: true, recording_error: String(recordingError) }),
           },
           null,
           2,
@@ -107,8 +127,19 @@ export async function recordRaw(
       "Click the 64x64 magenta marker at the page's upper-left corner to calibrate and begin recording.",
     );
     const file = await Deno.open(output, { create: true, write: true, append: true });
+    let recordingError: unknown;
+    let metadataError: unknown;
+    let metadata = { rectStatus: 0, validRect: false };
     try {
       while (!signal?.aborted) {
+        if (lib.symbols.crer_input_is_running() === 0) {
+          const status = lib.symbols.crer_input_last_error();
+          throw new Error(
+            status === 0
+              ? "Raw Input recorder stopped unexpectedly"
+              : `Raw Input recorder failed: ${status}`,
+          );
+        }
         if (readViewport && Date.now() >= nextViewportCheck) {
           const nextViewport = await readViewport();
           if (
@@ -172,10 +203,21 @@ export async function recordRaw(
         }
         await new Promise((r) => setTimeout(r, 16));
       }
+    } catch (error) {
+      recordingError = error;
+      throw error;
     } finally {
       file.close();
+      try {
+        metadata = await writeMetadata(recordingError);
+      } catch (error) {
+        metadataError = error;
+        if (recordingError !== undefined) {
+          console.error(`Failed to write incomplete recording metadata: ${error}`);
+        }
+      }
     }
-    const metadata = await writeMetadata();
+    if (metadataError !== undefined) throw metadataError;
     if (markerClick && !markerCalibration) {
       throw new Error("recording calibration marker was not clicked");
     }
@@ -184,8 +226,16 @@ export async function recordRaw(
         `Warning: CfT content bounds were unavailable (Win32 status ${metadata.rectStatus}); normalize may require explicit coordinate options.`,
       );
     }
+  } catch (error) {
+    primaryError = error;
   } finally {
-    lib.symbols.crer_input_stop();
+    stopStatus = started ? lib.symbols.crer_input_stop() : 0;
     lib.close();
+  }
+  if (primaryError !== undefined) throw primaryError;
+  if (stopStatus !== 0) {
+    const error = `Raw Input stop failed: ${stopStatus}`;
+    await markIncompleteRecording(output, error);
+    throw new Error(error);
   }
 }

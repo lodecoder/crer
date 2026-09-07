@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert@^1.0.14";
+import { assertEquals } from "@std/assert";
 import {
   normalizeRaw,
   normalizeRawWithWarnings,
@@ -6,6 +6,7 @@ import {
   transformFromRecordingMetadata,
   requestedContentFromSidecar,
   profileDirFromSidecar,
+  recordingWarningFromSidecar,
   windowBoundsFromSidecar,
 } from "../src/normalize.ts";
 
@@ -89,6 +90,23 @@ Deno.test("reads the persistent profile directory from a sidecar", async () => {
   try {
     await Deno.writeTextFile(`${path}.meta.json`, JSON.stringify({ profile_dir: ".crer/profiles/demo" }));
     assertEquals(await profileDirFromSidecar(path), ".crer/profiles/demo");
+  } finally {
+    await Deno.remove(path).catch(() => {});
+    await Deno.remove(`${path}.meta.json`).catch(() => {});
+  }
+});
+
+Deno.test("warns when recorder metadata marks raw input incomplete", async () => {
+  const path = await Deno.makeTempFile();
+  try {
+    await Deno.writeTextFile(
+      `${path}.meta.json`,
+      JSON.stringify({ incomplete: true, recording_error: "Raw Input recorder failed: 111" }),
+    );
+    assertEquals(
+      await recordingWarningFromSidecar(path),
+      "recording is incomplete: Raw Input recorder failed: 111",
+    );
   } finally {
     await Deno.remove(path).catch(() => {});
     await Deno.remove(`${path}.meta.json`).catch(() => {});

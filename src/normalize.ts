@@ -16,6 +16,8 @@ type RecordingMetadata = {
   profile_dir?: string;
   window_bounds?: { left: number; top: number };
   qpc_frequency_hz?: string;
+  incomplete?: boolean;
+  recording_error?: string;
   marker_calibration?: {
     screenClick: Point;
     cssPoint: Point;
@@ -121,6 +123,21 @@ export async function profileDirFromSidecar(rawFile: string): Promise<string | u
   }
 }
 
+export async function recordingWarningFromSidecar(rawFile: string): Promise<string | undefined> {
+  try {
+    const metadata = JSON.parse(
+      await Deno.readTextFile(`${rawFile}.meta.json`),
+    ) as RecordingMetadata;
+    if (!metadata.incomplete) return undefined;
+    return metadata.recording_error
+      ? `recording is incomplete: ${metadata.recording_error}`
+      : "recording is marked incomplete";
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw new Error(`could not read recording metadata: ${error}`);
+  }
+}
+
 export function screenToCss(point: Point, transform: CoordinateTransform): Point {
   if (transform.clientSize.x <= 0 || transform.clientSize.y <= 0) {
     throw new Error("client dimensions must be positive");
@@ -206,7 +223,8 @@ export async function normalizeRawWithWarnings(
       : { x: event.x, y: event.y };
     if (event.kind === 9) {
       const character = String.fromCodePoint(event.data);
-      if (character && !/[\u0000-\u001f\u007f]/.test(character)) {
+      const codePoint = character.codePointAt(0) ?? 0;
+      if (character && codePoint >= 0x20 && codePoint !== 0x7f) {
         text += character;
         textQpc = qpc;
       }

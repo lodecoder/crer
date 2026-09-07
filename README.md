@@ -41,7 +41,7 @@ deno task dev validate scenario.crer.yaml
 deno task dev play scenario.crer.yaml --keep-artifacts
 deno task dev run nightly.crer.plan.yaml
 deno task dev inspect .crer\runs\<run-id>
-deno task test
+deno task verify
 ```
 
 `run` で plan に含まれるすべての scenario を同じウィンドウ bounds で起動するには、
@@ -151,7 +151,8 @@ deno task dev play .crer\yahoo.recorded.crer.yaml `
 `record --profile-dir` の sidecar を `normalize` すると、生成 YAML の `browser.profile` は
 `persistent:<絶対パス>` になります。以後は `play` の `--profile-dir` を省略しても同じプロファイルを
 使えます。CLI 指定は YAML より優先します。永続プロファイルは削除されず、同時に複数の再生で共有できません。
-`run` で使う場合は `max_parallel: 1` にしてください。`.crer\profiles` 外のパス、`..` を含むパス、
+`run` は同じ永続プロファイルを使う leaf だけを直列化し、異なるプロファイルは `max_parallel` の範囲で並列実行します。
+`.crer\profiles` 外のパス、`..` を含むパス、
 実体が外部を指すシンボリックリンクは拒否されます。
 
 `record` の主な指定:
