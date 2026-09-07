@@ -21,6 +21,7 @@ import type {
 const decoder = new TextDecoder();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 class EnvironmentError extends Error {}
+class ForEachBreak {}
 async function fetchWithin(url: string, timeoutMs: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -1256,7 +1257,18 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               lastWarnedForegroundStatus = foregroundStatus;
             }
           }
-          if (step.do === "call") {
+          if (step.do === "break") {
+            await appendStepLog({
+              index: i,
+              do: step.do,
+              startedAt,
+              completedAt: new Date().toISOString(),
+              url: await currentUrl(browser),
+              status: "ok",
+              control: "break",
+            });
+            throw new ForEachBreak();
+          } else if (step.do === "call") {
             const name = step.function!;
             const definition = functionDefinition(name);
             if (!definition) throw new Error(`undefined function: ${name}`);
@@ -1463,7 +1475,12 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                   match_center_y: match.y + Math.floor(match.height / 2),
                   match_similarity: match.similarity,
                 }) as Step[];
-                await executeSteps(body, `${i}.${matchIndex}`);
+                try {
+                  await executeSteps(body, `${i}.${matchIndex}`);
+                } catch (error) {
+                  if (error instanceof ForEachBreak) break;
+                  throw error;
+                }
                 if (stopped) break;
               }
               succeeded = true;
@@ -1659,6 +1676,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             }
           }
         } catch (e) {
+          if (e instanceof ForEachBreak) throw e;
           if (e instanceof EnvironmentError) throw e;
           if (e instanceof TemplateMatchError) templateFailureScreenshot ??= e.screenshot;
           const kind = failureFor(step, e);

@@ -286,6 +286,22 @@ Deno.test("validates static template iteration steps", () => {
     Error,
     "steps[0].template is required for for_each_template",
   );
+  assertEquals(scenarioFrom({
+    ...scenario,
+    steps: [{
+      ...scenario.steps[0],
+      steps: [{
+        do: "if",
+        equals: { left: 1, right: 1 },
+        then: [{ do: "break" }],
+      }],
+    }],
+  }).steps.length, 1);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "break" }] }),
+    Error,
+    "steps[0].break is supported only inside for_each_template.steps",
+  );
 });
 
 Deno.test("validates named function calls", () => {

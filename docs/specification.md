@@ -298,6 +298,11 @@ screenshot 内で similarity が閾値以上の template 矩形を類似度降�
 `template.on_missing` の `fail`／`skip` に従う。検出件数と矩形は `steps.ndjson` に保存し、探索画像は
 `playback.artifacts.template_screenshots` に従って保存する。子ステップによるページ変化後に再探索はせず、
 列挙対象は最初のインメモリ screenshot へ固定する。
+`for_each_template.steps` 内の `break` は成功した制御ステップとして `steps.ndjson` に記録し、現在の一致に対する
+残りの子ステップと残りの一致候補を実行せず、当該 `for_each_template` の次の兄弟ステップへ進む。`if`、
+`repeat`、`repeat_until`、template click の `then` にネストした `break` も最も近い `for_each_template` を
+終了する。ネストした `for_each_template` 内では内側だけを終了する。`for_each_template` の子ステップ外にある
+`break` は設定エラーとする。
 
 scenario トップレベルの `functions` は、識別子名をキー、ステップ配列を値とする名前付き操作列の mapping
 である。値は従来形式のステップ配列、または `params`（一意な識別子の配列）と `steps` を持つ mapping である。

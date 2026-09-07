@@ -198,9 +198,13 @@ export function scenarioFrom(value: unknown): Scenario {
     step: unknown,
     label: string,
     parameters: ReadonlySet<string> = new Set(),
+    breakAllowed = false,
   ): void => {
     const s = object(step, label);
     if (typeof s.do !== "string") throw new Error(`${label}.do is required`);
+    if (s.do === "break" && !breakAllowed) {
+      throw new Error(`${label}.break is supported only inside for_each_template.steps`);
+    }
     if (s.do === "key_chord") {
       if (
         !Array.isArray(s.keys) || s.keys.length < 2
@@ -318,12 +322,12 @@ export function scenarioFrom(value: unknown): Scenario {
       }
       if (!Array.isArray(s.then)) throw new Error(`${label}.then must be a step array for if`);
       for (const [index, child] of s.then.entries()) {
-        validateStep(child, `${label}.then[${index}]`, parameters);
+        validateStep(child, `${label}.then[${index}]`, parameters, breakAllowed);
       }
       if (s.else !== undefined) {
         if (!Array.isArray(s.else)) throw new Error(`${label}.else must be a step array for if`);
         for (const [index, child] of s.else.entries()) {
-          validateStep(child, `${label}.else[${index}]`, parameters);
+          validateStep(child, `${label}.else[${index}]`, parameters, breakAllowed);
         }
       }
     } else if (s.do === "click" && s.template && s.then !== undefined) {
@@ -331,7 +335,7 @@ export function scenarioFrom(value: unknown): Scenario {
         throw new Error(`${label}.then must be a step array for template click`);
       }
       for (const [index, child] of s.then.entries()) {
-        validateStep(child, `${label}.then[${index}]`, parameters);
+        validateStep(child, `${label}.then[${index}]`, parameters, breakAllowed);
       }
       if (
         s.else !== undefined || s.weekdays !== undefined || s.time_zone !== undefined
@@ -360,7 +364,7 @@ export function scenarioFrom(value: unknown): Scenario {
         throw new Error(`${label}.steps must be a step array for repeat`);
       }
       for (const [index, child] of s.steps.entries()) {
-        validateStep(child, `${label}.steps[${index}]`, parameters);
+        validateStep(child, `${label}.steps[${index}]`, parameters, breakAllowed);
       }
     } else if (s.do === "click") {
       if (
@@ -392,7 +396,7 @@ export function scenarioFrom(value: unknown): Scenario {
         throw new Error(`${label}.steps must be a step array for repeat_until`);
       }
       for (const [index, child] of s.steps.entries()) {
-        validateStep(child, `${label}.steps[${index}]`, parameters);
+        validateStep(child, `${label}.steps[${index}]`, parameters, breakAllowed);
       }
     } else if (s.do === "for_each_template") {
       if (!s.template) throw new Error(`${label}.template is required for for_each_template`);
@@ -410,7 +414,7 @@ export function scenarioFrom(value: unknown): Scenario {
       }
       const childParameters = new Set([...parameters, ...templateMatchParameters]);
       for (const [index, child] of s.steps.entries()) {
-        validateStep(child, `${label}.steps[${index}]`, childParameters);
+        validateStep(child, `${label}.steps[${index}]`, childParameters, true);
       }
     } else {
       if (s.max_attempts !== undefined || s.on_limit !== undefined || s.max_matches !== undefined) {

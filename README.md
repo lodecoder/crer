@@ -406,6 +406,20 @@ IoU 0.5 以上で一つにまとめます。
 探索画像の保存は `playback.artifacts.template_screenshots` に従います。ページを変える子操作があっても、列挙対象は
 開始時のインメモリ screenshot に固定されます。
 
+子ステップで `{ do: break }` を実行すると、その一致に対する残りの子ステップと、残りの一致候補を打ち切り、
+`for_each_template` の次のステップへ進みます。`if`、`repeat`、`repeat_until` の内側からも、最も近い
+`for_each_template` を終了できます。トップレベルなどループ外の `break` はYAML検証エラーです。
+
+```yaml
+- do: for_each_template
+  template: { path: templates/item.png }
+  max_matches: 50
+  steps:
+    - { do: click, at: { x: "${match_center_x}", y: "${match_center_y}" } }
+    - { do: break }
+- { do: log, message: "最初の一致だけを処理しました" }
+```
+
 ### 操作列の再利用
 
 トップレベルの `functions` に名前付き操作列を定義し、`do: call` で呼び出せます。関数名は英字または
