@@ -506,6 +506,20 @@ CfT を使う配布物の smoke test は次です。これは `crer.exe` で fix
 .\scripts\test-release.ps1
 ```
 
+### 全体コードレビュー用bundle
+
+インストール済みの Repomix で、ソース、テスト、仕様書、fixture、スクリプトをまとめたレビュー用Markdownを
+生成できます。
+
+```powershell
+repomix
+```
+
+出力先は `repomix-output.md` です。引用しやすい行番号とトークン数のファイルツリーを含みます。
+`.crer` の実行artifactとprofile、`dist`、Native AOTのビルド生成物、画像・実行バイナリは対象外です。
+設定は [repomix.config.json](repomix.config.json) にあり、secret scanは有効です。生成された
+`repomix-output.md` はGit管理対象外です。
+
 実行 artifacts は `.crer/runs/<run-id>` に出力されます。`steps.ndjson` には各ステップの時刻、実効座標、
 jitter offset、URL、成否が追記され、`crer inspect` で件数と失敗数を確認できます。
 

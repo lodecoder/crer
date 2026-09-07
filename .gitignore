@@ -3,6 +3,7 @@ dist/
 coverage/
 .crer/
 *.log
+repomix-output.*
 
 native/bin/
 native/obj/
