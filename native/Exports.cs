@@ -4,6 +4,8 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
+[assembly: InternalsVisibleTo("Crer.WinInput.NativeTests")]
+
 internal static class InputBridge
 {
     private const uint RIM_TYPEMOUSE = 0, RIM_TYPEKEYBOARD = 1, RI_MOUSE_LEFT_BUTTON_DOWN = 1, RI_MOUSE_LEFT_BUTTON_UP = 2, RI_MOUSE_WHEEL = 0x400;
@@ -11,6 +13,7 @@ internal static class InputBridge
     private static readonly AutoResetEvent Stopped = new(false);
     private static readonly byte[] KeyboardState = new byte[256];
     private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static volatile int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
+    private static volatile int _testHookFailure, _testStopTimeout;
     private static uint _foregroundPid; private static IntPtr _foregroundTarget; private static int _lastForegroundStatus;
     [StructLayout(LayoutKind.Sequential, Pack = 8)] internal struct CrerInputEvent { public ulong Qpc; public int X, Y; public uint Kind, Data; }
     [StructLayout(LayoutKind.Sequential)] internal struct CrerRect { public int X, Y, Width, Height; }
@@ -191,6 +194,13 @@ internal static class InputBridge
             RegisterClassW(ref wc);
             var window = CreateWindowExW(0, wc.Name, wc.Name, 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, wc.Instance, IntPtr.Zero);
             if (window == IntPtr.Zero) { Fail(Marshal.GetLastWin32Error()); return; }
+            if (_testHookFailure != 0)
+            {
+                var error = _testHookFailure;
+                _testHookFailure = 0;
+                Fail(error);
+                return;
+            }
             _mouseHook = SetWindowsHookExW(14, MouseHookProc, IntPtr.Zero, 0);
             _keyboardHook = SetWindowsHookExW(13, KeyboardHookProc, IntPtr.Zero, 0);
             if (_mouseHook == IntPtr.Zero || _keyboardHook == IntPtr.Zero)
@@ -284,7 +294,7 @@ internal static class InputBridge
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_foreground_status")] public static int LastForegroundStatus()=>_lastForegroundStatus;
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
-    [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid)
+    private static int StartCore(uint pid)
     {
         if (_running || (_thread?.IsAlive ?? false)) return 183;
         while (Queue.TryDequeue(out _)) { }
@@ -300,9 +310,13 @@ internal static class InputBridge
         _thread.Start();
         return 0;
     }
-    [UnmanagedCallersOnly(EntryPoint="crer_input_is_running")] public static int IsRunning()=>_running ? 1 : 0;
-    [UnmanagedCallersOnly(EntryPoint="crer_input_stop")] public static int Stop()
+    private static int StopCore()
     {
+        if (_testStopTimeout != 0)
+        {
+            _testStopTimeout = 0;
+            return 1460; // Injected ERROR_TIMEOUT for the native contract test.
+        }
         var thread = _thread;
         if (thread is null || !thread.IsAlive) return _error;
         _running = false;
@@ -310,6 +324,9 @@ internal static class InputBridge
         if (!Stopped.WaitOne(5000)) return 1460; // ERROR_TIMEOUT
         return _error;
     }
+    [UnmanagedCallersOnly(EntryPoint="crer_input_start")] public static int Start(uint pid)=>StartCore(pid);
+    [UnmanagedCallersOnly(EntryPoint="crer_input_is_running")] public static int IsRunning()=>_running ? 1 : 0;
+    [UnmanagedCallersOnly(EntryPoint="crer_input_stop")] public static int Stop()=>StopCore();
     [UnmanagedCallersOnly(EntryPoint="crer_input_read")] public static unsafe uint Read(CrerInputEvent* output,uint capacity){uint n=0;while(n<capacity&&Queue.TryDequeue(out var e))output[n++]=e;return n;}
     [UnmanagedCallersOnly(EntryPoint="crer_input_get_content_rect")] public static unsafe int GetContentRect(CrerRect* output)
     {
@@ -334,4 +351,12 @@ internal static class InputBridge
         finally { Marshal.FreeHGlobal(handle); }
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_error")] public static int Error()=>_error;
+
+    internal static int TestStart(uint pid)=>StartCore(pid);
+    internal static int TestStop()=>StopCore();
+    internal static int TestIsRunning()=>_running ? 1 : 0;
+    internal static int TestError()=>_error;
+    internal static void TestPush()=>Push(1);
+    internal static void TestFailHookInitialization(int error)=>_testHookFailure=error;
+    internal static void TestForceStopTimeout()=>_testStopTimeout=1;
 }

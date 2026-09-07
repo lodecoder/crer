@@ -1,6 +1,8 @@
 import { executeAtomicAction } from "./actions.ts";
+import { RunArtifactSink } from "./artifacts.ts";
 import { Cdp } from "./cdp.ts";
 import { EnvironmentError, ExecutionAbortedError, InterruptedError } from "./errors.ts";
+import { ExecutionContext, StepExecutor } from "./executor.ts";
 import { cleanupErrors } from "./input_guard.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
@@ -1042,8 +1044,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     if (!Number.isFinite(stepDelayMs) || stepDelayMs < 0) {
       throw new Error("step_delay_ms must be a non-negative number");
     }
-    const appendStepLog = (entry: Record<string, unknown>) =>
-      Deno.writeTextFile(`${runDir}/steps.ndjson`, JSON.stringify(entry) + "\n", { append: true });
+    const artifacts = new RunArtifactSink(runDir);
+    const appendStepLog = (entry: Record<string, unknown>) => artifacts.appendStep(entry);
     const browser = b!;
     const functionDefinition = (name: string) => {
       const raw = s.functions?.[name];
@@ -1071,7 +1073,6 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       }
       return value;
     };
-    let stopped = false;
     const weekday = (timeZone?: string) => {
       const name = new Intl.DateTimeFormat("en-US", {
         weekday: "short",
@@ -1087,25 +1088,16 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         sun: "sun",
       } as Record<string, string>)[name];
     };
-    const callStack: string[] = [];
     type CachedTemplate = {
       path: string;
       threshold: number;
       match: TemplateMatch;
       screenshot: string;
     };
-    const executeSteps = async (
-      steps: Step[],
-      parentIndex = "",
-      initialTemplateCache?: CachedTemplate,
-    ): Promise<void> => {
-      let templateCache = initialTemplateCache;
-      for (const [offset, step] of steps.entries()) {
-        if (stopped) return;
-        // A condition's screenshot is valid only for its immediately following child step.
-        const cachedTemplate = templateCache;
-        templateCache = undefined;
-        const i = parentIndex ? `${parentIndex}.${offset}` : String(offset);
+    const execution = new ExecutionContext();
+    const executor = new StepExecutor<CachedTemplate>(
+      execution,
+      async ({ step, index: i, cachedTemplate }, executeSteps) => {
         const startedAt = new Date().toISOString();
         let at: { x: number; y: number } | undefined;
         let jitterOffset: { x: number; y: number } | undefined;
@@ -1163,24 +1155,21 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             const name = step.function!;
             const definition = functionDefinition(name);
             if (!definition) throw new Error(`undefined function: ${name}`);
-            if (callStack.includes(name)) {
-              throw new Error(`recursive function call: ${[...callStack, name].join(" -> ")}`);
-            }
-            await appendStepLog({
-              index: i,
-              do: step.do,
-              startedAt,
-              completedAt: new Date().toISOString(),
-              function: name,
-              url: await currentUrl(browser),
-              status: "ok",
-            });
-            callStack.push(name);
+            const leaveFunction = execution.enterFunction(name);
             try {
+              await appendStepLog({
+                index: i,
+                do: step.do,
+                startedAt,
+                completedAt: new Date().toISOString(),
+                function: name,
+                url: await currentUrl(browser),
+                status: "ok",
+              });
               const body = expandArguments(definition.steps, step.args ?? {}) as Step[];
               await executeSteps(body, `${i}.${name}`);
             } finally {
-              callStack.pop();
+              leaveFunction();
             }
             succeeded = true;
           } else if (step.do === "repeat") {
@@ -1201,7 +1190,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             });
             for (let iteration = 0; iteration < count; iteration++) {
               await executeSteps(step.steps ?? [], `${i}.${iteration}`);
-              if (stopped) break;
+              if (execution.stopped) break;
             }
             succeeded = true;
           } else if (step.do === "repeat_until") {
@@ -1291,7 +1280,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                   screenshot: found.screenshot,
                 },
               );
-              if (stopped) {
+              if (execution.stopped) {
                 succeeded = true;
                 break;
               }
@@ -1372,7 +1361,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                   if (error instanceof ForEachBreak) break;
                   throw error;
                 }
-                if (stopped) break;
+                if (execution.stopped) break;
               }
               succeeded = true;
             }
@@ -1622,11 +1611,11 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           const policy = s.playback?.on_failure?.[kind] ?? s.playback?.on_failure?.default
             ?? "abort";
           if (policy === "abort") {
-            stopped = true;
+            execution.stop();
             return;
           }
         }
-        if (stopped) return;
+        if (execution.stopped) return;
         if (succeeded && step.delay_ms !== undefined && !delayHandled) {
           const delay = Number(step.delay_ms);
           if (!Number.isFinite(delay) || delay < 0) {
@@ -1637,9 +1626,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         if (stepDelayMs > 0 && !stepDelayHandled) {
           await sleepInterruptibly(stepDelayMs, options.signal);
         }
-      }
-    };
-    await executeSteps(s.steps);
+      },
+    );
+    await executor.execute(s.steps);
     return { code: failures.length ? 4 : 0, failures, runDir };
   } catch (e) {
     discardShared = sharedManaged;

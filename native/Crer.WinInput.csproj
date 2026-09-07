@@ -4,4 +4,7 @@
     <PublishAot>true</PublishAot><NativeLib>Shared</NativeLib><SelfContained>true</SelfContained>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks><InvariantGlobalization>true</InvariantGlobalization><Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
 </Project>

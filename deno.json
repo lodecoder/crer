@@ -9,6 +9,7 @@
     "fmt": "dprint fmt --incremental=false",
     "fmt:check": "dprint check --incremental=false",
     "test": "deno test -A",
+    "test:native": "dotnet run --project native/tests/Crer.WinInput.NativeTests.csproj",
     "verify": "deno task check && deno task lint && deno task fmt:check && deno task test"
   },
   "imports": {

@@ -2,6 +2,7 @@
   "markdown": { "lineWidth": 100 },
   "typescript": { "lineWidth": 100, "quoteStyle": "alwaysDouble" },
   "includes": ["src/**/*.ts", "*.json", "docs/**/*.md"],
+  "excludes": ["native/**/bin/**", "native/**/obj/**"],
   "plugins": [
     "https://plugins.dprint.dev/typescript-0.96.1.wasm",
     "https://plugins.dprint.dev/json-0.23.0.wasm",

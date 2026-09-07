@@ -7,3 +7,5 @@ repomix-output.*
 
 native/bin/
 native/obj/
+native/**/bin/
+native/**/obj/
