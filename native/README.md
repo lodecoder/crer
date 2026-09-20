@@ -8,10 +8,15 @@ dotnet publish native/Crer.WinInput.csproj -c Release -r win-x64
 
 Run the managed native-state fault tests with `dotnet run --project native/tests/Crer.WinInput.NativeTests.csproj`.
 
-The DLL exports the `crer_input_*` C ABI required by Deno FFI. It records into a bounded in-memory queue through
-Windows low-level input hooks, filtering mouse input by the root HWND of the target CfT process and keyboard input by
-its foreground window. It never injects input. The hook is needed as a fallback because Chrome can consume Raw Input
-before a separate recorder receives it.
+The DLL exports version 2 of the `crer_input_*` C ABI required by Deno FFI. Version 2 makes mouse events and content
+rectangles explicitly physical-pixel coordinates. It records into a bounded in-memory queue through
+Windows Raw Input (`RIDEV_INPUTSINK`) for the mouse and a low-level hook for the keyboard, filtering mouse input by
+the root HWND of the target CfT process and keyboard input by its foreground window. It never injects input.
+The message loop dispatches `WM_INPUT`; only Raw Input produces mouse events, avoiding duplicate clicks.
+
+Mouse coordinates are sampled with `GetPhysicalCursorPos` when processing each Raw Input packet. The recording thread
+and content-window measurement use Per-Monitor-V2 DPI awareness so the event point and HWND rectangle remain in
+the same physical-pixel coordinate space at Windows display scales such as 125%, 150%, or 200%.
 
 `crer_input_is_running` lets the polling layer detect hook failure or queue overflow immediately. `start` clears the
 queue and thread state before each recording, while `stop` waits for the native thread and returns `ERROR_TIMEOUT` if

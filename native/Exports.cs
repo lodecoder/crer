@@ -20,7 +20,15 @@ internal static class InputBridge
     [StructLayout(LayoutKind.Sequential)] private struct RawInputDevice { public ushort UsagePage, Usage; public uint Flags; public IntPtr Target; }
     [StructLayout(LayoutKind.Sequential)] private struct RawInputHeader { public uint Type, Size; public IntPtr Device; public IntPtr WParam; }
     [StructLayout(LayoutKind.Explicit)] private struct RawInput { [FieldOffset(0)] public RawInputHeader Header; [FieldOffset(24)] public RawMouse Mouse; [FieldOffset(24)] public RawKeyboard Keyboard; }
-    [StructLayout(LayoutKind.Sequential)] private struct RawMouse { public ushort Flags, ButtonFlags, ButtonData; public uint RawButtons; public int LastX, LastY, Extra; }
+    [StructLayout(LayoutKind.Explicit, Size=24)] private struct RawMouse {
+        [FieldOffset(0)] public ushort Flags;
+        [FieldOffset(4)] public ushort ButtonFlags;
+        [FieldOffset(6)] public ushort ButtonData;
+        [FieldOffset(8)] public uint RawButtons;
+        [FieldOffset(12)] public int LastX;
+        [FieldOffset(16)] public int LastY;
+        [FieldOffset(20)] public uint Extra;
+    }
     [StructLayout(LayoutKind.Sequential)] private struct RawKeyboard { public ushort MakeCode, Flags, Reserved, VKey; public uint Message, Extra; }
     [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int Left, Top, Right, Bottom; }
@@ -29,7 +37,8 @@ internal static class InputBridge
     [StructLayout(LayoutKind.Sequential)] private struct LowLevelKeyboard { public uint VKey, ScanCode, Flags, Time; public IntPtr Extra; }
     [DllImport("user32.dll", SetLastError=true)] private static extern bool RegisterRawInputDevices(RawInputDevice[] d, uint n, uint cb);
     [DllImport("user32.dll")] private static extern int GetRawInputData(IntPtr h, uint command, IntPtr data, ref uint size, uint headerSize);
-    [DllImport("user32.dll")] private static extern bool GetCursorPos(out Point p);
+    [DllImport("user32.dll")] private static extern bool GetPhysicalCursorPos(out Point p);
+    [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int ToUnicodeEx(uint key, uint scan, byte[] state, [Out] char[] text, int textLength, uint flags, IntPtr keyboardLayout);
     [DllImport("user32.dll")] private static extern IntPtr GetKeyboardLayout(uint threadId);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
@@ -53,6 +62,8 @@ internal static class InputBridge
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern ushort RegisterClassW(ref WndClass c);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern IntPtr CreateWindowExW(uint e,string c,string n,uint s,int x,int y,int w,int h,IntPtr parent,IntPtr menu,IntPtr instance,IntPtr param);
     [DllImport("user32.dll")] private static extern int GetMessageW(out Msg m, IntPtr h, uint min, uint max);
+    [DllImport("user32.dll")] private static extern IntPtr DispatchMessageW(ref Msg message);
+    [DllImport("user32.dll")] private static extern bool DestroyWindow(IntPtr window);
     [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr SetWindowsHookExW(int id, HookProc p, IntPtr module, uint thread);
     [DllImport("user32.dll")] private static extern bool UnhookWindowsHookEx(IntPtr hook);
     [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, UIntPtr w, IntPtr l);
@@ -67,6 +78,7 @@ internal static class InputBridge
     [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
     private static readonly HookProc MouseHookProc = MouseHook;
     private static readonly HookProc KeyboardHookProc = KeyboardHook;
+    private static readonly WndProc WindowProc = Proc;
     private static bool Find(IntPtr h, IntPtr _)
     {
         GetWindowThreadProcessId(h, out var p);
@@ -106,9 +118,15 @@ internal static class InputBridge
         return className.StartsWith("Chrome_RenderWidgetHostHWND", StringComparison.Ordinal) ||
             className.StartsWith("Intermediate D3D Window", StringComparison.Ordinal);
     }
-    private static bool Active(bool mouse)
+    private static bool PhysicalWindowRect(IntPtr window, out Rect rect)
     {
-        IntPtr h = mouse ? WindowFromPoint(GetPoint()) : GetForegroundWindow();
+        var previous = SetThreadDpiAwarenessContext(new IntPtr(-4)); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+        try { return GetWindowRect(window, out rect); }
+        finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+    }
+    private static bool Active(bool mouse, Point? eventPoint = null)
+    {
+        IntPtr h = mouse ? WindowFromPoint(eventPoint ?? GetPoint()) : GetForegroundWindow();
         // A Chromium Direct3D intermediate window can be a root window but be owned by
         // Chrome_WidgetWin_*. Include the owner chain to retain the actual browser window.
         var root = GetAncestor(h, 3); // GA_ROOTOWNER
@@ -116,27 +134,28 @@ internal static class InputBridge
         GetWindowThreadProcessId(root, out var p);
         if (p != _pid) return false;
         _target = root;
-        if (mouse && IsContentSurface(h) && GetWindowRect(h, out var rect) &&
+        if (mouse && IsContentSurface(h) && PhysicalWindowRect(h, out var rect) &&
             rect.Right - rect.Left >= 32 && rect.Bottom - rect.Top >= 32) _content = h;
         return true;
     }
-    private static Point GetPoint(){ GetCursorPos(out var p); return p; }
+    private static Point GetPoint(){ GetPhysicalCursorPos(out var p); return p; }
     private static void Fail(int error)
     {
         _error = error;
         _running = false;
         if (_threadId != 0) PostThreadMessageW(_threadId, 0x0012, UIntPtr.Zero, IntPtr.Zero);
     }
-    private static void Push(uint kind,uint data=0){ if(Queue.Count>=8192){Fail(111);return;} QueryPerformanceCounter(out var q); var p=GetPoint(); Queue.Enqueue(new(){Qpc=(ulong)q,X=p.X,Y=p.Y,Kind=kind,Data=data}); }
+    private static void Push(uint kind,uint data=0,Point? eventPoint=null){ if(Queue.Count>=8192){Fail(111);return;} QueryPerformanceCounter(out var q); var p=eventPoint??GetPoint(); Queue.Enqueue(new(){Qpc=(ulong)q,X=p.X,Y=p.Y,Kind=kind,Data=data}); }
     private static IntPtr MouseHook(int code, UIntPtr w, IntPtr l)
     {
-        if (code >= 0 && Active(true)) {
+        if (code >= 0) {
             var input = Marshal.PtrToStructure<LowLevelMouse>(l);
+            if (!Active(true, input.Point)) return CallNextHookEx(_mouseHook, code, w, l);
             switch ((uint)w) {
-                case 0x0200: Push(1); break;
-                case 0x0201: Push(2); break;
-                case 0x0202: Push(3); break;
-                case 0x020A: Push(6, input.MouseData); break;
+                case 0x0200: Push(1, 0, input.Point); break;
+                case 0x0201: Push(2, 0, input.Point); break;
+                case 0x0202: Push(3, 0, input.Point); break;
+                case 0x020A: Push(6, input.MouseData, input.Point); break;
             }
         }
         return CallNextHookEx(_mouseHook, code, w, l);
@@ -184,15 +203,49 @@ internal static class InputBridge
                 ? (byte)0x80 : (byte)0;
         }
     }
-    private static IntPtr Proc(IntPtr h,uint m,UIntPtr w,IntPtr l){ if(m!=0x00FF) return DefWindowProcW(h,m,w,l); uint size=0; GetRawInputData(l,0x10000003,IntPtr.Zero,ref size,(uint)Marshal.SizeOf<RawInputHeader>()); var mem=Marshal.AllocHGlobal((int)size); try { if(GetRawInputData(l,0x10000003,mem,ref size,(uint)Marshal.SizeOf<RawInputHeader>())!=(int)size)return IntPtr.Zero; var r=Marshal.PtrToStructure<RawInput>(mem); if(r.Header.Type==RIM_TYPEMOUSE&&Active(true)){var x=r.Mouse;if(x.LastX!=0||x.LastY!=0)Push(1);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_DOWN)!=0)Push(2);if((x.ButtonFlags&RI_MOUSE_LEFT_BUTTON_UP)!=0)Push(3);if((x.ButtonFlags&RI_MOUSE_WHEEL)!=0)Push(6,x.ButtonData);}else if(r.Header.Type==RIM_TYPEKEYBOARD&&Active(false))Push((r.Keyboard.Flags&1)!=0?8u:7u,((uint)r.Keyboard.VKey<<16)|r.Keyboard.MakeCode); } finally{Marshal.FreeHGlobal(mem);} return IntPtr.Zero; }
+    private static void RecordMouse(RawMouse mouse, Point point)
+    {
+        if (mouse.LastX != 0 || mouse.LastY != 0) Push(1, 0, point);
+        if ((mouse.ButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN) != 0) Push(2, 0, point);
+        if ((mouse.ButtonFlags & RI_MOUSE_LEFT_BUTTON_UP) != 0) Push(3, 0, point);
+        if ((mouse.ButtonFlags & RI_MOUSE_WHEEL) != 0) Push(6, mouse.ButtonData, point);
+    }
+    private static IntPtr Proc(IntPtr h, uint m, UIntPtr w, IntPtr l)
+    {
+        if (m != 0x00FF) return DefWindowProcW(h, m, w, l);
+        uint size = 0;
+        var headerSize = (uint)Marshal.SizeOf<RawInputHeader>();
+        GetRawInputData(l, 0x10000003, IntPtr.Zero, ref size, headerSize);
+        if (size >= headerSize)
+        {
+            var mem = Marshal.AllocHGlobal((int)size);
+            try
+            {
+                if (GetRawInputData(l, 0x10000003, mem, ref size, headerSize) == (int)size &&
+                    size >= headerSize + Marshal.SizeOf<RawMouse>() &&
+                    Marshal.PtrToStructure<RawInputHeader>(mem).Type == RIM_TYPEMOUSE)
+                {
+                    var point = GetPoint();
+                    if (Active(true, point))
+                        RecordMouse(Marshal.PtrToStructure<RawMouse>(IntPtr.Add(mem, (int)headerSize)), point);
+                }
+            }
+            catch { Fail(31); }
+            finally { Marshal.FreeHGlobal(mem); }
+        }
+        return DefWindowProcW(h, m, w, l);
+    }
     private static void Loop()
     {
         _threadId = GetCurrentThreadId();
+        var previousDpiContext = SetThreadDpiAwarenessContext(new IntPtr(-4));
+        IntPtr window = IntPtr.Zero;
+        bool mouseRegistered = false;
         try
         {
-            var wc = new WndClass { Name = "crer.raw.input", Proc = Proc, Instance = GetModuleHandleW(null) };
+            var wc = new WndClass { Name = "crer.raw.input", Proc = WindowProc, Instance = GetModuleHandleW(null) };
             RegisterClassW(ref wc);
-            var window = CreateWindowExW(0, wc.Name, wc.Name, 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, wc.Instance, IntPtr.Zero);
+            window = CreateWindowExW(0, wc.Name, wc.Name, 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, wc.Instance, IntPtr.Zero);
             if (window == IntPtr.Zero) { Fail(Marshal.GetLastWin32Error()); return; }
             if (_testHookFailure != 0)
             {
@@ -201,17 +254,22 @@ internal static class InputBridge
                 Fail(error);
                 return;
             }
-            _mouseHook = SetWindowsHookExW(14, MouseHookProc, IntPtr.Zero, 0);
+            // INPUTSINK receives physical mouse input even while CfT owns the foreground.
+            // Do not also install a mouse hook: that would record each click twice.
+            mouseRegistered = RegisterRawInputDevices(
+                new[] { new RawInputDevice { UsagePage=1, Usage=2, Flags=0x100, Target=window } },
+                1, (uint)Marshal.SizeOf<RawInputDevice>());
+            if (!mouseRegistered) { Fail(Marshal.GetLastWin32Error()); return; }
             _keyboardHook = SetWindowsHookExW(13, KeyboardHookProc, IntPtr.Zero, 0);
-            if (_mouseHook == IntPtr.Zero || _keyboardHook == IntPtr.Zero)
+            if (_keyboardHook == IntPtr.Zero)
             {
                 Fail(Marshal.GetLastWin32Error());
                 return;
             }
             while (_running)
             {
-                var messageStatus = GetMessageW(out _, IntPtr.Zero, 0, 0);
-                if (messageStatus > 0) continue;
+                var messageStatus = GetMessageW(out var message, IntPtr.Zero, 0, 0);
+                if (messageStatus > 0) { DispatchMessageW(ref message); continue; }
                 if (messageStatus < 0) Fail(Marshal.GetLastWin32Error());
                 break;
             }
@@ -222,15 +280,20 @@ internal static class InputBridge
         }
         finally
         {
+            if (mouseRegistered) RegisterRawInputDevices(
+                new[] { new RawInputDevice { UsagePage=1, Usage=2, Flags=1 } },
+                1, (uint)Marshal.SizeOf<RawInputDevice>());
+            if (window != IntPtr.Zero) DestroyWindow(window);
             if (_mouseHook != IntPtr.Zero) UnhookWindowsHookEx(_mouseHook);
             if (_keyboardHook != IntPtr.Zero) UnhookWindowsHookEx(_keyboardHook);
             _mouseHook = _keyboardHook = IntPtr.Zero;
             _running = false;
             _threadId = 0;
+            if (previousDpiContext != IntPtr.Zero) SetThreadDpiAwarenessContext(previousDpiContext);
             Stopped.Set();
         }
     }
-    [UnmanagedCallersOnly(EntryPoint="crer_input_abi_version")] public static uint Version()=>1;
+    [UnmanagedCallersOnly(EntryPoint="crer_input_abi_version")] public static uint Version()=>2;
     [UnmanagedCallersOnly(EntryPoint="crer_input_get_foreground_window")] public static nint GetForegroundWindowHandle()=>GetForegroundWindow();
     [UnmanagedCallersOnly(EntryPoint="crer_input_restore_foreground_window")] public static int RestoreForegroundWindow(nint h)
     {
@@ -331,7 +394,7 @@ internal static class InputBridge
     [UnmanagedCallersOnly(EntryPoint="crer_input_get_content_rect")] public static unsafe int GetContentRect(CrerRect* output)
     {
         if (output == null) return 87;
-        if (_content != IntPtr.Zero && GetWindowRect(_content, out var captured))
+        if (_content != IntPtr.Zero && PhysicalWindowRect(_content, out var captured))
         {
             *output = new CrerRect { X = captured.Left, Y = captured.Top, Width = captured.Right - captured.Left, Height = captured.Bottom - captured.Top };
             return 0;
@@ -344,7 +407,7 @@ internal static class InputBridge
             Marshal.WriteIntPtr(handle, IntPtr.Zero);
             EnumChildWindows(_target, FindContent, handle);
             var content = Marshal.ReadIntPtr(handle);
-            if (content == IntPtr.Zero || !GetWindowRect(content, out var rect)) return 1169; // Content HWND not found.
+            if (content == IntPtr.Zero || !PhysicalWindowRect(content, out var rect)) return 1169; // Content HWND not found.
             *output = new CrerRect { X = rect.Left, Y = rect.Top, Width = rect.Right - rect.Left, Height = rect.Bottom - rect.Top };
             return 0;
         }
@@ -353,10 +416,20 @@ internal static class InputBridge
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_error")] public static int Error()=>_error;
 
     internal static int TestStart(uint pid)=>StartCore(pid);
+    internal static uint TestVersion()=>2;
     internal static int TestStop()=>StopCore();
     internal static int TestIsRunning()=>_running ? 1 : 0;
     internal static int TestError()=>_error;
     internal static void TestPush()=>Push(1);
+    internal static void TestMousePacket(byte[] packet, int x, int y)
+    {
+        var memory = Marshal.AllocHGlobal(packet.Length);
+        try {
+            Marshal.Copy(packet, 0, memory, packet.Length);
+            RecordMouse(Marshal.PtrToStructure<RawMouse>(memory), new Point { X=x, Y=y });
+        } finally { Marshal.FreeHGlobal(memory); }
+    }
+    internal static bool TestRead(out CrerInputEvent value)=>Queue.TryDequeue(out value);
     internal static void TestFailHookInitialization(int error)=>_testHookFailure=error;
     internal static void TestForceStopTimeout()=>_testStopTimeout=1;
 }

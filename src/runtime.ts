@@ -1,11 +1,17 @@
 import { executeAtomicAction } from "./actions.ts";
 import { RunArtifactSink } from "./artifacts.ts";
 import { Cdp } from "./cdp.ts";
-import { EnvironmentError, ExecutionAbortedError, InterruptedError } from "./errors.ts";
+import {
+  EnvironmentError,
+  ExecutionAbortedError,
+  ExplicitFailureError,
+  InterruptedError,
+} from "./errors.ts";
 import { ExecutionContext, StepExecutor } from "./executor.ts";
 import { cleanupErrors } from "./input_guard.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
+import { createRunId } from "./run_id.ts";
 import {
   matchTemplate,
   matchTemplates,
@@ -900,7 +906,7 @@ async function currentUrl(b: BrowserSession): Promise<string | undefined> {
   }
 }
 export async function playScenario(s: Scenario, options: PlayOptions): Promise<RunResult> {
-  const runDir = `.crer/runs/${crypto.randomUUID()}`;
+  const runDir = `.crer/runs/${createRunId()}`;
   await Deno.mkdir(runDir, { recursive: true });
   const seed = options.seed ?? s.playback?.seed ?? randomSeed();
   const templateScreenshots = options.templateScreenshots
@@ -1140,7 +1146,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               lastWarnedForegroundStatus = foregroundStatus;
             }
           }
-          if (step.do === "break") {
+          if (step.do === "fail") {
+            throw new ExplicitFailureError(step.message!);
+          } else if (step.do === "break") {
             await appendStepLog({
               index: i,
               do: step.do,
@@ -1582,6 +1590,23 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             e instanceof EnvironmentError || e instanceof InterruptedError
             || e instanceof ExecutionAbortedError
           ) throw e;
+          if (e instanceof ExplicitFailureError) {
+            await appendStepLog({
+              index: i,
+              do: step.do,
+              startedAt,
+              completedAt: new Date().toISOString(),
+              message: e.message,
+              url: await currentUrl(browser),
+              status: "failed",
+              kind: "explicit",
+              error: String(e),
+            });
+            await capture(browser, `failure-${i}`).catch(() => undefined);
+            failures.push(`${i}:explicit:${e.message}`);
+            execution.stop();
+            return;
+          }
           if (e instanceof TemplateMatchError) templateFailureScreenshot ??= e.screenshot;
           const kind = failureFor(step, e);
           await appendStepLog({

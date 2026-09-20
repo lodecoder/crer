@@ -52,6 +52,8 @@ Raw Input と HWND 操作は C ABI を公開するC# .NET 10 Native AOT DLL `cre
 `crer_input_stop`、`crer_input_read`、`crer_input_is_running`、`crer_input_last_error`、前景 HWND の取得・復元用 API、
 `crer_input_foreground_process_window`、フォーカスを変更せず topmost だけを設定する
 `crer_input_set_process_topmost_only` を C ABI で export する。
+現行ABIはversion 2とし、mouse eventとcontent HWND矩形を物理pixel座標で返す。Deno側と
+`crer_input_abi_version` が一致しないDLLは記録に使用しない。
 イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Deno と DLL
 の間で共有しない。Deno から DLL への callback は使わず、Deno の非同期ループが
 `crer_input_read` を短い間隔で poll する。これにより DLL のスレッドから V8/Deno runtime を
@@ -63,6 +65,10 @@ DLL は専用 native thread 上の message-only window で Raw Input を受信�
 失敗は構造化した error code を返し、バッファあふれは記録を続けず `record` を失敗終了する。
 
 ### 3.2 プロセス分離
+
+各実行の `run-id` は `<UTC YYYYMMDDTHHmmssSSSZ>-<UUIDv4>` とする。UTC時刻部分は固定長かつ
+Windows のファイル名に使用できる文字だけで構成し、ディレクトリ名の辞書順がミリ秒単位の実行日時順になるようにする。
+UUIDv4 は同一時刻の衝突回避に使い、同一ミリ秒内の生成順は保証しない。
 
 各再生ワーカーは次の引数で独立した CfT を起動する。
 
@@ -108,7 +114,8 @@ topmost を再適用する。session 再利用時は 250 ms 間隔の watchdog �
 
 `crer record` は CfT を専用プロファイルで起動し、対象のトップレベル HWND と CDP target を
 対応付ける。Windows Raw Input から受けた入力について、カーソル直下の HWND が対象 CfT の
-コンテンツ領域である時だけ採用する。物理スクリーン座標は `GetClientRect`、DPI、CDP
+コンテンツ領域である時だけ採用する。物理スクリーン座標は低レベルmouse hookの
+`MSLLHOOKSTRUCT.pt` をイベント時点の値として保存し、較正マーカーとCDP
 `Page.getLayoutMetrics` を使って CSS viewport 座標に正規化する。
 
 - `WM_INPUT` の移動、ボタン、ホイールを時間順に採取する。
@@ -128,12 +135,13 @@ YAML へは不完全な操作を出力せず警告する。CfT が前景でな�
 較正後の左クリックは記録中の標準出力へ CSS 座標として表示し、content bounds を得られない場合は
 物理画面座標であることを示す `screen_px` 表記で表示する。ドラッグはクリックとして表示しない。
 
-座標は、Raw Input の物理 screen px を対象コンテンツ HWND の物理 client px に変換し、同時点の
-`Page.getLayoutMetrics().cssVisualViewport.clientWidth/clientHeight` と `GetClientRect` の幅・高さの
-比で CSS viewport px に換算する。すなわち `x = clientX * cssWidth / clientWidth`、
-`y = clientY * cssHeight / clientHeight` とする。記録中に client rect、DPR、viewport が変化した
-場合は、以後の Raw Input イベントにその時点の CSS viewport を付与する。正規化はイベントごとの
-viewport を使うため、ページ遷移前後で異なる表示条件の座標を安全に一つの scenario へ保存できる。
+Native DLLのhook threadとcontent HWND計測は Per-Monitor-V2 DPI awarenessを使い、DPI仮想化された
+`GetCursorPos` の再取得値を使わない。再生ブラウザはdevice scale factorを1に固定するため、座標は
+較正したpage原点から物理1 px = CSS 1 pxとして正規化する。content HWNDの矩形にはscrollbar領域も
+含まれる一方、CDPのvisual viewportにはscrollbarが含まれないため、両者の幅・高さの比を座標倍率には
+使用しない。旧metadataはrequested contentとrectの比からDPI倍率を復元し、requested contentもない場合だけ
+従来のrect/viewport比へfallbackする。
+記録中にviewportが変化した場合は、以後のRaw Inputイベントにその時点のCSS viewportを付与する。
 
 座標のほか、CDP `DOM.getNodeForLocation` で得たタグ、アクセシブル名、CSS path、要素の
 bounding box を **locator hint** として添える。これは編集・失敗診断・将来の検証専用であり、
@@ -254,7 +262,8 @@ steps:
 ```
 
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
-`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log`、`if`、`repeat`、`repeat_until`、`call`
+`text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log`、`fail`、`if`、`repeat`、`repeat_until`、
+`for_each_template`、`call`、`break`
 である。`wait_for` と `assert` は
 ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
 `sleep` 以外の各操作には任意の `delay_ms`（0 以上のミリ秒）を指定できる。成功した操作の直後に
@@ -269,6 +278,13 @@ steps:
 
 `log` は必須の文字列 `message` を標準出力へ `[crer] <message>` として出力する進捗確認用のステップである。
 ブラウザ・ページには操作をせず、メッセージは該当する `steps.ndjson` の記録にも含める。
+
+`fail` は必須の空でない文字列 `message` を持ち、現在の scenario を意図的に失敗終了する制御ステップである。
+`playback.on_failure` にかかわらず、後続ステップと包含する制御ステップの残りを実行せず、終了コード `4` を返す。
+`steps.ndjson` には `status: failed`、`kind: explicit`、`message` を記録し、通常の失敗と同様に
+`failure-<step-index>.png` の保存を試みる。撮影失敗は元の明示的失敗を上書きしない。`delay_ms` は指定できず、
+失敗後の `playback.step_delay_ms` も適用しない。plan 内では `scenario_failure` として集約し、後続 job の扱いは
+plan の `on_failure.scenario_failure` と `parallel.fail_fast` に従う。
 
 `repeat` は 0 以上の整数 `count` とステップ配列 `steps` を必須とし、子ステップ列を `count` 回順に実行する。
 `count: 0` は正常な no-op であり、子ステップを実行しない。子ステップには通常の操作、`if`、入れ子の
@@ -512,6 +528,8 @@ assert の失敗、`5` 中断とする。
    ウィンドウを再利用し、最後の scenario 後にだけ graceful close される。
 10. `template_screenshots: failure-only` では成功したtemplate探索画像をディスクへ保存せず、template失敗時に
     照合で使用した画像だけを `failure-*.png` として保存する。
+11. `do: fail` は `playback.on_failure` が `continue` でも同一 scenario の後続ステップを実行せず、失敗 artifact
+    を記録して終了コード `4` を返す。plan 内では `scenario_failure` の policy に従う。
 
 ## 11. 段階的実装
 

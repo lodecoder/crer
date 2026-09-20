@@ -60,6 +60,39 @@ Deno.test("calibrates the page origin from the recording marker", () => {
   );
 });
 
+Deno.test("uses physical screen pixels without scaling across scrollbar dimensions", () => {
+  const transform = transformFromRecordingMetadata({
+    content_rect_screen_px: { x: 18, y: 42, width: 1330, height: 1200 },
+    css_viewport: { x: 1315, y: 1200 },
+    screen_pixels_per_css_pixel: { x: 1, y: 1 },
+    marker_calibration: {
+      screenClick: { x: 20, y: 47 },
+      cssPoint: { x: 2, y: 5 },
+    },
+  });
+  assertEquals(transform, {
+    clientOrigin: { x: 18, y: 42 },
+    clientSize: { x: 1330, y: 1200 },
+    viewport: { x: 1315, y: 1200 },
+    screenPixelsPerCssPixel: { x: 1, y: 1 },
+  });
+  assertEquals(screenToCss({ x: 1018, y: 642 }, transform!), { x: 1000, y: 600 });
+});
+
+Deno.test("infers the correct DPI scale for older metadata with a scrollbar", () => {
+  const transform = transformFromRecordingMetadata({
+    content_rect_screen_px: { x: 9, y: 21, width: 665, height: 600 },
+    requested_content: { width: 1330, height: 1200 },
+    css_viewport: { x: 1315, y: 1200 },
+    marker_calibration: {
+      screenClick: { x: 10, y: 23 },
+      cssPoint: { x: 2, y: 4 },
+    },
+  });
+  assertEquals(transform?.screenPixelsPerCssPixel, { x: 0.5, y: 0.5 });
+  assertEquals(screenToCss({ x: 509, y: 321 }, transform!), { x: 1000, y: 600 });
+});
+
 Deno.test("reads the recorded window position from a sidecar", async () => {
   const path = await Deno.makeTempFile();
   try {

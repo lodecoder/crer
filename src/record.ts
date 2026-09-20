@@ -42,7 +42,7 @@ export async function recordRaw(
   let primaryError: unknown;
   let stopStatus = 0;
   try {
-    if (lib.symbols.crer_input_abi_version() !== 1) {
+    if (lib.symbols.crer_input_abi_version() !== 2) {
       throw new Error("unsupported crer-win-input ABI");
     }
     const qpcFrequencyHz = lib.symbols.crer_input_qpc_frequency().toString();
@@ -74,14 +74,12 @@ export async function recordRaw(
         && rect.height >= 32
       ) {
         const origin = {
-          x: markerCalibration.screenClick.x
-            - markerCalibration.cssPoint.x * rect.width / activeViewport.x,
-          y: markerCalibration.screenClick.y
-            - markerCalibration.cssPoint.y * rect.height / activeViewport.y,
+          x: markerCalibration.screenClick.x - markerCalibration.cssPoint.x,
+          y: markerCalibration.screenClick.y - markerCalibration.cssPoint.y,
         };
         const css = {
-          x: Math.round((point.x - origin.x) * activeViewport.x / rect.width),
-          y: Math.round((point.y - origin.y) * activeViewport.y / rect.height),
+          x: Math.round(point.x - origin.x),
+          y: Math.round(point.y - origin.y),
         };
         console.log(`[crer] click: { x: ${css.x}, y: ${css.y} }`);
       } else {
@@ -107,6 +105,7 @@ export async function recordRaw(
               }
               : {}),
             ...(viewport ? { css_viewport: viewport } : {}),
+            ...(viewport ? { screen_pixels_per_css_pixel: { x: 1, y: 1 } } : {}),
             ...(requestedContent
               ? { requested_content: { width: requestedContent.x, height: requestedContent.y } }
               : {}),

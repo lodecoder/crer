@@ -19,6 +19,11 @@ export class ExecutionAbortedError extends Error {
   override name = "ExecutionAbortedError";
 }
 
+/** An intentional, unconditional scenario failure requested by a fail step. */
+export class ExplicitFailureError extends Error {
+  override name = "ExplicitFailureError";
+}
+
 export function exitCodeFor(error: unknown): 2 | 3 | 5 {
   if (error instanceof InterruptedError) return 5;
   if (error instanceof EnvironmentError) return 3;

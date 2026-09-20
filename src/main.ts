@@ -22,6 +22,7 @@ import { fileDirectory, resolveFromDirectory } from "./paths.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { recordRaw } from "./record.ts";
+import { createRunId } from "./run_id.ts";
 import {
   closeSharedBrowserSession,
   createSharedBrowserSession,
@@ -288,16 +289,34 @@ async function recordingPage(
         await sleep(50);
       }
       const readViewport = async () => {
-        const metrics = await within(
-          cdp.call<
-            { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
-          >(
-            "Page.getLayoutMetrics",
-            {},
-            attached.sessionId,
+        const [metrics, display] = await Promise.all([
+          within(
+            cdp.call<
+              { cssVisualViewport?: { clientWidth: number; clientHeight: number } }
+            >(
+              "Page.getLayoutMetrics",
+              {},
+              attached.sessionId,
+            ),
+            cdpWaitMs,
           ),
-          cdpWaitMs,
-        );
+          within(
+            cdp.call<{ result: { value?: { dpr: number; scale: number } } }>(
+              "Runtime.evaluate",
+              {
+                expression: "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1})",
+                returnByValue: true,
+              },
+              attached.sessionId,
+            ),
+            cdpWaitMs,
+          ),
+        ]);
+        if (display.result.value?.dpr !== 1 || display.result.value.scale !== 1) {
+          throw new Error(
+            `recording requires 100% browser zoom (DPR 1, visual scale 1); got DPR ${display.result.value?.dpr}, visual scale ${display.result.value?.scale}`,
+          );
+        }
         const viewport = metrics.cssVisualViewport;
         if (!viewport || viewport.clientWidth <= 0 || viewport.clientHeight <= 0) {
           throw new Error("CfT recording viewport was unavailable");
@@ -715,7 +734,7 @@ async function main() {
     return;
   }
   if (command === "record") {
-    const runDir = `.crer/runs/${crypto.randomUUID()}`;
+    const runDir = `.crer/runs/${createRunId()}`;
     await Deno.mkdir(runDir, { recursive: true });
     const configuredProfile = profileDirOption();
     const profile = configuredProfile

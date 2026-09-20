@@ -8,7 +8,12 @@ type RawEvent = {
   data: number;
   css_viewport?: Point;
 };
-export type CoordinateTransform = { clientOrigin: Point; clientSize: Point; viewport: Point };
+export type CoordinateTransform = {
+  clientOrigin: Point;
+  clientSize: Point;
+  viewport: Point;
+  screenPixelsPerCssPixel?: Point;
+};
 type RecordingMetadata = {
   content_rect_screen_px?: { x: number; y: number; width: number; height: number };
   css_viewport?: Point;
@@ -22,6 +27,7 @@ type RecordingMetadata = {
     screenClick: Point;
     cssPoint: Point;
   };
+  screen_pixels_per_css_pixel?: Point;
 };
 export type NormalizedRecording = { scenario: Scenario; warnings: string[] };
 
@@ -36,21 +42,33 @@ export function transformFromRecordingMetadata(
     return undefined;
   }
   const calibration = metadata.marker_calibration;
+  const scale = metadata.screen_pixels_per_css_pixel;
+  const explicitScale = scale && Number.isFinite(scale.x) && Number.isFinite(scale.y)
+      && scale.x > 0 && scale.y > 0
+    ? scale
+    : undefined;
+  const requested = metadata.requested_content;
+  const inferredScale = !explicitScale && requested && Number.isFinite(requested.width)
+      && Number.isFinite(requested.height) && requested.width > 0 && requested.height > 0
+    ? { x: rect.width / requested.width, y: rect.height / requested.height }
+    : undefined;
+  const effectiveScale = explicitScale ?? inferredScale;
   // The marker is a fixed 64x64 CSS-pixel overlay at the page origin. CfT may place
   // its mandatory information bar in the compositor surface, but CDP input
   // coordinates begin at this DOM viewport origin.
   const clientOrigin = calibration && calibration.cssPoint.x >= 0 && calibration.cssPoint.y >= 0
     ? {
       x: calibration.screenClick.x
-        - calibration.cssPoint.x * rect.width / viewport.x,
+        - calibration.cssPoint.x * (effectiveScale?.x ?? rect.width / viewport.x),
       y: calibration.screenClick.y
-        - calibration.cssPoint.y * rect.height / viewport.y,
+        - calibration.cssPoint.y * (effectiveScale?.y ?? rect.height / viewport.y),
     }
     : { x: rect.x, y: rect.y };
   return {
     clientOrigin,
     clientSize: { x: rect.width, y: rect.height },
     viewport,
+    ...(effectiveScale ? { screenPixelsPerCssPixel: effectiveScale } : {}),
   };
 }
 
@@ -144,10 +162,14 @@ export function screenToCss(point: Point, transform: CoordinateTransform): Point
   }
   return {
     x: Math.round(
-      (point.x - transform.clientOrigin.x) * transform.viewport.x / transform.clientSize.x,
+      transform.screenPixelsPerCssPixel
+        ? (point.x - transform.clientOrigin.x) / transform.screenPixelsPerCssPixel.x
+        : (point.x - transform.clientOrigin.x) * transform.viewport.x / transform.clientSize.x,
     ),
     y: Math.round(
-      (point.y - transform.clientOrigin.y) * transform.viewport.y / transform.clientSize.y,
+      transform.screenPixelsPerCssPixel
+        ? (point.y - transform.clientOrigin.y) / transform.screenPixelsPerCssPixel.y
+        : (point.y - transform.clientOrigin.y) * transform.viewport.y / transform.clientSize.y,
     ),
   };
 }

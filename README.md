@@ -208,6 +208,13 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 `browser.window.viewport` として YAML に保存します。sidecar がない場合は、従来どおり
 `--client-origin`、`--client-size`、`--viewport` をすべて指定してください。
 
+新しい記録ではmouse hookのイベント座標とcontent HWNDを物理pixelへ統一し、較正したpage原点から
+物理1 px = CSS 1 pxとして保存します。Windowsの表示倍率によるDPI仮想化や、content領域にだけ含まれる
+scrollbar幅を座標倍率へ混ぜないため、記録位置とCDP再生位置は整数CSS pixel単位で一致します。
+修正前のsidecarでも `requested_content` があれば正しいDPI倍率を復元できるため、新しい `normalize` で
+YAMLを再生成するとscrollbar由来のズレを補正できます。要求contentサイズがない古い記録だけは従来変換へ
+fallbackするため、高精度が必要なら新しいDLLで記録し直してください。
+
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
 ### 画像テンプレートでのクリック
@@ -319,6 +326,31 @@ template matching を行いません。コンソール出力の末尾に `(reuse
 - { do: log, message: "ログイン画面を表示しました" }
 - { do: click, at: { x: 500, y: 200 } }
 - { do: log, message: "ログイン操作を送信しました" }
+```
+
+### シナリオを明示的に失敗終了する
+
+`do: fail` は、条件分岐や関数の途中から現在のシナリオを必ず失敗終了したい場合に使います。
+`message` は空でない文字列を必須とし、`delay_ms` は指定できません。
+
+```yaml
+- do: if
+  equals: { left: "${mode}", right: production }
+  then:
+    - { do: fail, message: "production では実行できません" }
+```
+
+`playback.on_failure.default: continue` が指定されていても、同一シナリオの後続ステップは実行しません。
+終了コードは `4` で、`steps.ndjson` に `kind: explicit` とメッセージを記録し、失敗時 screenshot の保存も
+試みます。plan 内では `scenario_failure` として扱うため、後続シナリオを実行するかは plan の
+`on_failure.scenario_failure` と `parallel.fail_fast` に従います。
+
+ローカル fixture では、`on_failure.default: continue` より `fail` が優先されることも確認できます。
+
+```powershell
+.\scripts\test-playback-fixture.ps1 `
+  -Scenario fixtures\playback\explicit-failure.crer.yaml `
+  -ExpectedExitCode 4
 ```
 
 ### 操作の繰り返し
@@ -535,7 +567,9 @@ repomix
 設定は [repomix.config.json](repomix.config.json) にあり、secret scanは有効です。生成された
 `repomix-output.md` はGit管理対象外です。
 
-実行 artifacts は `.crer/runs/<run-id>` に出力されます。`steps.ndjson` には各ステップの時刻、実効座標、
+実行 artifacts は `.crer/runs/<run-id>` に出力されます。run ID は
+`<UTC YYYYMMDDTHHmmssSSSZ>-<UUIDv4>` 形式で、ディレクトリ名の文字列ソートが実行日時順になります。
+同一ミリ秒内の順序はUUID部分によって決まり、生成順は保証しません。`steps.ndjson` には各ステップの時刻、実効座標、
 jitter offset、URL、成否が追記され、`crer inspect` で件数と失敗数を確認できます。
 
 - 仕様書: [docs/specification.md](docs/specification.md)

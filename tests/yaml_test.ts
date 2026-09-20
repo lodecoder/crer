@@ -51,6 +51,40 @@ Deno.test("rejects unsupported or incomplete atomic steps", () => {
   );
 });
 
+Deno.test("validates unconditional fail steps", () => {
+  const scenario = {
+    version: 1,
+    name: "explicit-failure",
+    browser: { initial_url: "https://example.test" },
+    steps: [{ do: "fail", message: "unexpected state" }],
+  };
+  assertEquals(scenarioFrom(scenario).steps, scenario.steps);
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "fail" }] }),
+    Error,
+    "message must be a non-empty string",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, steps: [{ do: "fail", message: "   " }] }),
+    Error,
+    "message must be a non-empty string",
+  );
+  assertThrows(
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "fail", message: "unexpected state", delay_ms: 1 }],
+      }),
+    Error,
+    "delay_ms is not supported",
+  );
+  assertThrows(
+    () => scenarioFrom({ ...scenario, playback: { on_failure: { explicit: "continue" } } }),
+    Error,
+    "playback.on_failure.explicit is not supported",
+  );
+});
+
 Deno.test("rejects unsafe scenario resources and unknown fields", () => {
   const scenario = {
     version: 1,

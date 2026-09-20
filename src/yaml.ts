@@ -155,6 +155,7 @@ const supportedSteps = [
   "assert",
   "sleep",
   "log",
+  "fail",
   "if",
   "repeat",
   "repeat_until",
@@ -179,6 +180,7 @@ const stepKeys: Record<string, readonly string[]> = {
   assert: withDelay("url", "state", "locator_hint"),
   sleep: ["do", "ms"],
   log: withDelay("message"),
+  fail: ["do", "message"],
   if: withDelay("template", "weekdays", "time_zone", "equals", "then", "else"),
   repeat: withDelay("count", "steps"),
   repeat_until: withDelay("template", "state", "max_attempts", "on_limit", "steps"),
@@ -425,6 +427,9 @@ export function scenarioFrom(value: unknown): Scenario {
     }
     if (s.do === "log" && typeof s.message !== "string") {
       throw new Error(`${label}.message must be a string for log`);
+    }
+    if (s.do === "fail" && (typeof s.message !== "string" || !s.message.trim())) {
+      throw new Error(`${label}.message must be a non-empty string for fail`);
     }
     if (s.do === "call") {
       if (typeof s.function !== "string" || !Object.hasOwn(definitions, s.function)) {

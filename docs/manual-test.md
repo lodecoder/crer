@@ -69,6 +69,18 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 - 最新 `.crer\runs\<run-id>` に `failure-0.png`、`run.json`、`display.json` がある。
 - CfT ウィンドウが終了する。
 
+明示的な `do: fail` が `playback.on_failure.default: continue` より優先されることは、次で確認する。
+
+```powershell
+.\scripts\test-playback-fixture.ps1 `
+  -Scenario fixtures\playback\explicit-failure.crer.yaml `
+  -ExpectedExitCode 4
+```
+
+- 最新 run の `steps.ndjson` に index `0`、`status: failed`、`kind: explicit`、指定した `message` がある。
+- `failure-0.png` があり、`should-not-run.png` と index `1` の step record はない。
+- CfT ウィンドウが終了する。
+
 ## 3. 手動 record → YAML → replay
 
 ```powershell
@@ -93,7 +105,10 @@ Windows の `Ctrl+C` は PowerShell の子プロセスを強制終了して後�
 
 - `.crer\fixture.raw-input.ndjson` が作成される。
 - `.crer\fixture.recorded.crer.yaml` が作成される。
-- 有効な content bounds を取得でき、較正点をクリックした場合は `.crer\fixture.raw-input.ndjson.meta.json` に `marker_calibration` が作成される。
+- 有効な content bounds を取得でき、較正点をクリックした場合は `.crer\fixture.raw-input.ndjson.meta.json` に
+  `marker_calibration` と `screen_pixels_per_css_pixel: { x: 1, y: 1 }` が作成される。
+- 記録中に表示されたclickのCSS座標と生成YAMLの `click.at` が一致する。再生時の `steps.ndjson` にも同じ
+  実効座標が記録される。
 - bounds 警告が出た場合、YAML の座標は物理 screen px の可能性があるため replay は行わず、その警告文を報告する。
 
 metadata が作成され、bounds 警告がなければ再生する。記録時の操作間隔は YAML の `sleep` ステップに

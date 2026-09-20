@@ -8,11 +8,13 @@ Deno.test({
   ignore: Deno.build.os !== "windows" || !nativeDllExists,
   fn: async () => {
     const lib = Deno.dlopen(nativeDll, {
+      crer_input_abi_version: { parameters: [], result: "u32" },
       crer_input_start: { parameters: ["u32"], result: "i32" },
       crer_input_is_running: { parameters: [], result: "i32" },
       crer_input_stop: { parameters: [], result: "i32" },
     });
     try {
+      assertEquals(lib.symbols.crer_input_abi_version(), 2);
       for (let session = 0; session < 2; session++) {
         assertEquals(lib.symbols.crer_input_start(Deno.pid), 0);
         assertEquals(lib.symbols.crer_input_start(Deno.pid), 183);
