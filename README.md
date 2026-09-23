@@ -207,8 +207,9 @@ browser:
 ウィンドウの重なり順を変えるため、通常の非干渉再生では指定しません。物理マウス・キーボードの位置や入力を
 注入・変更するものではありません。Windows の foreground lock などにより設定できない場合は、Win32 status
 を `foreground.json` と警告へ記録しますが、topmost 化に成功していれば再生は続行します。
-起動直後と各 step の直前に CfT HWND を再探索して topmost を再適用します。`browser_session` を使う plan では
-さらに 250 ms 間隔の watchdog が topmost だけを再適用し、フォーカス取得の頻度は plan の `focus` で制御します。
+起動直後と各 step の直前に、表示中の CfT 本体の HWND を再探索して topmost を再適用します。
+単独再生・session 再利用のどちらも 250 ms 間隔で監視するため、sleep やページの読み込み待機中も
+最前面を維持します。監視ではフォーカスを変更せず、plan のフォーカス取得頻度は `focus` で制御します。
 
 ```yaml
 browser:

@@ -49,6 +49,9 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr h);
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint command);
+    [DllImport("user32.dll")] private static extern IntPtr GetWindowLongPtrW(IntPtr h, int index);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc p, IntPtr l);
@@ -93,6 +96,9 @@ internal static class InputBridge
     {
         GetWindowThreadProcessId(h, out var p);
         if (p != _foregroundPid) return true;
+        // Chrome menus/tooltips use the same widget class and precede their owner in Z order.
+        // Making only an owned popup topmost reports success but leaves the browser underneath.
+        if (!IsWindowVisible(h) || GetWindow(h, 4) != IntPtr.Zero) return true; // GW_OWNER
         var name = new char[256];
         if (GetClassNameW(h, name, name.Length) == 0 ||
             !new string(name).StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return true;
@@ -349,11 +355,13 @@ internal static class InputBridge
         EnumWindows(FindForeground, IntPtr.Zero);
         if (_foregroundTarget == IntPtr.Zero) return 1168; // ERROR_NOT_FOUND
         var insertAfter = enabled != 0 ? new IntPtr(-1) : new IntPtr(-2); // HWND_TOPMOST / HWND_NOTOPMOST
-        if (!SetWindowPos(_foregroundTarget, insertAfter, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040)) {
+        // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE: focus is handled separately.
+        if (!SetWindowPos(_foregroundTarget, insertAfter, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)) {
             var error = Marshal.GetLastWin32Error();
             return error == 0 ? 5 : error;
         }
-        return 0;
+        var isTopmost = (GetWindowLongPtrW(_foregroundTarget, -20).ToInt64() & 8) != 0; // GWL_EXSTYLE / WS_EX_TOPMOST
+        return isTopmost == (enabled != 0) ? 0 : 5;
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_foreground_status")] public static int LastForegroundStatus()=>_lastForegroundStatus;
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
@@ -416,6 +424,7 @@ internal static class InputBridge
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_error")] public static int Error()=>_error;
 
     internal static int TestStart(uint pid)=>StartCore(pid);
+    internal static int TestTopmost(uint pid, bool enabled)=>SetProcessTopmostCore(pid, enabled ? 1 : 0);
     internal static uint TestVersion()=>2;
     internal static int TestStop()=>StopCore();
     internal static int TestIsRunning()=>_running ? 1 : 0;

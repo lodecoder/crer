@@ -36,6 +36,20 @@ deno test -A tests/url_blocker_integration_test.ts
 Remove-Item Env:CRER_TEST_CHROME
 ```
 
+最前面制御の回帰テストは次で実行する。ネイティブテストでは Chrome と同じクラス名の
+本体・非表示 widget・所有 popup を一時作成し、本体の `WS_EX_TOPMOST`、解除、フォーカス不変を検証する。
+実機テストでは専用 CfT を起動し、単独再生・session 再利用の sleep 中に最前面属性を解除して
+自動復帰を確認する。`foreground: false` への切り替えで監視が停止することも確認する。
+
+```powershell
+.\scripts\build-native.ps1
+$env:CRER_TEST_WINDOWS = '1'
+$env:CRER_TEST_CHROME = $env:CRER_CHROME
+deno task test:native
+deno test -A tests/topmost_integration_test.ts
+Remove-Item Env:CRER_TEST_WINDOWS, Env:CRER_TEST_CHROME
+```
+
 マウスを動かさず、次を実行する。
 
 ```powershell

@@ -14,6 +14,7 @@ static async Task WaitForStop(string label)
 }
 
 Equal(2, (int)InputBridge.TestVersion(), "ABI version");
+if (Environment.GetEnvironmentVariable("CRER_TEST_WINDOWS") == "1") TopmostTests.Run();
 
 // Win32 RAWMOUSE has two padding bytes before the button union (offset 4).
 var packet = new byte[24];

@@ -23,8 +23,10 @@ queue and thread state before each recording, while `stop` waits for the native 
 it cannot terminate within five seconds. The Deno layer preserves partial NDJSON and marks its metadata `incomplete`
 when the recorder reports a terminal error.
 
-For playback, `crer_input_set_process_topmost_only` finds a CfT top-level window by its process ID and changes only
-its topmost state with `SetWindowPos`. `crer_input_foreground_process_window` separately requests foreground focus.
+For playback, `crer_input_set_process_topmost_only` finds a visible, unowned CfT top-level window by its process ID.
+Hidden widgets and owned menus/tooltips are excluded so success cannot refer only to a helper window.
+It changes the topmost state with `SetWindowPos(SWP_NOACTIVATE)` and verifies `WS_EX_TOPMOST` afterward.
+`crer_input_foreground_process_window` separately requests foreground focus.
 This separation lets the Deno watchdog repair a lost topmost state without repeatedly stealing focus. The legacy
 `crer_input_set_process_topmost` export retains the combined behavior for ABI compatibility. These APIs are used only
 when a scenario explicitly sets `browser.window.foreground: true`; playback clears the topmost flag before closing CfT.

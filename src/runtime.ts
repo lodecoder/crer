@@ -953,6 +953,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   let topmostStatus: number | undefined;
   let foregroundStatus: number | undefined;
   let topmostAttempts = 0;
+  let topmostTimer: ReturnType<typeof setInterval> | undefined;
+  let lastWarnedTopmostStatus: number | undefined;
   let lastWarnedForegroundStatus: number | undefined;
   let sharedManaged = false;
   let discardShared = false;
@@ -1032,6 +1034,20 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       topmostStatus = foreground.setProcessTopmost(b!.process.pid, true);
       foregroundStatus = foreground.foregroundProcess(b!.process.pid);
       topmostAttempts++;
+      // Standalone playback needs the same protection during sleeps, waits and navigation
+      // as a reused session. Re-resolve the HWND every time, without taking focus.
+      topmostTimer = setInterval(() => {
+        try {
+          topmostStatus = foreground!.setProcessTopmost(b!.process.pid, true);
+        } catch {
+          topmostStatus = 1;
+        }
+        topmostAttempts++;
+        if (topmostStatus !== 0 && topmostStatus !== lastWarnedTopmostStatus) {
+          console.warn(`Warning: could not keep CfT topmost (Win32 status ${topmostStatus})`);
+        }
+        lastWarnedTopmostStatus = topmostStatus;
+      }, 250);
       await Deno.writeTextFile(
         `${runDir}/foreground.json`,
         JSON.stringify(
@@ -1691,6 +1707,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     return { code, failures: [String(terminal)], runDir };
   } finally {
     options.signal?.removeEventListener("abort", abortBrowser);
+    if (topmostTimer !== undefined) clearInterval(topmostTimer);
     if (sharedManaged) {
       const shared = options.sharedSession!;
       await writeSharedForeground(shared, runDir).catch(() => {});

@@ -104,8 +104,11 @@ scenario の `browser.window.foreground: true` を指定できる。この場合
 Native DLL は `AttachThreadInput` を使って再試行する。それでも拒否された場合は、topmost 化を維持したまま
 Win32 error code を artifacts の `foreground.json` と警告へ記録し、再生は続行する。topmost 化そのものに
 失敗した場合だけ再生を環境エラーとして終了する。起動直後と各 step の直前に HWND をプロセス ID から再探索し
-topmost を再適用する。session 再利用時は 250 ms 間隔の watchdog でも topmost だけを再適用し、HWND の再生成に
-追従する。前景フォーカスの取得は topmost 設定と分離し、plan の `browser_session.focus` に従う。このモードは
+topmost を再適用する。探索では非表示の補助ウィンドウと owner を持つメニュー・ツールチップを除外し、
+表示中のブラウザ本体を選ぶ。`SetWindowPos` に `SWP_NOACTIVATE` を指定し、設定後の `WS_EX_TOPMOST` を検証する。
+単独再生・session 再利用とも 250 ms 間隔の watchdog で topmost だけを再適用し、待機中の属性解除や
+HWND の再生成に追従する。終了時には watchdog を止めてから topmost を解除する。
+前景フォーカスの取得は topmost 設定と分離し、plan の `browser_session.focus` に従う。このモードは
 フォーカスとウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
 
 ## 4. 入力の記録と再生
