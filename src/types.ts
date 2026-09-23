@@ -70,6 +70,8 @@ export type Scenario = {
     chrome: string;
     profile?: string;
     initial_url: string;
+    /** JavaScript regular expression sources matched against request URLs during playback. */
+    block_urls?: string[];
     window?: {
       bounds?: WindowBounds;
       /** Keep CfT topmost; standalone playback focuses before steps and plans can select a session focus policy. */

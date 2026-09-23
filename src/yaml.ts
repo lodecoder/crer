@@ -1,5 +1,6 @@
 import { parse, stringify } from "@std/yaml";
 import type { Plan, Scenario } from "./types.ts";
+import { compileBlockUrls } from "./url_blocker.ts";
 
 export async function loadYaml(path: string): Promise<unknown> {
   return parse(await Deno.readTextFile(path));
@@ -196,7 +197,15 @@ export function scenarioFrom(value: unknown): Scenario {
     throw new Error("scenario requires version: 1, name, and steps");
   }
   const browser = object(v.browser, "browser");
-  validateKeys(browser, "browser", ["chrome", "profile", "initial_url", "window", "display"]);
+  validateKeys(browser, "browser", [
+    "chrome",
+    "profile",
+    "initial_url",
+    "block_urls",
+    "window",
+    "display",
+  ]);
+  compileBlockUrls(browser.block_urls);
   if (browser.chrome !== undefined && typeof browser.chrome !== "string") {
     throw new Error("browser.chrome must be a string");
   }

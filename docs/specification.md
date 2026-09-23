@@ -261,6 +261,34 @@ steps:
   - { do: scroll, at: { x: 920, y: 620 }, delta: { x: 0, y: 561 } }
 ```
 
+`browser.block_urls` は任意の正規表現文字列配列とする。省略または空配列では無効。
+各要素は空白のみではない文字列で、`new RegExp(pattern)` としてコンパイルできなければ検証エラー。
+JavaScript の正規表現ソースを区切り・フラグなしで指定する。URL 全体（クエリを含む）に対する
+大文字・小文字を区別する部分一致で、いずれかに一致したリクエストを中止する。
+
+```yaml
+browser:
+  initial_url: https://example.test/
+  block_urls:
+    - '^https://ads\.example\.test/'
+    - '/images/(banner|tracking)\.(png|jpg|gif)(\?.*)?$'
+```
+
+`play` / `run` の対象 page session で CDP `Fetch` の Request 段階を捕捉し、一致時は
+`Fetch.failRequest` の `BlockedByClient`、非一致時は `Fetch.continueRequest` を送る。
+有効時は CfT を `about:blank` で起動し、ブロック設定後に `initial_url` へ遷移する。
+画像以外のリソースやページ本体、後続の遷移・リダイレクト先にも同じ判定を行う。
+初期ページ本体を遮断した場合は起動失敗とする。遮断したサブリソースは通常の取得失敗として
+扱い、network idle の待機対象から除かれる。
+
+キャッシュおよび Service Worker の応答による迂回を避けるため、有効時は対象 session の
+キャッシュ利用と Service Worker をバイパスする。session 再利用では遷移前に設定を置き換え、
+省略・空配列で interception を無効化しキャッシュ利用と Service Worker を元に戻す。
+interception の CDP 処理に失敗した場合は接続を閉じ、環境エラーとして終了する。
+
+別タブ、別プロセスの iframe、worker 独自の通信、WebSocket、`data:` / `blob:` URL は
+保証対象外とする。`record` はこの設定を受け付けない。
+
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
 `text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log`、`fail`、`if`、`repeat`、`repeat_until`、
 `for_each_template`、`call`、`break`

@@ -28,6 +28,7 @@ import type {
   TemplateScreenshotPolicy,
   WindowBounds,
 } from "./types.ts";
+import { UrlBlocker } from "./url_blocker.ts";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 class ForEachBreak {}
@@ -135,6 +136,7 @@ type BrowserSession = {
   runDir: string;
   viewport: { x: number; y: number };
   network: NetworkTracker;
+  urlBlocker: UrlBlocker;
 };
 
 export type SharedBrowserSession = {
@@ -544,7 +546,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       // A translation bubble is browser UI, not page content, and can obscure coordinate replay.
       "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding",
       ...(options.muteAudio ? ["--mute-audio"] : []),
-      `--app=${s.browser.initial_url}`,
+      `--app=${s.browser.block_urls?.length ? "about:blank" : s.browser.initial_url}`,
     ],
     stdout: "null",
     stderr: "piped",
@@ -611,8 +613,22 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     }
     await cdp.call("Page.enable", {}, attached.sessionId);
     await cdp.call("Runtime.enable", {}, attached.sessionId);
+    const network = new NetworkTracker(cdp, attached.sessionId);
+    await cdp.call("Network.enable", {}, attached.sessionId);
+    const urlBlocker = new UrlBlocker(cdp, attached.sessionId);
+    await urlBlocker.configure(s.browser.block_urls);
     if (s.browser.window?.content) {
       await setContentSize(cdp, attached.sessionId, window.windowId, s.browser.window.content);
+    }
+    if (s.browser.block_urls?.length) {
+      const navigation = await cdp.call<{ errorText?: string }>(
+        "Page.navigate",
+        { url: s.browser.initial_url },
+        attached.sessionId,
+      );
+      if (navigation.errorText) {
+        throw new Error(`Initial navigation failed: ${navigation.errorText}`);
+      }
     }
     // A scrollbar may only appear after the initial navigation. Wait for the recorded coordinate
     // space itself rather than accepting a short-lived provisional viewport.
@@ -623,8 +639,6 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     } else {
       await waitForStableViewport(cdp, attached.sessionId);
     }
-    const network = new NetworkTracker(cdp, attached.sessionId);
-    await cdp.call("Network.enable", {}, attached.sessionId);
     const viewport = await validateDisplay(
       cdp,
       attached.sessionId,
@@ -644,6 +658,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       runDir,
       viewport,
       network,
+      urlBlocker,
     };
   } catch (error) {
     cdp?.close();
@@ -666,7 +681,13 @@ async function prepareReusedBrowser(
     JSON.stringify({ stage: "reusing_browser_session", profile: options.profileDir }, null, 2)
       + "\n",
   );
-  await browser.cdp.call("Page.navigate", { url: s.browser.initial_url }, browser.sessionId);
+  await browser.urlBlocker.configure(s.browser.block_urls);
+  const navigation = await browser.cdp.call<{ errorText?: string }>(
+    "Page.navigate",
+    { url: s.browser.initial_url },
+    browser.sessionId,
+  );
+  if (navigation.errorText) throw new Error(`Initial navigation failed: ${navigation.errorText}`);
   const bounds = options.boundsOverride ?? {
     ...(s.browser.window?.bounds ?? {}),
     ...(options.position ?? {}),
@@ -1104,6 +1125,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     const executor = new StepExecutor<CachedTemplate>(
       execution,
       async ({ step, index: i, cachedTemplate }, executeSteps) => {
+        browser.urlBlocker.assertHealthy();
         const startedAt = new Date().toISOString();
         let at: { x: number; y: number } | undefined;
         let jitterOffset: { x: number; y: number } | undefined;
@@ -1654,6 +1676,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       },
     );
     await executor.execute(s.steps);
+    browser.urlBlocker.assertHealthy();
     return { code: failures.length ? 4 : 0, failures, runDir };
   } catch (e) {
     discardShared = sharedManaged;

@@ -2,6 +2,27 @@ import { assertEquals, assertThrows } from "@std/assert";
 import { loadYaml, saveYaml, scenarioFrom } from "../src/yaml.ts";
 import { planFrom } from "../src/yaml.ts";
 
+Deno.test("validates URL blocking regex lists before browser launch", () => {
+  const make = (block_urls: unknown) => ({
+    version: 1,
+    name: "url-blocking",
+    browser: { initial_url: "https://example.test", block_urls },
+    steps: [],
+  });
+  for (
+    const patterns of [undefined, [], [
+      String.raw`/images/.*\.(png|jpg)(\?.*)?$`,
+      "^https://ads\\.",
+    ]]
+  ) {
+    assertEquals(scenarioFrom(make(patterns)).browser.block_urls, patterns);
+  }
+  for (const invalid of [null, "ads", {}, [null], [42], [""], ["  "], ["["]]) {
+    assertThrows(() => scenarioFrom(make(invalid)), Error, "browser.block_urls");
+  }
+  assertThrows(() => scenarioFrom(make(["valid", "("])), Error, "browser.block_urls[1]");
+});
+
 Deno.test("validates key_chord keys", () => {
   const scenario = {
     version: 1,

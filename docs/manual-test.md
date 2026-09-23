@@ -26,6 +26,16 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 
 ## 1. 成功再生とカーソル
 
+URL ブロックの実機テストは、導入済み CfT を明示して次で実行できる。ローカル HTTP サーバーと
+専用の一時 profile を使い、初回・後続遷移・リダイレクト先の画像遮断、非一致画像の取得、
+同一 session での設定変更・解除、network idle を検証する。
+
+```powershell
+$env:CRER_TEST_CHROME = $env:CRER_CHROME
+deno test -A tests/url_blocker_integration_test.ts
+Remove-Item Env:CRER_TEST_CHROME
+```
+
 マウスを動かさず、次を実行する。
 
 ```powershell

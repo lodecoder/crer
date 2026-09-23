@@ -107,6 +107,31 @@ watchdog と各 step の直前に再適用するため、Chrome が HWND を作�
   -ExpectedExitCode 4
 ```
 
+### URL の正規表現で読み込みをブロック
+
+`play` / `run` では、scenario の `browser.block_urls` に JavaScript の正規表現を指定すると、
+一致する画像などのリクエストを送信前に中止できます。
+
+```yaml
+browser:
+  initial_url: https://example.test/
+  block_urls:
+    - '^https://ads\.example\.test/'
+    - '/images/(banner|tracking)\.(png|jpg|gif)(\?.*)?$'
+```
+
+URL 全体（クエリ文字列を含む）に対して、大文字・小文字を区別して部分一致を判定し、いずれかの
+正規表現に一致すれば遮断します。`/pattern/` の区切りやフラグは付けず、YAML のシングルクォートで
+囲むと `\` をそのまま記述できます。不正な正規表現は検証時にエラーになります。
+
+初回の `initial_url` の読み込みから有効で、その後のページ遷移にも適用します。画像以外の
+CSS・スクリプト・fetch・ページ本体も対象です。ブラウザを再利用する plan でも scenario ごとに
+設定を置き換え、省略または `[]` で解除します。有効な間は対象ページのキャッシュ利用と
+Service Worker 経由の取得を無効化し、解除時に戻します。
+
+対象は再生中のページの CDP session で扱うリクエストです。別タブ、別プロセスの iframe、
+worker 独自の通信、WebSocket、`data:` / `blob:` URL は保証対象外です。`record` には適用しません。
+
 ### 手動記録と正規化
 
 初回だけ Native AOT DLL を公開ビルドします。Visual Studio Build Tools の MSVC と Windows SDK が必要です。
