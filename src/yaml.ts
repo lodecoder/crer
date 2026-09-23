@@ -1,6 +1,7 @@
 import { parse, stringify } from "@std/yaml";
 import type { Plan, Scenario } from "./types.ts";
 import { compileBlockUrls } from "./url_blocker.ts";
+import { opacityAlpha } from "./window_opacity.ts";
 
 export async function loadYaml(path: string): Promise<unknown> {
   return parse(await Deno.readTextFile(path));
@@ -230,9 +231,11 @@ export function scenarioFrom(value: unknown): Scenario {
       "bounds",
       "foreground",
       "foreground_mode",
+      "opacity",
       "content",
       "viewport",
     ]);
+    opacityAlpha(window.opacity);
     if (window.bounds !== undefined) {
       const bounds = object(window.bounds, "browser.window.bounds");
       validateKeys(bounds, "browser.window.bounds", ["left", "top", "width", "height"]);

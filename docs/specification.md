@@ -119,6 +119,15 @@ watchdog と各 step の直前の topmost・フォーカス再適用を行わず
 環境エラーで終了する。`foreground` が `false` または省略の場合は mode を無視する。
 両モードとも終了時は topmost を解除し、`foreground.json` の `mode` に実効モードを保存する。
 
+`browser.window.opacity` は CfT 本体ウィンドウの不透明度を指定する有限数値（範囲 `0..1`、既定 `1`）。
+`0` は完全透明、`1` は完全不透明とし、Native DLL の `crer_input_set_process_opacity(pid, alpha)` に
+`round(opacity * 255)` を渡す。表示中かつ所有者のない CfT 本体 HWND に `WS_EX_LAYERED` と
+`SetLayeredWindowAttributes(LWA_ALPHA)` を適用する。所有 popup・非表示 widget は対象外とする。
+起動時と scenario の再利用時に適用し、省略時は完全不透明へ戻す。透過中は 250 ms 間隔で HWND を
+再探索して維持するが、フォーカス・最前面属性・重なり順は変更しない。`foreground_mode: once` の動作にも干渉しない。
+ページの CSS、CDP のスクリーンショットおよび画像テンプレート照合の入力は変更しない。
+透過指定時に DLL が未対応、または初回の適用に失敗した場合は環境エラーとする。監視中の失敗は警告を出して再試行する。
+
 ## 4. 入力の記録と再生
 
 ### 4.1 記録

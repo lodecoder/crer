@@ -14,6 +14,8 @@ static async Task WaitForStop(string label)
 }
 
 Equal(2, (int)InputBridge.TestVersion(), "ABI version");
+Equal(87, InputBridge.TestOpacity(0, 128), "opacity rejects missing process");
+Equal(87, InputBridge.TestOpacity((uint)Environment.ProcessId, 256), "opacity rejects invalid alpha");
 if (Environment.GetEnvironmentVariable("CRER_TEST_WINDOWS") == "1") TopmostTests.Run();
 
 // Win32 RAWMOUSE has two padding bytes before the button union (offset 4).

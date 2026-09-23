@@ -33,3 +33,8 @@ when a scenario explicitly sets `browser.window.foreground: true`; playback clea
 Windows may reject foreground focus even after a thread-input retry; that result is diagnostic only when the topmost
 operation itself succeeded.
 The Deno layer writes those events to NDJSON before normalizing them into scenarios.
+
+`crer_input_set_process_opacity(uint32_t pid, uint32_t alpha)` sets the visible, unowned CfT window's opacity
+using `WS_EX_LAYERED` and `SetLayeredWindowAttributes(LWA_ALPHA)`. Alpha ranges from 0 (transparent) to 255 (opaque).
+It preserves other extended styles, focus, and Z order. Repeated calls with the same alpha do not change the window.
+This additive export retains ABI version 2; rebuild the DLL before using `browser.window.opacity` below 1.

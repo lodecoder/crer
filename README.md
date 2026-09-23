@@ -236,6 +236,20 @@ browser:
 `foreground` が `false` または省略の場合、`foreground_mode` は作用しません。
 終了時はどちらのモードも最前面属性を解除します。選択したモードは `foreground.json` の `mode` に記録します。
 
+CfT ウィンドウ全体の不透明度は `browser.window.opacity` で指定できます。
+`0` は完全透明、`1` は完全不透明（既定）、`0.5` は半透明です。指定できる値は `0` 以上 `1` 以下の数値です。
+
+```yaml
+browser:
+  window:
+    opacity: 0.5
+```
+
+`foreground` や `foreground_mode` とは独立して適用され、フォーカスや重なり順を変更しません。
+同じ CfT を次の scenario で再利用するときはその scenario の値を適用し、省略時は完全不透明へ戻します。
+表示には Windows の 256 段階のアルファ値へ丸めた値を使います。ページ自体の CSS や CDP のスクリーンショットには影響しません。
+透過表示には対応する `crer-win-input.dll` が必要です。既存環境では `.\scripts\build-native.ps1` で再ビルドしてください。
+
 ローカル fixture を使う手動 P0 テストは、次の補助スクリプトで一つの PowerShell から実行できます。
 
 ```powershell

@@ -19,6 +19,10 @@ Deno.test({
       GetWindowTextW: { parameters: ["pointer", "buffer", "i32"], result: "i32" },
       IsWindowVisible: { parameters: ["pointer"], result: "i32" },
       GetWindowLongPtrW: { parameters: ["pointer", "i32"], result: "isize" },
+      GetLayeredWindowAttributes: {
+        parameters: ["pointer", "buffer", "buffer", "buffer"],
+        result: "i32",
+      },
       GetForegroundWindow: { parameters: [], result: "pointer" },
       GetWindow: { parameters: ["pointer", "u32"], result: "pointer" },
       CreateWindowExW: {
@@ -63,6 +67,17 @@ Deno.test({
     const isTopmost = (window: Deno.PointerValue) =>
       (Number(user32.symbols.GetWindowLongPtrW(window, -20)) & 8) !== 0;
     const sharedSession = createSharedBrowserSession("before-step");
+    const windowAlpha = (window: Deno.PointerValue) => {
+      if (!(Number(user32.symbols.GetWindowLongPtrW(window, -20)) & 0x80000)) return 255;
+      const alpha = new Uint8Array(1);
+      const flags = new Uint32Array(1);
+      assertEquals(
+        user32.symbols.GetLayeredWindowAttributes(window, new Uint32Array(1), alpha, flags),
+        1,
+      );
+      assertEquals(flags[0], 2);
+      return alpha[0];
+    };
     let ready = false;
     let attemptsAtNavigation = 0;
     const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (request) => {
@@ -104,6 +119,15 @@ Deno.test({
         const enabled = mode !== "disabled";
         const standalone = mode.startsWith("standalone");
         const foregroundMode = mode.includes("once") ? "once" : "always";
+        const opacity = {
+          standalone: 0.5,
+          "standalone-once": 0,
+          shared: 0.25,
+          "reused-once": 0.75,
+          "reused-once-again": undefined,
+          reused: 1,
+          disabled: 0.4,
+        }[mode];
         const scenario: Scenario = {
           version: 1,
           name: `topmost-${mode}`,
@@ -113,6 +137,7 @@ Deno.test({
             // Exercise the empty app-window launch path used for URL blocking too.
             block_urls: ["/blocked-image"],
             window: {
+              opacity,
               foreground: enabled,
               // Also cover the omitted/default always mode on standalone playback.
               ...(mode === "standalone" ? {} : { foreground_mode: foregroundMode }),
@@ -144,6 +169,7 @@ Deno.test({
           assert(window, `${mode}: browser window was not found`);
           assert(ready, `${mode}: playback did not start`);
           assertEquals(isTopmost(window), enabled, mode);
+          assertEquals(windowAlpha(window), Math.round((opacity ?? 1) * 255), mode);
           if (enabled && foregroundMode === "once") {
             // Another topmost window may cover CfT while it retains WS_EX_TOPMOST.
             const overlay = user32.symbols.CreateWindowExW(
@@ -175,6 +201,7 @@ Deno.test({
               const deadline = Date.now() + 2500;
               try {
                 while (Date.now() < deadline) {
+                  assertEquals(windowAlpha(window), Math.round((opacity ?? 1) * 255), mode);
                   assertEquals(
                     isTopmost(window),
                     true,

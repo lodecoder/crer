@@ -52,6 +52,9 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint command);
     [DllImport("user32.dll")] private static extern IntPtr GetWindowLongPtrW(IntPtr h, int index);
+    [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr SetWindowLongPtrW(IntPtr h, int index, IntPtr value);
+    [DllImport("user32.dll", SetLastError=true)] private static extern bool SetLayeredWindowAttributes(IntPtr h, uint colorKey, byte alpha, uint flags);
+    [DllImport("user32.dll", SetLastError=true)] private static extern bool GetLayeredWindowAttributes(IntPtr h, out uint colorKey, out byte alpha, out uint flags);
     [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int command);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc p, IntPtr l);
@@ -364,6 +367,33 @@ internal static class InputBridge
         return isTopmost == (enabled != 0) ? 0 : 5;
     }
     [UnmanagedCallersOnly(EntryPoint="crer_input_last_foreground_status")] public static int LastForegroundStatus()=>_lastForegroundStatus;
+    [UnmanagedCallersOnly(EntryPoint="crer_input_set_process_opacity")] public static int SetProcessOpacity(uint pid, uint alpha)
+        => SetProcessOpacityCore(pid, alpha);
+    private static int SetProcessOpacityCore(uint pid, uint alpha)
+    {
+        if (pid == 0 || alpha > 255) return 87; // ERROR_INVALID_PARAMETER
+        _foregroundPid = pid;
+        _foregroundTarget = IntPtr.Zero;
+        EnumWindows(FindForeground, IntPtr.Zero);
+        if (_foregroundTarget == IntPtr.Zero) return 1168;
+        var target = _foregroundTarget;
+        var style = GetWindowLongPtrW(target, -20).ToInt64(); // GWL_EXSTYLE
+        const long layered = 0x00080000; // WS_EX_LAYERED
+        if ((style & layered) == 0)
+        {
+            if (alpha == 255) return 0;
+            // .NET clears native last-error before a SetLastError=true P/Invoke.
+            var previous = SetWindowLongPtrW(target, -20, new IntPtr(style | layered));
+            var error = Marshal.GetLastWin32Error();
+            if (previous == IntPtr.Zero && error != 0) return error;
+        }
+        else if (GetLayeredWindowAttributes(target, out _, out var currentAlpha, out var flags)
+            && flags == 2 && currentAlpha == alpha) return 0;
+        // Only composition changes: never change Z order, focus, or hit-test flags.
+        if (SetLayeredWindowAttributes(target, 0, (byte)alpha, 2)) return 0; // LWA_ALPHA
+        var status = Marshal.GetLastWin32Error();
+        return status == 0 ? 5 : status;
+    }
     [UnmanagedCallersOnly(EntryPoint="crer_input_qpc_frequency")] public static ulong QpcFrequency(){ QueryPerformanceFrequency(out var frequency); return (ulong)frequency; }
     private static int StartCore(uint pid)
     {
@@ -425,6 +455,7 @@ internal static class InputBridge
 
     internal static int TestStart(uint pid)=>StartCore(pid);
     internal static int TestTopmost(uint pid, bool enabled)=>SetProcessTopmostCore(pid, enabled ? 1 : 0);
+    internal static int TestOpacity(uint pid, uint alpha)=>SetProcessOpacityCore(pid, alpha);
     internal static uint TestVersion()=>2;
     internal static int TestStop()=>StopCore();
     internal static int TestIsRunning()=>_running ? 1 : 0;

@@ -45,6 +45,9 @@ Remove-Item Env:CRER_TEST_CHROME
 CfT が上へ移動しないことと、最前面属性自体が保持されることを確認する。
 単独再生、再利用、`always` → `once` → `always` の切り替えと、各 once scenario の適用回数が一回で
 あることを検証する。`focus: before-step` を指定した plan でも once が優先されることを確認する。
+同じテストで `opacity` の完全透明・半透明・完全不透明と、再利用時の変更・省略時の復帰を検証する。
+`foreground: false` でも透過でき、`once` と透過の併用時に他の最前面ウィンドウを追い越さないことを確認する。
+ネイティブテストではアルファ値に加えて、他のウィンドウ属性とフォーカスを変更しないことも検証する。
 
 ```powershell
 .\scripts\build-native.ps1

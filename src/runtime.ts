@@ -29,6 +29,7 @@ import type {
   WindowBounds,
 } from "./types.ts";
 import { UrlBlocker } from "./url_blocker.ts";
+import { WindowOpacity } from "./window_opacity.ts";
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 class ForEachBreak {}
@@ -137,6 +138,7 @@ type BrowserSession = {
   viewport: { x: number; y: number };
   network: NetworkTracker;
   urlBlocker: UrlBlocker;
+  windowOpacity: WindowOpacity;
 };
 
 export type SharedBrowserSession = {
@@ -349,6 +351,7 @@ async function terminateProcess(process: Deno.ChildProcess) {
 }
 
 async function closeBrowser(browser: BrowserSession) {
+  browser.windowOpacity.close();
   const graceful = await Promise.race([
     browser.cdp.call("Browser.close").then(() => true, () => false),
     sleep(5_000).then(() => false),
@@ -557,6 +560,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     stderr: "piped",
   }).spawn();
   const stderr = collectText(p.stderr);
+  const windowOpacity = new WindowOpacity(p.pid, options.inputDllPath);
   let cdp: Cdp | undefined;
   let stage = "chrome_started";
   const writeLaunchDiagnostic = async (error?: unknown, chromeStderr?: string) => {
@@ -616,6 +620,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       }
       await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
     }
+    windowOpacity.configure(s.browser.window?.opacity);
     await cdp.call("Page.enable", {}, attached.sessionId);
     await cdp.call("Runtime.enable", {}, attached.sessionId);
     const network = new NetworkTracker(cdp, attached.sessionId);
@@ -664,8 +669,10 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       viewport,
       network,
       urlBlocker,
+      windowOpacity,
     };
   } catch (error) {
+    windowOpacity.close();
     cdp?.close();
     await terminateProcess(p);
     await writeLaunchDiagnostic(error, await stderr.catch(() => "")).catch(() => {});
@@ -680,6 +687,7 @@ async function prepareReusedBrowser(
   runDir: string,
 ) {
   browser.runDir = runDir;
+  browser.windowOpacity.configure(s.browser.window?.opacity);
   browser.network.reset();
   await Deno.writeTextFile(
     `${runDir}/launch.json`,

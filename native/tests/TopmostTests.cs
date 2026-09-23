@@ -22,6 +22,7 @@ internal static class TopmostTests
     [DllImport("user32.dll")] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] private static extern bool SetWindowPos(nint window, nint after, int x, int y, int width, int height, uint flags);
     [DllImport("user32.dll")] private static extern nint GetWindowLongPtrW(nint window, int index);
+    [DllImport("user32.dll")] private static extern bool GetLayeredWindowAttributes(nint window, out uint colorKey, out byte alpha, out uint flags);
     [DllImport("user32.dll")] private static extern nint GetForegroundWindow();
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(nint window);
 
@@ -50,11 +51,23 @@ internal static class TopmostTests
             Require(IsTopmost(browser), "topmost must apply to the visible browser owner, not its popup");
             Require(!IsWindowVisible(hidden), "hidden helpers must remain hidden");
             Require(GetForegroundWindow() == foreground, "topmost-only must not steal focus");
+            var originalStyle = GetWindowLongPtrW(browser, -20).ToInt64();
+            foreach (uint alpha in new uint[] { 128, 0, 255 })
+            {
+                Require(InputBridge.TestOpacity((uint)Environment.ProcessId, alpha) == 0, "set opacity");
+                Require(GetLayeredWindowAttributes(browser, out _, out var actual, out var flags)
+                    && actual == alpha && flags == 2, "browser opacity must match");
+                Require((GetWindowLongPtrW(browser, -20).ToInt64() & ~0x80000L) == originalStyle, "opacity must preserve other window styles");
+                Require(!GetLayeredWindowAttributes(popup, out _, out _, out _), "opacity must not target owned popup");
+                Require(GetForegroundWindow() == foreground, "opacity must not steal focus");
+                Require(!IsWindowVisible(hidden), "opacity must not show hidden helpers");
+            }
             Require(InputBridge.TestTopmost((uint)Environment.ProcessId, false) == 0, "disable topmost");
             Require(!IsTopmost(browser) && !IsTopmost(popup), "owner and owned popup must leave topmost together");
             DestroyWindow(popup); popup = 0;
             DestroyWindow(browser); browser = 0;
             Require(InputBridge.TestTopmost((uint)Environment.ProcessId, true) == 1168, "hidden widget is not a browser target");
+            Require(InputBridge.TestOpacity((uint)Environment.ProcessId, 128) == 1168, "opacity must ignore hidden widgets");
             Require(!IsWindowVisible(hidden), "failed lookup must not show hidden helpers");
             Console.WriteLine("Native topmost window selection and focus tests passed.");
         }
