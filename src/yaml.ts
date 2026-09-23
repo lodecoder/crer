@@ -226,7 +226,13 @@ export function scenarioFrom(value: unknown): Scenario {
   }
   if (browser.window !== undefined) {
     const window = object(browser.window, "browser.window");
-    validateKeys(window, "browser.window", ["bounds", "foreground", "content", "viewport"]);
+    validateKeys(window, "browser.window", [
+      "bounds",
+      "foreground",
+      "foreground_mode",
+      "content",
+      "viewport",
+    ]);
     if (window.bounds !== undefined) {
       const bounds = object(window.bounds, "browser.window.bounds");
       validateKeys(bounds, "browser.window.bounds", ["left", "top", "width", "height"]);
@@ -245,6 +251,10 @@ export function scenarioFrom(value: unknown): Scenario {
     if (window.foreground !== undefined && typeof window.foreground !== "boolean") {
       throw new Error("browser.window.foreground must be a boolean");
     }
+    if (
+      window.foreground_mode !== undefined
+      && window.foreground_mode !== "always" && window.foreground_mode !== "once"
+    ) throw new Error("browser.window.foreground_mode must be always or once");
     for (const name of ["content", "viewport"]) {
       if (window[name] === undefined) continue;
       const size = object(window[name], `browser.window.${name}`);

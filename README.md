@@ -75,7 +75,7 @@ run:
 ```
 
 `focus: once`（既定）は、`browser.window.foreground: true` が初めて必要になった時だけ CfT の前景化を
-試みます。`focus: before-step` は各 step の直前にも前景化します。どちらも topmost は 250 ms 間隔の
+試みます。`focus: before-step` は各 step の直前にも前景化します。`foreground_mode: always`（既定）では topmost は 250 ms 間隔の
 watchdog と各 step の直前に再適用するため、Chrome が HWND を作り直した場合にも追従します。
 プロファイルを CLI の `--profile-dir` で全 scenario に指定しても再利用できます。
 
@@ -208,6 +208,7 @@ browser:
 ウィンドウの重なり順を変えるため、通常の非干渉再生では指定しません。物理マウス・キーボードの位置や入力を
 注入・変更するものではありません。Windows の foreground lock などにより設定できない場合は、Win32 status
 を `foreground.json` と警告へ記録しますが、topmost 化に成功していれば再生は続行します。
+`browser.window.foreground_mode` の既定値は `always` です。
 起動直後と各 step の直前に、表示中の CfT 本体の HWND を再探索して topmost を再適用します。
 単独再生・session 再利用のどちらも 250 ms 間隔で監視するため、sleep やページの読み込み待機中も
 最前面を維持します。監視ではフォーカスを変更せず、plan のフォーカス取得頻度は `focus` で制御します。
@@ -218,6 +219,22 @@ browser:
     foreground: true
     bounds: { left: 1200, top: 80 }
 ```
+
+他の最前面ウィンドウが CfT の上に重なってもよい場合は、`foreground_mode: once` を指定します。
+起動時、または同じウィンドウを次の scenario で再利用するときに、一度だけ最前面属性を設定します。
+その後は監視も各 step の直前の最前面化・前景化も行いません。CfT の最前面属性自体は保持しますが、
+他の最前面ウィンドウの上へ繰り返し移動させません。ウィンドウが再生成された場合も再設定しません。
+
+```yaml
+browser:
+  window:
+    foreground: true
+    foreground_mode: once # always（既定）| once
+```
+
+`once` は plan の `browser_session.focus: before-step` より優先し、ステップごとの前景化を抑止します。
+`foreground` が `false` または省略の場合、`foreground_mode` は作用しません。
+終了時はどちらのモードも最前面属性を解除します。選択したモードは `foreground.json` の `mode` に記録します。
 
 ローカル fixture を使う手動 P0 テストは、次の補助スクリプトで一つの PowerShell から実行できます。
 

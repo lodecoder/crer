@@ -245,6 +245,25 @@ Deno.test("validates optional CfT foreground mode", () => {
     steps: [],
   };
   assertEquals(scenarioFrom(scenario).browser.window?.foreground, true);
+  for (const foreground of [true, false]) {
+    for (const foreground_mode of ["always", "once"] as const) {
+      const window = { foreground, foreground_mode };
+      assertEquals(
+        scenarioFrom({ ...scenario, browser: { ...scenario.browser, window } }).browser.window,
+        window,
+      );
+    }
+  }
+  for (const foreground_mode of [true, 1, null, "", "sometimes"]) {
+    assertThrows(
+      () => scenarioFrom({
+        ...scenario,
+        browser: { ...scenario.browser, window: { foreground: true, foreground_mode } },
+      }),
+      Error,
+      "browser.window.foreground_mode must be always or once",
+    );
+  }
   assertThrows(
     () => scenarioFrom({ ...scenario, browser: { ...scenario.browser, window: { foreground: "always" } } }),
     Error,

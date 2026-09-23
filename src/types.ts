@@ -74,8 +74,10 @@ export type Scenario = {
     block_urls?: string[];
     window?: {
       bounds?: WindowBounds;
-      /** Keep CfT topmost; standalone playback focuses before steps and plans can select a session focus policy. */
+      /** Make CfT topmost and request foreground focus. */
       foreground?: boolean;
+      /** With foreground enabled, reapply continuously (default) or only once per scenario. */
+      foreground_mode?: "always" | "once";
       /** Requested CfT content size; scrollbars can make the CSS viewport smaller. */
       content?: { width: number; height: number };
       /** CSS viewport used for coordinates; defaults to content for older scenarios. */

@@ -41,6 +41,10 @@ Remove-Item Env:CRER_TEST_CHROME
 本体・非表示 widget・所有 popup を一時作成し、本体の `WS_EX_TOPMOST`、解除、フォーカス不変を検証する。
 実機テストでは専用 CfT を起動し、単独再生・session 再利用の sleep 中に最前面属性を解除して
 自動復帰を確認する。`foreground: false` への切り替えで監視が停止することも確認する。
+`foreground_mode: once` では別の最前面ウィンドウを CfT の上に重ね、複数の step を実行しても
+CfT が上へ移動しないことと、最前面属性自体が保持されることを確認する。
+単独再生、再利用、`always` → `once` → `always` の切り替えと、各 once scenario の適用回数が一回で
+あることを検証する。`focus: before-step` を指定した plan でも once が優先されることを確認する。
 
 ```powershell
 .\scripts\build-native.ps1

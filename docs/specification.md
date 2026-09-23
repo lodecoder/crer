@@ -106,10 +106,18 @@ Win32 error code を artifacts の `foreground.json` と警告へ記録し、再
 失敗した場合だけ再生を環境エラーとして終了する。起動直後と各 step の直前に HWND をプロセス ID から再探索し
 topmost を再適用する。探索では非表示の補助ウィンドウと owner を持つメニュー・ツールチップを除外し、
 表示中のブラウザ本体を選ぶ。`SetWindowPos` に `SWP_NOACTIVATE` を指定し、設定後の `WS_EX_TOPMOST` を検証する。
-単独再生・session 再利用とも 250 ms 間隔の watchdog で topmost だけを再適用し、待機中の属性解除や
+`browser.window.foreground_mode` は `always | once` とし、省略時は `always`。
+`always` では単独再生・session 再利用とも 250 ms 間隔の watchdog で topmost だけを再適用し、待機中の属性解除や
 HWND の再生成に追従する。終了時には watchdog を止めてから topmost を解除する。
 前景フォーカスの取得は topmost 設定と分離し、plan の `browser_session.focus` に従う。このモードは
 フォーカスとウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
+
+`foreground_mode: once` では起動時または scenario ごとの再利用時に一度だけ topmost を適用する。
+watchdog と各 step の直前の topmost・フォーカス再適用を行わず、他の topmost ウィンドウが上に
+重なった状態を許容する。`WS_EX_TOPMOST` 自体は維持するが、HWND の再生成や属性解除には追従しない。
+前の scenario が `always` の場合、再利用の準備前に監視を停止する。初回設定に失敗した場合は
+環境エラーで終了する。`foreground` が `false` または省略の場合は mode を無視する。
+両モードとも終了時は topmost を解除し、`foreground.json` の `mode` に実効モードを保存する。
 
 ## 4. 入力の記録と再生
 
@@ -494,7 +502,9 @@ browser_session:
 `window.content` を再適用し、実効 viewport、DPR、browser zoom を再検証する。profile が変わる場合、ephemeral
 scenario を挟む場合、続行不能エラー、worker timeout、plan 終了時は保持中の CfT を graceful close する。
 `focus: once` は session 中に最初の `browser.window.foreground: true` を処理する時だけ前景化を試みる。
-`focus: before-step` は該当 scenario の各 step の直前にも前景化する。topmost watchdog はどちらでも
+`focus: before-step` は該当 scenario の各 step の直前にも前景化する。ただし scenario の
+`browser.window.foreground_mode: once` はこれに優先し、各 step の直前の前景化を抑止する。
+`foreground_mode: always` の topmost watchdog はどちらの focus policy でも
 250 ms 間隔で動作するが、フォーカスは行わない。実際に session を再利用したかは各 run の `run.json` の
 `browserSession.reused` に記録する。
 

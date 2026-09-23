@@ -146,6 +146,7 @@ export type SharedBrowserSession = {
   foreground?: ForegroundGuard;
   topmostTimer?: ReturnType<typeof setInterval>;
   topmostRequested: boolean;
+  foregroundMode?: "always" | "once";
   topmostAttempts: number;
   topmostStatus?: number;
   foregroundStatus?: number;
@@ -420,6 +421,7 @@ async function writeSharedForeground(shared: SharedBrowserSession, runDir: strin
       {
         before: shared.foreground ? windowHandleText(shared.foreground.original) : undefined,
         requested: shared.topmostRequested,
+        mode: shared.foregroundMode ?? "always",
         sharedSession: true,
         topmostAttempts: shared.topmostAttempts,
         topmostStatus: shared.topmostStatus,
@@ -449,6 +451,7 @@ export async function closeSharedBrowserSession(shared: SharedBrowserSession): P
         {
           before: foreground ? windowHandleText(foreground.original) : undefined,
           requested: shared.topmostRequested,
+          mode: shared.foregroundMode ?? "always",
           sharedSession: true,
           topmostAttempts: shared.topmostAttempts,
           topmostStatus: shared.topmostStatus,
@@ -739,6 +742,10 @@ async function acquireSharedBrowser(
     shared.browser && shared.profileDir
     && shared.profileDir.toLowerCase() === profileDir.toLowerCase()
   ) {
+    // The previous scenario's monitor must not raise the window while preparing a once/disabled run.
+    if (!s.browser.window?.foreground || s.browser.window.foreground_mode === "once") {
+      stopTopmostMonitor(shared);
+    }
     await prepareReusedBrowser(shared.browser, s, { ...options, profileDir }, runDir);
     return { browser: shared.browser, reused: true };
   }
@@ -952,6 +959,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
   let b: BrowserSession | undefined;
   let foreground: ForegroundGuard | undefined;
   const requireForeground = s.browser.window?.foreground === true;
+  const foregroundMode = s.browser.window?.foreground_mode ?? "always";
   let topmostStatus: number | undefined;
   let foregroundStatus: number | undefined;
   let topmostAttempts = 0;
@@ -1021,11 +1029,13 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
     }
     if (sharedManaged) {
       const shared = options.sharedSession!;
+      shared.foregroundMode = foregroundMode;
       if (requireForeground) {
         shared.topmostRequested = true;
         topmostStatus = applySharedTopmost(shared);
         if (!shared.focusedOnce) foregroundStatus = focusSharedBrowser(shared);
-        startTopmostMonitor(shared);
+        if (foregroundMode === "always") startTopmostMonitor(shared);
+        else stopTopmostMonitor(shared);
       } else if (shared.topmostRequested && foreground && b) {
         stopTopmostMonitor(shared);
         topmostStatus = foreground.setProcessTopmost(b.process.pid, false);
@@ -1038,24 +1048,27 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       topmostAttempts++;
       // Standalone playback needs the same protection during sleeps, waits and navigation
       // as a reused session. Re-resolve the HWND every time, without taking focus.
-      topmostTimer = setInterval(() => {
-        try {
-          topmostStatus = foreground!.setProcessTopmost(b!.process.pid, true);
-        } catch {
-          topmostStatus = 1;
-        }
-        topmostAttempts++;
-        if (topmostStatus !== 0 && topmostStatus !== lastWarnedTopmostStatus) {
-          console.warn(`Warning: could not keep CfT topmost (Win32 status ${topmostStatus})`);
-        }
-        lastWarnedTopmostStatus = topmostStatus;
-      }, 250);
+      if (foregroundMode === "always") {
+        topmostTimer = setInterval(() => {
+          try {
+            topmostStatus = foreground!.setProcessTopmost(b!.process.pid, true);
+          } catch {
+            topmostStatus = 1;
+          }
+          topmostAttempts++;
+          if (topmostStatus !== 0 && topmostStatus !== lastWarnedTopmostStatus) {
+            console.warn(`Warning: could not keep CfT topmost (Win32 status ${topmostStatus})`);
+          }
+          lastWarnedTopmostStatus = topmostStatus;
+        }, 250);
+      }
       await Deno.writeTextFile(
         `${runDir}/foreground.json`,
         JSON.stringify(
           {
             before: windowHandleText(foreground.original),
             requested: true,
+            mode: foregroundMode,
             topmostStatus,
             foregroundStatus,
             topmostAttempts,
@@ -1064,7 +1077,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           2,
         ) + "\n",
       );
-      if (topmostStatus !== 0) {
+      if (topmostStatus !== 0 && foregroundMode === "always") {
         console.warn(
           `Warning: initial CfT topmost request failed (Win32 status ${topmostStatus}); retrying before steps`,
         );
@@ -1082,6 +1095,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         JSON.stringify({ before: windowHandleText(foreground.original), restoreStatus }, null, 2)
           + "\n",
       );
+    }
+    if (requireForeground && foregroundMode === "once" && topmostStatus !== 0) {
+      throw new EnvironmentError(`could not make CfT topmost (Win32 status ${topmostStatus})`);
     }
     const rng = new Random(BigInt(seed));
     const timeout = s.playback?.timeouts?.action_ms ?? 10_000;
@@ -1158,7 +1174,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               ? options.signal.reason
               : new InterruptedError("interrupted");
           }
-          if (foreground && requireForeground) {
+          if (foreground && requireForeground && foregroundMode === "always") {
             if (sharedManaged) {
               const shared = options.sharedSession!;
               topmostStatus = applySharedTopmost(shared);
@@ -1728,6 +1744,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             {
               before: windowHandleText(foreground.original),
               requested: true,
+              mode: foregroundMode,
               topmostStatus,
               foregroundStatus,
               topmostAttempts,
