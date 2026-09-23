@@ -83,6 +83,21 @@ Deno.test({
           sharedSession,
         });
         assertEquals(result.code, 0, JSON.stringify(result));
+        const browser = sharedSession.browser!;
+        const display = await browser.cdp.call<{ result: { value: boolean } }>(
+          "Runtime.evaluate",
+          { expression: "matchMedia('(display-mode: standalone)').matches", returnByValue: true },
+          browser.sessionId,
+        );
+        assertEquals(
+          display.result.value,
+          true,
+          "playback must retain the app window without tabs",
+        );
+        const targets = await browser.cdp.call<{ targetInfos: { type: string }[] }>(
+          "Target.getTargets",
+        );
+        assertEquals(targets.targetInfos.filter((target) => target.type === "page").length, 1);
         const launch = JSON.parse(await Deno.readTextFile(`${result.runDir}/launch.json`));
         assertEquals(launch.reused === true, index > 0);
         if (item.blocked) {

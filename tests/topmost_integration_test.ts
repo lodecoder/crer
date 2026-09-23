@@ -59,7 +59,7 @@ Deno.test({
           browser: {
             chrome: "chrome-for-testing@pinned",
             initial_url: `http://127.0.0.1:${server.addr.port}/?mode=${mode}`,
-            // Exercise the about:blank launch path added for URL blocking too.
+            // Exercise the empty app-window launch path used for URL blocking too.
             block_urls: ["/blocked-image"],
             window: { foreground: enabled, bounds: { left: 30, top: 30, width: 400, height: 300 } },
           },

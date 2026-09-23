@@ -28,7 +28,8 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 
 URL ブロックの実機テストは、導入済み CfT を明示して次で実行できる。ローカル HTTP サーバーと
 専用の一時 profile を使い、初回・後続遷移・リダイレクト先の画像遮断、非一致画像の取得、
-同一 session での設定変更・解除、network idle を検証する。
+同一 session での設定変更・解除、network idle を検証する。各 scenario の後で `display-mode: standalone`
+と page target が一つであることも検証し、タブ付きウィンドウへの退行を検出する。
 
 ```powershell
 $env:CRER_TEST_CHROME = $env:CRER_CHROME

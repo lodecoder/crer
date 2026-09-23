@@ -279,7 +279,9 @@ browser:
 
 `play` / `run` の対象 page session で CDP `Fetch` の Request 段階を捕捉し、一致時は
 `Fetch.failRequest` の `BlockedByClient`、非一致時は `Fetch.continueRequest` を送る。
-有効時は CfT を `about:blank` で起動し、ブロック設定後に `initial_url` へ遷移する。
+有効時は CfT を `--app=data:text/html,` の空文書で起動し、ブロック設定後に `initial_url` へ遷移する。
+`--app=about:blank` は通常のタブ付きウィンドウにフォールバックするため使用しない。
+URL ブロックの有無や session 再利用にかかわらず、タブ追加ボタンのないアプリウィンドウを維持する。
 画像以外のリソースやページ本体、後続の遷移・リダイレクト先にも同じ判定を行う。
 初期ページ本体を遮断した場合は起動失敗とする。遮断したサブリソースは通常の取得失敗として
 扱い、network idle の待機対象から除かれる。

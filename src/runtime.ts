@@ -546,7 +546,9 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       // A translation bubble is browser UI, not page content, and can obscure coordinate replay.
       "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding",
       ...(options.muteAudio ? ["--mute-audio"] : []),
-      `--app=${s.browser.block_urls?.length ? "about:blank" : s.browser.initial_url}`,
+      // about:blank is not accepted by Chrome's --app URL filter and opens a tabbed window.
+      // An empty data document keeps app mode without fetching the site before interception.
+      `--app=${s.browser.block_urls?.length ? "data:text/html," : s.browser.initial_url}`,
     ],
     stdout: "null",
     stderr: "piped",
