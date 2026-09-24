@@ -647,9 +647,5 @@ Deno.test("validates reusable plan browser sessions", () => {
     Error,
     "focus must be once or before-step",
   );
-  assertThrows(
-    () => planFrom({ ...plan, max_parallel: 2 }),
-    Error,
-    "requires max_parallel: 1",
-  );
+  planFrom({ ...plan, max_parallel: 2 });
 });

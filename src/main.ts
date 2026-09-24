@@ -1,3 +1,4 @@
+import { BrowserSessions } from "./browser_sessions.ts";
 import { Cdp } from "./cdp.ts";
 import { commandTakesFile, validateCommandOptions } from "./cli.ts";
 import {
@@ -23,13 +24,7 @@ import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { recordRaw } from "./record.ts";
 import { createRunId } from "./run_id.ts";
-import {
-  closeSharedBrowserSession,
-  createSharedBrowserSession,
-  playScenario,
-  scenarioProfileDirectory,
-  type SharedBrowserSession,
-} from "./runtime.ts";
+import { closeSharedBrowserSession, playScenario, scenarioProfileDirectory } from "./runtime.ts";
 import { KeyedLock, mapWithCancellation, Semaphore } from "./scheduler.ts";
 import type {
   FailurePolicy,
@@ -500,7 +495,7 @@ async function runNode(
   muteAudio = false,
   profileDir?: string,
   boundsOverride?: WindowBounds,
-  sharedSession?: SharedBrowserSession,
+  browserSessions?: BrowserSessions,
   templateScreenshots?: TemplateScreenshotPolicy,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
@@ -512,6 +507,9 @@ async function runNode(
       : undefined;
     const runLeaf = () =>
       gate.run(async () => {
+        const sharedSession = persistentProfile
+          ? browserSessions?.forProfile(persistentProfile)
+          : undefined;
         const controller = new AbortController();
         const combinedSignal = signal
           ? AbortSignal.any([signal, controller.signal])
@@ -549,7 +547,7 @@ async function runNode(
         }
       }, signal);
     const result = persistentProfile
-      ? await profileLocks.run(persistentProfile, runLeaf, signal)
+      ? await profileLocks.run(persistentProfile.toLowerCase(), runLeaf, signal)
       : await runLeaf();
     return result ?? [];
   }
@@ -569,7 +567,7 @@ async function runNode(
         muteAudio,
         profileDir,
         boundsOverride,
-        sharedSession,
+        browserSessions,
         templateScreenshots,
       );
       out.push(...results);
@@ -594,7 +592,7 @@ async function runNode(
         muteAudio,
         profileDir,
         boundsOverride,
-        sharedSession,
+        browserSessions,
         templateScreenshots,
       );
       return childResults;
@@ -698,8 +696,8 @@ async function main() {
     const p = await loadPlanFile(file);
     const profileDir = profileDirOption();
     const boundsOverride = parsePlanWindowBoundsOverride(option("--plan-window-bounds-override"));
-    const sharedSession = p.browser_session
-      ? createSharedBrowserSession(p.browser_session.focus ?? "once")
+    const browserSessions = p.browser_session
+      ? new BrowserSessions(p.browser_session.focus ?? "once")
       : undefined;
     const controller = new AbortController();
     const onInterrupt = () => controller.abort(new InterruptedError("interrupted by user"));
@@ -719,12 +717,12 @@ async function main() {
         args.includes("--mute-audio"),
         profileDir,
         boundsOverride,
-        sharedSession,
+        browserSessions,
         templateScreenshotsOption(),
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
-      if (sharedSession) await closeSharedBrowserSession(sharedSession);
+      await browserSessions?.close();
     }
     const code = controller.signal.reason instanceof InterruptedError
       ? 5

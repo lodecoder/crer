@@ -26,6 +26,16 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 
 ## 1. 成功再生とカーソル
 
+profile ごとの並列 session 再利用は次で検証する。a1 → a2 と b1 → b2 を別 profile で同時実行し、
+初回ページの応答を双方の到着まで待たせて並列性を確認する。ページの sessionStorage と run artifacts で
+再利用・分離・plan 終了時の終了処理を検証し、一方の worker timeout が他方の再利用を壊さないことも確認する。
+
+```powershell
+$env:CRER_TEST_CHROME = $env:CRER_CHROME
+deno test -A tests/plan_sessions_integration_test.ts
+Remove-Item Env:CRER_TEST_CHROME
+```
+
 URL ブロックの実機テストは、導入済み CfT を明示して次で実行できる。ローカル HTTP サーバーと
 専用の一時 profile を使い、初回・後続遷移・リダイレクト先の画像遮断、非一致画像の取得、
 同一 session での設定変更・解除、network idle を検証する。各 scenario の後で `display-mode: standalone`

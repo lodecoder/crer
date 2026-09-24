@@ -91,9 +91,9 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 `run` は同じ永続プロファイルを使う leaf だけを直列化する。異なる永続プロファイルまたは一時プロファイルは
 plan 全体の `max_parallel` 上限まで並列実行できる。通常は CfT プロセスを scenario の成功・失敗・中断のいずれでも、
 終了処理で CDP `Browser.close` による graceful close を要求して閉じる。plan で
-`browser_session.reuse: same-profile` が有効な場合だけ、同じ永続 profile を使う連続 scenario の間では
-CfT プロセス・ウィンドウ・CDP
-session を維持し、グループ終端、profile 変更、ephemeral scenario、続行不能エラー、plan 終了時に閉じる。
+`browser_session.reuse: same-profile` が有効な場合だけ、永続 profile ごとに CfT プロセス・ウィンドウ・CDP
+session を維持する。別 profile や ephemeral scenario を挟んでも保持し、続行不能エラー・worker timeout では
+対象 session を、plan 終了時には全 session を閉じる。
 CDP が応答しない場合に限り、実行ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。
 
 通常の再生は利用者の前景ウィンドウへ干渉しない。Web アプリケーションが前景状態を要求する場合だけ、
@@ -458,7 +458,8 @@ scenario の最終結果は `failed`、CLI 終了コードは `4` とする。`c
 
 `.crer.plan.yaml` はシナリオを合成する。既定では各 leaf は別 CfT プロセスなので並列枝は独立しており、
 物理マウスを奪い合わない。1 ブラウザ内での並列タブ実行は座標・フォーカスが競合するため v1
-では禁止する。`browser_session` は `max_parallel: 1` の場合だけ指定できる。
+では禁止する。`browser_session` は `max_parallel` に関係なく指定できる。同じ永続 profile の leaf は
+profile ごとのロックで直列化し、異なる profile はそれぞれの CfT で並列実行する。
 
 ```yaml
 version: 1
@@ -496,7 +497,7 @@ plan の `on_failure` では、`scenario_failure` は child scenario が終了�
 plan は一件でも失敗を集約した場合は終了コード `4` を返す。ただし `environment` の失敗は常に
 終了コード `3` を返す。`fail_fast: true` は `on_failure: continue` より優先する。
 
-同じ永続 profile を使う連続 leaf のウィンドウ生成とフォーカス移動を避けたい場合は、次の session 再利用を
+同じ永続 profile を使う leaf のウィンドウ生成とフォーカス移動を避けたい場合は、次の session 再利用を
 指定できる。
 
 ```yaml
@@ -506,10 +507,12 @@ browser_session:
   focus: once # once | before-step
 ```
 
-`reuse: same-profile` は同じ正規化済み profile path が続く間だけ、CfT プロセス、トップレベルウィンドウ、CDP
+`reuse: same-profile` は正規化済み profile path ごとに、CfT プロセス、トップレベルウィンドウ、CDP
 接続を再利用する。各 scenario の開始時に `initial_url` へ遷移し、`window.bounds`（run 専用 override を含む）、
-`window.content` を再適用し、実効 viewport、DPR、browser zoom を再検証する。profile が変わる場合、ephemeral
-scenario を挟む場合、続行不能エラー、worker timeout、plan 終了時は保持中の CfT を graceful close する。
+`window.content` を再適用し、実効 viewport、DPR、browser zoom を再検証する。profile のキーは実体パスを解決し、
+大文字小文字を区別しない。profile 未指定・ephemeral の scenario は独立した CfT を使用する。
+続行不能エラー・worker timeout は対象 session だけを破棄する。plan 終了・中断時は全実行 worker の終了を待ち、
+保持中の全 CfT を graceful close する。`max_parallel` は実行中 leaf の上限であり、保持中ウィンドウ数の上限ではない。
 `focus: once` は session 中に最初の `browser.window.foreground: true` を処理する時だけ前景化を試みる。
 `focus: before-step` は該当 scenario の各 step の直前にも前景化する。ただし scenario の
 `browser.window.foreground_mode: once` はこれに優先し、各 step の直前の前景化を抑止する。
@@ -576,8 +579,8 @@ assert の失敗、`5` 中断とする。
    再実行で jitter 後の座標列が一致する。
 8. `on_failure.<kind>: continue` を指定した続行可能な失敗では、失敗が記録されつつ後続ステップ
    または後続 job が実行される。CDP 接続喪失など続行不能な失敗では実行されない。
-9. `browser_session.reuse: same-profile` の plan では、同一永続 profile の連続 scenario が一つの CfT
-   ウィンドウを再利用し、最後の scenario 後にだけ graceful close される。
+9. `browser_session.reuse: same-profile` の plan では、同一永続 profile の scenario が一つの CfT
+   ウィンドウを再利用し、異なる profile は並列実行できる。plan 終了時に保持中の全 CfT が graceful close される。
 10. `template_screenshots: failure-only` では成功したtemplate探索画像をディスクへ保存せず、template失敗時に
     照合で使用した画像だけを `failure-*.png` として保存する。
 11. `do: fail` は `playback.on_failure` が `continue` でも同一 scenario の後続ステップを実行せず、失敗 artifact

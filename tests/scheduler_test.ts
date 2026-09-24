@@ -1,4 +1,4 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { KeyedLock, mapWithCancellation, mapWithConcurrency, Semaphore } from "../src/scheduler.ts";
 
 Deno.test("limits concurrent work while preserving result order", async () => {
@@ -94,4 +94,25 @@ Deno.test("serializes identical persistent profile keys only", async () => {
     });
   await Promise.all([run("same"), run("same"), run("other")]);
   assertEquals(sameKeyPeak, 1);
+});
+
+Deno.test("worker exceptions abort and drain siblings before session cleanup", async () => {
+  const started: number[] = [];
+  let drained = false;
+  await assertRejects(
+    () =>
+      mapWithCancellation([1, 2, 3], 2, async (value, signal) => {
+        started.push(value);
+        if (value === 1) throw new Error("invalid scenario");
+        await new Promise<void>((resolve) =>
+          signal.addEventListener("abort", () => resolve(), { once: true })
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        drained = true;
+      }, () => false),
+    Error,
+    "invalid scenario",
+  );
+  assertEquals(started, [1, 2]);
+  assertEquals(drained, true);
 });

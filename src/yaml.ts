@@ -705,9 +705,6 @@ export function planFrom(value: unknown): Plan {
     ) {
       throw new Error("plan.browser_session.focus must be once or before-step");
     }
-    if ((v.max_parallel ?? 1) !== 1) {
-      throw new Error("plan.browser_session requires max_parallel: 1");
-    }
   }
   if (v.timeouts) {
     const timeouts = object(v.timeouts, "plan.timeouts");

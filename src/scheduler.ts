@@ -14,14 +14,23 @@ export async function mapWithConcurrency<T, R>(
       if (stopped) return;
       const index = next++;
       if (index >= values.length) return;
-      const result = await action(values[index]);
-      results[index] = result;
-      if (shouldStop?.(result)) stopped = true;
+      try {
+        const result = await action(values[index]);
+        results[index] = result;
+        if (shouldStop?.(result)) stopped = true;
+      } catch (error) {
+        stopped = true;
+        throw error;
+      }
     }
   };
-  await Promise.all(
+  const workers = await Promise.allSettled(
     Array.from({ length: Math.min(Math.max(1, maxParallel), values.length) }, worker),
   );
+  // Session cleanup must not run while another worker still uses its browser.
+  for (const worker of workers) {
+    if (worker.status === "rejected") throw worker.reason;
+  }
   return results.filter((result): result is R => result !== undefined);
 }
 
@@ -113,11 +122,16 @@ export async function mapWithCancellation<T, R>(
     values,
     maxParallel,
     async (value) => {
-      const result = await action(value, signal);
-      if (shouldAbort(result) && !controller.signal.aborted) {
-        controller.abort(new ExecutionAbortedError("parallel group cancelled"));
+      try {
+        const result = await action(value, signal);
+        if (shouldAbort(result) && !controller.signal.aborted) {
+          controller.abort(new ExecutionAbortedError("parallel group cancelled"));
+        }
+        return result;
+      } catch (error) {
+        controller.abort(new ExecutionAbortedError("parallel worker failed"));
+        throw error;
       }
-      return result;
     },
     () => signal.aborted,
   );

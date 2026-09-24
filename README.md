@@ -55,11 +55,12 @@ deno task dev run .crer\daily.crer.plan.yaml `
   --plan-window-bounds-override 10,10,1280,900
 ```
 
-同じ永続プロファイルを使う連続 scenario では、plan に `browser_session` を指定すると一つの CfT
+同じ永続プロファイルを使う scenario では、plan に `browser_session` を指定すると profile ごとに一つの CfT
 プロセス・ウィンドウ・CDP session を再利用できます。scenario ごとの URL、ウィンドウ bounds、content は
-切替時に再適用し、viewport / DPR / zoom は再検証します。異なるプロファイルまたは ephemeral scenario に
-切り替わると、それまでの CfT を graceful close して新しい session を開始します。この機能は
-`max_parallel: 1` 専用です。
+切替時に再適用し、viewport / DPR / zoom は再検証します。同じ profile の scenario は順番に実行し、
+異なる profile は `max_parallel` の範囲で並列実行できます。保持した CfT は plan 終了時に閉じます。
+別の profile や ephemeral scenario を挟んでも保持します。ephemeral scenario 自体は再利用しません。
+タイムアウト・続行不能エラー時は対象 profile の CfT を閉じ、同じ profile の次の実行時に起動し直します。
 
 ```yaml
 version: 1
@@ -74,7 +75,29 @@ run:
     - scenario: work.crer.yaml
 ```
 
-`focus: once`（既定）は、`browser.window.foreground: true` が初めて必要になった時だけ CfT の前景化を
+例えば a1・a2 が profile-a、b1・b2 が profile-b を指定している場合、次の plan は2つの CfT を並列に再利用します。
+
+```yaml
+version: 1
+name: parallel-reuse
+max_parallel: 2
+browser_session: { reuse: same-profile, focus: once }
+run:
+  parallel:
+    jobs:
+      - serial:
+          - scenario: a1.crer.yaml
+          - scenario: a2.crer.yaml
+      - serial:
+          - scenario: b1.crer.yaml
+          - scenario: b2.crer.yaml
+```
+
+`max_parallel` は同時実行中の scenario 数の上限です。待機中の再利用ウィンドウも保持するため、
+profile の総数によっては開いているウィンドウ数が上限を超える場合があります。
+CLI の `--profile-dir` で全 scenario を同じ profile にすると、実行は直列になります。
+
+`focus: once`（既定）は、各 profile で `browser.window.foreground: true` が初めて必要になった時だけ CfT の前景化を
 試みます。`focus: before-step` は各 step の直前にも前景化します。`foreground_mode: always`（既定）では topmost は 250 ms 間隔の
 watchdog と各 step の直前に再適用するため、Chrome が HWND を作り直した場合にも追従します。
 プロファイルを CLI の `--profile-dir` で全 scenario に指定しても再利用できます。
