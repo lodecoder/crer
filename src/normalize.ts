@@ -179,6 +179,7 @@ const keys: Record<number, string> = {
   9: "Tab",
   13: "Enter",
   27: "Escape",
+  32: "Space",
   46: "Delete",
   37: "ArrowLeft",
   38: "ArrowUp",
@@ -246,7 +247,12 @@ export async function normalizeRawWithWarnings(
     if (event.kind === 9) {
       const character = String.fromCodePoint(event.data);
       const codePoint = character.codePointAt(0) ?? 0;
-      if (character && codePoint >= 0x20 && codePoint !== 0x7f) {
+      // The recorder emits a Unicode space even when it activates a checkbox/button.
+      // Preserve it as a key so both activation and insertion into text fields work.
+      if (codePoint === 0x20) {
+        flushText();
+        addStep({ do: "key", key: "Space" }, qpc);
+      } else if (character && codePoint > 0x20 && codePoint !== 0x7f) {
         text += character;
         textQpc = qpc;
       }

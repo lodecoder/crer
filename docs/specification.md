@@ -281,6 +281,11 @@ steps:
   - { do: scroll, at: { x: 920, y: 620 }, delta: { x: 0, y: 561 } }
 ```
 
+`key: Space` は CDP に `key: " "`、`code: "Space"`、仮想キーコード `32` と、空白の文字情報を含む
+keydown・keyup を送信する。入力欄への空白入力と、チェックボックス・ボタンの既定操作を再現する。
+`key: " "` も同じ意味で受け付ける。normalize は Unicode 空白（kind 9、U+0020）と VK_SPACE の両方を
+`{ do: key, key: Space }` に変換し、前後の文字列と分離する。既存の `text` ステップは文字挿入のままとする。
+
 `browser.block_urls` は任意の正規表現文字列配列とする。省略または空配列では無効。
 各要素は空白のみではない文字列で、`new RegExp(pattern)` としてコンパイルできなければ検証エラー。
 JavaScript の正規表現ソースを区切り・フラグなしで指定する。URL 全体（クエリを含む）に対する

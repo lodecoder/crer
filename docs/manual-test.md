@@ -26,6 +26,16 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 
 ## 1. 成功再生とカーソル
 
+ログインフォームのキー操作は次で検証する。記録形式のメールアドレス入力・Tab・パスワード入力・
+Tab 2回・Space・Tab・Space を normalize して実機再生し、フォーカス順、チェックボックス ON、
+submit を確認する。パスワード内の空白入力と、旧記録の Unicode 空白・VK_SPACE の両形式も検証する。
+
+```powershell
+$env:CRER_TEST_CHROME = $env:CRER_CHROME
+deno test -A tests/login_keyboard_integration_test.ts
+Remove-Item Env:CRER_TEST_CHROME
+```
+
 profile ごとの並列 session 再利用は次で検証する。a1 → a2 と b1 → b2 を別 profile で同時実行し、
 初回ページの応答を双方の到着まで待たせて並列性を確認する。ページの sessionStorage と run artifacts で
 再利用・分離・plan 終了時の終了処理を検証し、一方の worker timeout が他方の再利用を壊さないことも確認する。

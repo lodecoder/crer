@@ -298,7 +298,14 @@ fallbackするため、高精度が必要なら新しいDLLで記録し直して
 
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
+記録した Tab は `{ do: key, key: Tab }`、Space は `{ do: key, key: Space }` として再生します。
+Space は入力欄では空白入力、チェックボックスでは切り替え、ボタンでは押下として動作します。
+旧版で生成した YAML の Space が `{ do: text, value: " " }` になっている場合は、元の NDJSON を
+`normalize` で再変換するか、そのキー操作を `{ do: key, key: Space }` に変更してください。
+`text` は文字の挿入なので、チェックボックスやボタンの操作には使いません。
+
 ### 画像テンプレートでのクリック
+
 
 記録済みの `click` は、`at` をテンプレート指定に置き換えられます。再生直前の CDP screenshot から
 テンプレートを探索し、一致矩形内のランダム位置をクリックします。テンプレート画像のパスは YAML からの

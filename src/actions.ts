@@ -6,6 +6,8 @@ type KeyInfo = { key: string; vk: number; code: string; text?: string };
 const keys: Record<string, KeyInfo> = {
   Enter: { key: "Enter", vk: 13, code: "Enter", text: "\r" },
   Tab: { key: "Tab", vk: 9, code: "Tab" },
+  Space: { key: " ", vk: 32, code: "Space", text: " " },
+  " ": { key: " ", vk: 32, code: "Space", text: " " },
   Escape: { key: "Escape", vk: 27, code: "Escape" },
   Backspace: { key: "Backspace", vk: 8, code: "Backspace" },
   Delete: { key: "Delete", vk: 46, code: "Delete" },
