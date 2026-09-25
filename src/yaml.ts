@@ -1,4 +1,5 @@
 import { parse, stringify } from "@std/yaml";
+import { validateLogColor } from "./scenario_logger.ts";
 import type { Plan, Scenario } from "./types.ts";
 import { compileBlockUrls } from "./url_blocker.ts";
 import { opacityAlpha } from "./window_opacity.ts";
@@ -289,6 +290,7 @@ export function scenarioFrom(value: unknown): Scenario {
     "seed",
     "speed",
     "step_delay_ms",
+    "log_color",
     "template",
     "artifacts",
     "jitter",
@@ -311,6 +313,7 @@ export function scenarioFrom(value: unknown): Scenario {
       ) throw new Error(`playback.timeouts.${key} must be a non-negative number`);
     }
   }
+  validateLogColor(playback.log_color);
   if (playback.jitter) validateJitter(playback.jitter, "playback.jitter");
   if (playback.template) validateTemplateOptions(playback.template, "playback.template", false);
   if (playback.artifacts !== undefined) {

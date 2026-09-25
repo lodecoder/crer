@@ -343,7 +343,7 @@ deno task dev run plan.crer.plan.yaml --template-screenshots failure-only
 探索ごとに標準出力へ、テンプレートパス・実測類似度・適用閾値を出力します。
 
 ```text
-[crer] template: templates/sign-in.png, similarity: 0.9234, threshold: 0.8
+[login] template: templates/sign-in.png, similarity: 0.9234, threshold: 0.8
 ```
 
 ### テンプレート条件分岐
@@ -407,7 +407,20 @@ template matching を行いません。コンソール出力の末尾に `(reuse
 
 ### 再生進捗の標準出力
 
-任意の箇所へ `{ do: log, message: "..." }` を追記すると、再生時に標準出力へ `[crer] ...` と表示します。
+任意の箇所へ `{ do: log, message: "..." }` を追記すると、再生時に標準出力へ `[シナリオの name] ...` と表示します。
+テンプレート照合結果と再生中の警告にも同じ名前が付き、並列実行時も発信元を識別できます。
+ウィンドウ再利用時は、実行する scenario の名前と色へ切り替わります。
+
+```yaml
+name: login
+playback:
+  log_color: cyan
+```
+
+`playback.log_color` は `black`・`red`・`green`・`yellow`・`blue`・`magenta`・`cyan`・`white`、
+または `default`（既定の文字色）を指定できます。省略時は色を変更しません。
+プレフィックスを含む行全体に適用します。リダイレクト先には色コードを出力せず、`NO_COLOR` 指定時も無効です。
+実行結果の JSON と保存される artifacts は色付けしません。
 進捗確認用のステップで、ブラウザやページには操作を行いません。メッセージは `steps.ndjson` にも残ります。
 
 ```yaml

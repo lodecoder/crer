@@ -331,7 +331,13 @@ interception の CDP 処理に失敗した場合は接続を閉じ、環境エ�
 操作間待機であり、`hold_ms` には含まれない。`click.count` の各反復にも同じ `hold_ms` を適用する。
 `double_click` および他の step に `hold_ms` は指定できない。中断時も mouseUp を送信してから終了処理へ進む。
 
-`log` は必須の文字列 `message` を標準出力へ `[crer] <message>` として出力する進捗確認用のステップである。
+`log` は必須の文字列 `message` を標準出力へ `[<scenario.name>] <message>` として出力する進捗確認用のステップである。
+テンプレート照合結果と再生中の警告も同じプレフィックスを使用する。複数行の message は各行に名前を付ける。
+`playback.log_color` は `default | black | red | green | yellow | blue | magenta | cyan | white` とする。
+省略時と `default` は色を変更しない。それ以外は対応する ANSI 文字色を行全体に適用し、各行末で文字色を戻す。
+出力先が端末でない場合と `NO_COLOR` 有効時は色コードを出力しない。標準出力と標準エラーを個別に判定する。
+名前と色は scenario ごとに保持し、並列実行で共有しない。再利用する browser の警告出力も次の scenario の設定へ更新する。
+最終結果の JSON・artifacts と記録時のログはこの設定の対象外とする。
 ブラウザ・ページには操作をせず、メッセージは該当する `steps.ndjson` の記録にも含める。
 
 `fail` は必須の空でない文字列 `message` を持ち、現在の scenario を意図的に失敗終了する制御ステップである。

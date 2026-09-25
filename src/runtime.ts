@@ -12,6 +12,7 @@ import { cleanupErrors } from "./input_guard.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { createRunId } from "./run_id.ts";
+import { createScenarioLogger, type ScenarioLogger } from "./scenario_logger.ts";
 import {
   matchTemplate,
   matchTemplates,
@@ -139,6 +140,7 @@ type BrowserSession = {
   network: NetworkTracker;
   urlBlocker: UrlBlocker;
   windowOpacity: WindowOpacity;
+  logger: ScenarioLogger;
 };
 
 export type SharedBrowserSession = {
@@ -381,17 +383,18 @@ function stopTopmostMonitor(shared: SharedBrowserSession) {
 
 function applySharedTopmost(shared: SharedBrowserSession): number {
   if (!shared.browser || !shared.foreground) return 1168;
+  const logger = shared.browser.logger;
   let status: number;
   try {
     status = shared.foreground.setProcessTopmost(shared.browser.process.pid, true);
   } catch (error) {
-    console.warn(`Warning: could not keep CfT topmost (${error})`);
+    logger.warn(`Warning: could not keep CfT topmost (${error})`);
     status = 1;
   }
   shared.topmostAttempts++;
   shared.topmostStatus = status;
   if (status !== 0 && status !== shared.lastWarnedTopmostStatus) {
-    console.warn(`Warning: could not keep CfT topmost (Win32 status ${status})`);
+    logger.warn(`Warning: could not keep CfT topmost (Win32 status ${status})`);
     shared.lastWarnedTopmostStatus = status;
   }
   return status;
@@ -399,10 +402,11 @@ function applySharedTopmost(shared: SharedBrowserSession): number {
 
 function focusSharedBrowser(shared: SharedBrowserSession): number {
   if (!shared.browser || !shared.foreground) return 1168;
+  const logger = shared.browser.logger;
   const status = shared.foreground.foregroundProcess(shared.browser.process.pid);
   shared.foregroundStatus = status;
   if (status !== 0 && status !== shared.lastWarnedForegroundStatus) {
-    console.warn(`Warning: Windows did not grant CfT foreground focus (Win32 status ${status})`);
+    logger.warn(`Warning: Windows did not grant CfT foreground focus (Win32 status ${status})`);
     shared.lastWarnedForegroundStatus = status;
   }
   shared.focusedOnce = true;
@@ -484,6 +488,7 @@ async function validateDisplay(
   ignoreViewportMismatch: boolean,
 ): Promise<{ x: number; y: number }> {
   const display = s.browser.display;
+  const logger = createScenarioLogger(s.name, s.playback?.log_color);
   const actual = await readViewport(cdp, sessionId);
   const expectedViewport = s.browser.window?.viewport ?? s.browser.window?.content;
   await Deno.writeTextFile(
@@ -501,7 +506,7 @@ async function validateDisplay(
   const strict = display?.zoom_check === "strict";
   const report = (message: string) => {
     if (strict) throw new Error(message);
-    if (display?.zoom_check !== "off") console.warn(message);
+    if (display?.zoom_check !== "off") logger.warn(message);
   };
   if (
     expectedViewport
@@ -510,7 +515,7 @@ async function validateDisplay(
     const message =
       `Viewport mismatch: expected ${expectedViewport.width}x${expectedViewport.height}, got ${actual.width}x${actual.height}`;
     if (ignoreViewportMismatch) {
-      console.warn(
+      logger.warn(
         `Warning: ${message}; continuing because --ignore-viewport-mismatch was specified`,
       );
     } else {
@@ -529,6 +534,7 @@ async function validateDisplay(
   return { x: actual.width, y: actual.height };
 }
 async function launch(s: Scenario, options: PlayOptions, runDir: string): Promise<BrowserSession> {
+  const logger = createScenarioLogger(s.name, s.playback?.log_color);
   const configuredProfile = options.profileDir ?? scenarioProfileDirectory(s);
   const profile = configuredProfile
     ? await persistentProfileDirectory(configuredProfile)
@@ -620,7 +626,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       }
       await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
     }
-    windowOpacity.configure(s.browser.window?.opacity);
+    windowOpacity.configure(s.browser.window?.opacity, logger.warn);
     await cdp.call("Page.enable", {}, attached.sessionId);
     await cdp.call("Runtime.enable", {}, attached.sessionId);
     const network = new NetworkTracker(cdp, attached.sessionId);
@@ -670,6 +676,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       network,
       urlBlocker,
       windowOpacity,
+      logger,
     };
   } catch (error) {
     windowOpacity.close();
@@ -687,7 +694,8 @@ async function prepareReusedBrowser(
   runDir: string,
 ) {
   browser.runDir = runDir;
-  browser.windowOpacity.configure(s.browser.window?.opacity);
+  browser.logger = createScenarioLogger(s.name, s.playback?.log_color);
+  browser.windowOpacity.configure(s.browser.window?.opacity, browser.logger.warn);
   browser.network.reset();
   await Deno.writeTextFile(
     `${runDir}/launch.json`,
@@ -917,6 +925,7 @@ async function executeLeafStep(
   return await executeAtomicAction(
     {
       call,
+      log: b.logger.log,
       viewport: b.viewport,
       waitFor: (candidate, limit, abort) => waitFor(b, candidate, limit, abort),
       assertState: (candidate) => assertState(b, candidate),
@@ -944,6 +953,7 @@ async function currentUrl(b: BrowserSession): Promise<string | undefined> {
   }
 }
 export async function playScenario(s: Scenario, options: PlayOptions): Promise<RunResult> {
+  const logger = createScenarioLogger(s.name, s.playback?.log_color);
   const runDir = `.crer/runs/${createRunId()}`;
   await Deno.mkdir(runDir, { recursive: true });
   const seed = options.seed ?? s.playback?.seed ?? randomSeed();
@@ -1065,7 +1075,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           }
           topmostAttempts++;
           if (topmostStatus !== 0 && topmostStatus !== lastWarnedTopmostStatus) {
-            console.warn(`Warning: could not keep CfT topmost (Win32 status ${topmostStatus})`);
+            logger.warn(`Warning: could not keep CfT topmost (Win32 status ${topmostStatus})`);
           }
           lastWarnedTopmostStatus = topmostStatus;
         }, 250);
@@ -1086,12 +1096,12 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         ) + "\n",
       );
       if (topmostStatus !== 0 && foregroundMode === "always") {
-        console.warn(
+        logger.warn(
           `Warning: initial CfT topmost request failed (Win32 status ${topmostStatus}); retrying before steps`,
         );
       }
       if (foregroundStatus !== 0) {
-        console.warn(
+        logger.warn(
           `Warning: CfT is topmost, but Windows did not grant foreground focus (Win32 status ${foregroundStatus})`,
         );
         lastWarnedForegroundStatus = foregroundStatus;
@@ -1204,7 +1214,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
               !sharedManaged && foregroundStatus !== 0
               && foregroundStatus !== lastWarnedForegroundStatus
             ) {
-              console.warn(
+              logger.warn(
                 `Warning: CfT is topmost before step ${i}, but Windows did not grant foreground focus (Win32 status ${foregroundStatus})`,
               );
               lastWarnedForegroundStatus = foregroundStatus;
@@ -1295,8 +1305,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
                 );
               }
               templateMatch = found.match;
-              console.log(
-                `[crer] template: ${template.path}, similarity: ${
+              logger.log(
+                `template: ${template.path}, similarity: ${
                   templateMatch.similarity.toFixed(4)
                 }, threshold: ${threshold}`,
               );
@@ -1382,8 +1392,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             if (templateScreenshots === "all") {
               await writeBase64Png(`${runDir}/template-${i}.png`, found.screenshot);
             }
-            console.log(
-              `[crer] template: ${template.path}, matches: ${found.matches.length}, threshold: ${threshold}`,
+            logger.log(
+              `template: ${template.path}, matches: ${found.matches.length}, threshold: ${threshold}`,
             );
             if (found.matches.length === 0) {
               const error =
@@ -1495,8 +1505,8 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             if (templateScreenshots === "all") {
               await writeBase64Png(`${runDir}/template-${i}.png`, screenshot);
             }
-            console.log(
-              `[crer] template: ${template.path}, similarity: ${
+            logger.log(
+              `template: ${template.path}, similarity: ${
                 templateMatch.similarity.toFixed(4)
               }, threshold: ${threshold}${reused ? " (reused)" : ""}`,
             );

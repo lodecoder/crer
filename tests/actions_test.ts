@@ -1,10 +1,11 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { executeAtomicAction, type AtomicActionAdapter } from "../src/actions.ts";
+import { type AtomicActionAdapter, executeAtomicAction } from "../src/actions.ts";
 import { Random } from "../src/prng.ts";
 import type { Step } from "../src/types.ts";
 
 function adapter(calls: Array<[string, Record<string, unknown>]>): AtomicActionAdapter {
   return {
+    log: () => {},
     call(method, params) {
       calls.push([method, params]);
       return Promise.resolve({});

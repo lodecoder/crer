@@ -1,3 +1,5 @@
+import type { LogColor } from "./scenario_logger.ts";
+
 export type FailureKind =
   | "navigation"
   | "timeout"
@@ -92,6 +94,7 @@ export type Scenario = {
     };
   };
   playback?: {
+    log_color?: LogColor;
     seed?: string;
     speed?: number;
     step_delay_ms?: number;

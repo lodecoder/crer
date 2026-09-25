@@ -18,7 +18,7 @@ export class WindowOpacity {
 
   constructor(private pid: number, private dllPath?: string) {}
 
-  configure(value?: number) {
+  configure(value?: number, warn: (message: string) => void = console.warn) {
     const alpha = opacityAlpha(value);
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;
@@ -54,7 +54,7 @@ export class WindowOpacity {
         status = 1;
       }
       if (status !== 0 && status !== lastStatus) {
-        console.warn(`Warning: could not maintain CfT opacity (Win32 status ${status})`);
+        warn(`Warning: could not maintain CfT opacity (Win32 status ${status})`);
       }
       lastStatus = status;
     }, 250);

@@ -58,7 +58,11 @@ Deno.test({
             initial_url: `http://127.0.0.1:${server.addr.port}/${name}`,
             window: { foreground: false, bounds: { left: 20, top: 20, width: 400, height: 300 } },
           },
-          steps: [{ do: "wait_for", state: "network_idle" }, { do: "sleep", ms }],
+          playback: { log_color: profile === profiles[0] ? "cyan" : "green" },
+          steps: [{ do: "log", message: "started" }, { do: "wait_for", state: "network_idle" }, {
+            do: "sleep",
+            ms,
+          }],
         }),
       );
     };
@@ -88,7 +92,15 @@ Deno.test({
         stderr: "piped",
       }).output();
       assertEquals(output.code, expectedCode, new TextDecoder().decode(output.stderr));
-      const results = JSON.parse(new TextDecoder().decode(output.stdout)) as RunResult[];
+      const stdout = new TextDecoder().decode(output.stdout);
+      for (const name of jobs.flat()) assert(stdout.includes(`[${name}] started\n`), stdout);
+      assertEquals(stdout.includes("[crer]"), false);
+      assertEquals(
+        stdout.includes("\x1b["),
+        false,
+        "redirected logs must not contain color escapes",
+      );
+      const results = JSON.parse(stdout.slice(stdout.indexOf("[\n"))) as RunResult[];
       assertEquals(results.length, jobs.flat().length);
       return await Promise.all(results.map(async (result) => ({
         ...result,

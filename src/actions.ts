@@ -52,6 +52,7 @@ const keyDownEvent = (info: KeyInfo, modifiers = 0) =>
     : keyEvent("rawKeyDown", info, modifiers);
 
 export type AtomicActionAdapter = {
+  log: (message: string) => void;
   call: (method: string, params: Record<string, unknown>) => Promise<unknown>;
   viewport: { x: number; y: number };
   waitFor: (step: Step, timeout: number, signal?: AbortSignal) => Promise<void>;
@@ -189,7 +190,7 @@ export async function executeAtomicAction(
       return await adapter.sleep(ms, signal);
     }
     case "log":
-      console.log(`[crer] ${step.message}`);
+      adapter.log(String(step.message));
       return;
     case "screenshot":
       return await adapter.capture(String(step.name ?? "screenshot"));
