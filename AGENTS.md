@@ -1,0 +1,1 @@
+- commitmessageはfix:などprefixを付け、prefixを除き日本語で記載
