@@ -56,7 +56,11 @@ Deno.test({
           browser: {
             profile: `persistent:${profile}`,
             initial_url: `http://127.0.0.1:${server.addr.port}/${name}`,
-            window: { foreground: false, bounds: { left: 20, top: 20, width: 400, height: 300 } },
+            window: {
+              opacity: 0.7,
+              foreground: false,
+              bounds: { left: 20, top: 20, width: 400, height: 300 },
+            },
           },
           playback: { log_color: profile === profiles[0] ? "cyan" : "green" },
           steps: [{ do: "log", message: "started" }, { do: "wait_for", state: "network_idle" }, {
@@ -66,7 +70,12 @@ Deno.test({
         }),
       );
     };
-    const run = async (jobs: string[][], workerMs: number, expectedCode: number) => {
+    const run = async (
+      jobs: string[][],
+      workerMs: number,
+      expectedCode: number,
+      opacityOverride?: number,
+    ) => {
       const planPath = `${directory}/plan.yaml`;
       await Deno.writeTextFile(
         planPath,
@@ -87,7 +96,18 @@ Deno.test({
         }),
       );
       const output = await new Deno.Command(Deno.execPath(), {
-        args: ["run", "-A", "src/main.ts", "run", planPath, "--chrome", chrome!],
+        args: [
+          "run",
+          "-A",
+          "src/main.ts",
+          "run",
+          planPath,
+          "--chrome",
+          chrome!,
+          ...(opacityOverride === undefined
+            ? []
+            : ["--plan-window-opacity-override", String(opacityOverride)]),
+        ],
         stdout: "piped",
         stderr: "piped",
       }).output();
@@ -111,7 +131,8 @@ Deno.test({
       for (const name of ["a1", "a2", "b1", "b2"]) {
         await scenario(name, profiles[name[0] === "a" ? 0 : 1]);
       }
-      const results = await run([["a1", "a2"], ["b1", "b2"]], 0, 0);
+      const results = await run([["a1", "a2"], ["b1", "b2"]], 0, 0, 0);
+      for (const result of results) assertEquals(result.metadata.windowOpacityOverride, 0);
       assert(overlapped, "both first scenarios must reach the server before either is released");
       for (const prefix of ["a", "b"]) {
         const first = results.find((result) => result.metadata.scenario === `${prefix}1`)!;
@@ -136,6 +157,7 @@ Deno.test({
       await scenario("u2", profiles[1], 3000);
       const timed = await run([["t1", "t2"], ["u1", "u2"]], 6000, 4);
       const byName = new Map(timed.map((result) => [result.metadata.scenario, result]));
+      for (const result of timed) assertEquals(result.metadata.windowOpacityOverride, undefined);
       assert(
         byName.get("t1")!.failures.some((failure) => failure.includes("plan:timeout:worker_ms")),
       );

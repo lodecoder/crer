@@ -55,6 +55,17 @@ deno task dev run .crer\daily.crer.plan.yaml `
   --plan-window-bounds-override 10,10,1280,900
 ```
 
+plan 全体の不透明度は `run` 専用の `--plan-window-opacity-override` で上書きできます。
+値は `0`（完全透明）から `1`（完全不透明）で、各 YAML の `browser.window.opacity` より優先します。
+並列実行・ウィンドウ再利用にも適用し、省略時は各 YAML の設定を使います。
+指定値は各 run の `run.json.windowOpacityOverride` に保存します。
+
+```powershell
+deno task dev run .crer\daily.crer.plan.yaml `
+  --plan-window-bounds-override 10,10,1280,900 `
+  --plan-window-opacity-override 0.5
+```
+
 同じ永続プロファイルを使う scenario では、plan に `browser_session` を指定すると profile ごとに一つの CfT
 プロセス・ウィンドウ・CDP session を再利用できます。scenario ごとの URL、ウィンドウ bounds、content は
 切替時に再適用し、viewport / DPR / zoom は再検証します。同じ profile の scenario は順番に実行し、
@@ -305,7 +316,6 @@ Space は入力欄では空白入力、チェックボックスでは切り替�
 `text` は文字の挿入なので、チェックボックスやボタンの操作には使いません。
 
 ### 画像テンプレートでのクリック
-
 
 記録済みの `click` は、`at` をテンプレート指定に置き換えられます。再生直前の CDP screenshot から
 テンプレートを探索し、一致矩形内のランダム位置をクリックします。テンプレート画像のパスは YAML からの
@@ -669,7 +679,7 @@ repomix
 `repomix-output.md` はGit管理対象外です。
 
 実行 artifacts は `.crer/runs/<run-id>` に出力されます。run ID は
-`<UTC YYYYMMDDTHHmmssSSSZ>-<UUIDv4>` 形式で、ディレクトリ名の文字列ソートが実行日時順になります。
+`<UTC YYYYMMDDTHHmmssSSSZ>-<name>-<UUIDv4>` 形式で、シナリオ名を含み、ディレクトリ名の文字列ソートが実行日時順になります。
 同一ミリ秒内の順序はUUID部分によって決まり、生成順は保証しません。`steps.ndjson` には各ステップの時刻、実効座標、
 jitter offset、URL、成否が追記され、`crer inspect` で件数と失敗数を確認できます。
 

@@ -66,9 +66,11 @@ DLL は専用 native thread 上の message-only window で Raw Input を受信�
 
 ### 3.2 プロセス分離
 
-各実行の `run-id` は `<UTC YYYYMMDDTHHmmssSSSZ>-<UUIDv4>` とする。UTC時刻部分は固定長かつ
-Windows のファイル名に使用できる文字だけで構成し、ディレクトリ名の辞書順がミリ秒単位の実行日時順になるようにする。
-UUIDv4 は同一時刻の衝突回避に使い、同一ミリ秒内の生成順は保証しない。
+各実行の `run-id` は `<UTC YYYYMMDDTHHmmssSSSZ>-<safe-name>-<UUIDv4>` とする。scenario の `name` を
+Windows のファイル名に使用できる文字へ正規化し、最大64文字で保存する。記録時は `record`、または `record --name`
+で指定した名前を使う。UTC時刻部分は固定長かつ Windows のファイル名に使用できる文字だけで構成し、
+ディレクトリ名の辞書順がミリ秒単位の実行日時順になるようにする。UUIDv4 は同一時刻の衝突回避に使い、
+同一ミリ秒内の生成順は保証しない。
 
 各再生ワーカーは次の引数で独立した CfT を起動する。
 
@@ -554,6 +556,12 @@ front matter を上書きし、実行ログに override を記録する。`--pos
 `browser.window.bounds` を、その実行に限り**完全に置換**する run 専用 CLI 設定である。YAML の bounds と
 フィールド単位でマージしないため、`play --position` の優先度規則とは意図的に異なる。各値は整数、width と
 height を指定する場合は正数とする。実効 override は個々の run artifact の `run.json` に記録する。
+
+`run --plan-window-opacity-override <0..1>` は全 leaf scenario の `browser.window.opacity` を
+その実行に限り上書きする run 専用 CLI 設定である。有限数値の `0`（完全透明）から `1`（完全不透明）を
+受け付け、範囲外・空文字・数値以外は起動前に検証エラーとする。CLI 指定を YAML より優先し、未指定時は
+YAML の値（省略時 `1`）を使用する。並列実行および CfT の再利用時にも適用する。指定した場合は
+各 run artifact の `run.json.windowOpacityOverride` に記録する。YAML ファイル自体は変更しない。
 
 `play` / `run --template-screenshots <all|failure-only>` は scenario の
 `playback.artifacts.template_screenshots` をその実行に限り上書きする。`run` では全 leaf scenario に適用する。

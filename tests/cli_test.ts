@@ -34,6 +34,22 @@ Deno.test("maps validation failures to exit code 2 without an uncaught stack", a
   assertEquals(stderr.includes("Uncaught"), false);
 });
 
+Deno.test("window opacity override is a run-only option with a required value", () => {
+  validateCommandOptions("run", ["--plan-window-opacity-override", "0"]);
+  assertThrows(
+    () => validateCommandOptions("run", ["--plan-window-opacity-override"]),
+    Error,
+    "requires a value",
+  );
+  for (const command of ["play", "record", "validate"]) {
+    assertThrows(
+      () => validateCommandOptions(command, ["--plan-window-opacity-override", "0.5"]),
+      Error,
+      "unknown option",
+    );
+  }
+});
+
 Deno.test("maps typed failures to the documented process exit codes", () => {
   assertEquals(exitCodeFor(new ValidationError("bad input")), 2);
   assertEquals(exitCodeFor(new EnvironmentError("browser lost")), 3);

@@ -91,6 +91,7 @@ export type PlayOptions = {
   position?: { left: number; top: number };
   /** run-only override that replaces, rather than merges with, scenario window bounds. */
   boundsOverride?: WindowBounds;
+  opacityOverride?: number;
   seed?: string;
   keepArtifacts?: boolean;
   stepDelayMs?: number;
@@ -626,7 +627,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       }
       await cdp.call("Browser.setWindowBounds", { windowId: window.windowId, bounds });
     }
-    windowOpacity.configure(s.browser.window?.opacity, logger.warn);
+    windowOpacity.configure(options.opacityOverride ?? s.browser.window?.opacity, logger.warn);
     await cdp.call("Page.enable", {}, attached.sessionId);
     await cdp.call("Runtime.enable", {}, attached.sessionId);
     const network = new NetworkTracker(cdp, attached.sessionId);
@@ -695,7 +696,10 @@ async function prepareReusedBrowser(
 ) {
   browser.runDir = runDir;
   browser.logger = createScenarioLogger(s.name, s.playback?.log_color);
-  browser.windowOpacity.configure(s.browser.window?.opacity, browser.logger.warn);
+  browser.windowOpacity.configure(
+    options.opacityOverride ?? s.browser.window?.opacity,
+    browser.logger.warn,
+  );
   browser.network.reset();
   await Deno.writeTextFile(
     `${runDir}/launch.json`,
@@ -954,7 +958,7 @@ async function currentUrl(b: BrowserSession): Promise<string | undefined> {
 }
 export async function playScenario(s: Scenario, options: PlayOptions): Promise<RunResult> {
   const logger = createScenarioLogger(s.name, s.playback?.log_color);
-  const runDir = `.crer/runs/${createRunId()}`;
+  const runDir = `.crer/runs/${createRunId(s.name)}`;
   await Deno.mkdir(runDir, { recursive: true });
   const seed = options.seed ?? s.playback?.seed ?? randomSeed();
   const templateScreenshots = options.templateScreenshots
@@ -969,6 +973,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
         startedAt: new Date().toISOString(),
         templateScreenshots,
         ...(options.boundsOverride ? { windowBoundsOverride: options.boundsOverride } : {}),
+        ...(options.opacityOverride !== undefined
+          ? { windowOpacityOverride: options.opacityOverride }
+          : {}),
       },
       null,
       2,
@@ -1015,6 +1022,9 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
             templateScreenshots,
             browserSession: { reused: acquired.reused, profile: profileDir },
             ...(options.boundsOverride ? { windowBoundsOverride: options.boundsOverride } : {}),
+            ...(options.opacityOverride !== undefined
+              ? { windowOpacityOverride: options.opacityOverride }
+              : {}),
           },
           null,
           2,

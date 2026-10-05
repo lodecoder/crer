@@ -1,5 +1,15 @@
 import type { TemplateScreenshotPolicy, WindowBounds } from "./types.ts";
 
+/** Parse a run-only override; zero is a valid, fully transparent value. */
+export function parsePlanWindowOpacityOverride(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const opacity = Number(value);
+  if (!value.trim() || !Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
+    throw new Error("--plan-window-opacity-override must be a finite number from 0 to 1");
+  }
+  return opacity;
+}
+
 export function parseTemplateScreenshotPolicy(
   value: string | undefined,
 ): TemplateScreenshotPolicy | undefined {

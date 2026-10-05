@@ -128,6 +128,8 @@ Deno.test({
           reused: 1,
           disabled: 0.4,
         }[mode];
+        const opacityOverride = mode === "standalone" ? 0 : mode === "reused-once" ? 1 : undefined;
+        const expectedOpacity = opacityOverride ?? opacity ?? 1;
         const scenario: Scenario = {
           version: 1,
           name: `topmost-${mode}`,
@@ -153,6 +155,7 @@ Deno.test({
           ],
         };
         const playback = playScenario(scenario, {
+          opacityOverride,
           chromePath: chrome!,
           inputDllPath: "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll",
           ...(standalone ? {} : { profileDir, sharedSession }),
@@ -169,7 +172,7 @@ Deno.test({
           assert(window, `${mode}: browser window was not found`);
           assert(ready, `${mode}: playback did not start`);
           assertEquals(isTopmost(window), enabled, mode);
-          assertEquals(windowAlpha(window), Math.round((opacity ?? 1) * 255), mode);
+          assertEquals(windowAlpha(window), Math.round(expectedOpacity * 255), mode);
           if (enabled && foregroundMode === "once") {
             // Another topmost window may cover CfT while it retains WS_EX_TOPMOST.
             const overlay = user32.symbols.CreateWindowExW(
@@ -201,7 +204,7 @@ Deno.test({
               const deadline = Date.now() + 2500;
               try {
                 while (Date.now() < deadline) {
-                  assertEquals(windowAlpha(window), Math.round((opacity ?? 1) * 255), mode);
+                  assertEquals(windowAlpha(window), Math.round(expectedOpacity * 255), mode);
                   assertEquals(
                     isTopmost(window),
                     true,

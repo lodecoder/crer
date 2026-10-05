@@ -18,7 +18,11 @@ import {
   transformFromSidecar,
   windowBoundsFromSidecar,
 } from "./normalize.ts";
-import { parsePlanWindowBoundsOverride, parseTemplateScreenshotPolicy } from "./options.ts";
+import {
+  parsePlanWindowBoundsOverride,
+  parsePlanWindowOpacityOverride,
+  parseTemplateScreenshotPolicy,
+} from "./options.ts";
 import { fileDirectory, resolveFromDirectory } from "./paths.ts";
 import { aggregatePlanExitCode, shouldAbortPlan } from "./plan_policy.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
@@ -497,6 +501,7 @@ async function runNode(
   boundsOverride?: WindowBounds,
   browserSessions?: BrowserSessions,
   templateScreenshots?: TemplateScreenshotPolicy,
+  opacityOverride?: number,
 ): Promise<RunResult[]> {
   if ("scenario" in node) {
     const scenarioFile = resolveFromDirectory(base, node.scenario);
@@ -530,6 +535,7 @@ async function runNode(
             muteAudio,
             profileDir,
             boundsOverride,
+            opacityOverride,
             sharedSession,
             templateScreenshots,
             templateBaseDir: fileDirectory(scenarioFile),
@@ -569,6 +575,7 @@ async function runNode(
         boundsOverride,
         browserSessions,
         templateScreenshots,
+        opacityOverride,
       );
       out.push(...results);
       if (signal?.aborted || shouldAbortPlan(results, onFailure)) break;
@@ -594,6 +601,7 @@ async function runNode(
         boundsOverride,
         browserSessions,
         templateScreenshots,
+        opacityOverride,
       );
       return childResults;
     },
@@ -696,6 +704,9 @@ async function main() {
     const p = await loadPlanFile(file);
     const profileDir = profileDirOption();
     const boundsOverride = parsePlanWindowBoundsOverride(option("--plan-window-bounds-override"));
+    const opacityOverride = parsePlanWindowOpacityOverride(
+      option("--plan-window-opacity-override"),
+    );
     const browserSessions = p.browser_session
       ? new BrowserSessions(p.browser_session.focus ?? "once")
       : undefined;
@@ -719,6 +730,7 @@ async function main() {
         boundsOverride,
         browserSessions,
         templateScreenshotsOption(),
+        opacityOverride,
       );
     } finally {
       Deno.removeSignalListener("SIGINT", onInterrupt);
@@ -732,7 +744,7 @@ async function main() {
     return;
   }
   if (command === "record") {
-    const runDir = `.crer/runs/${createRunId()}`;
+    const runDir = `.crer/runs/${createRunId(option("--name") ?? "record")}`;
     await Deno.mkdir(runDir, { recursive: true });
     const configuredProfile = profileDirOption();
     const profile = configuredProfile

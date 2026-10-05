@@ -1,6 +1,7 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import {
   parsePlanWindowBoundsOverride,
+  parsePlanWindowOpacityOverride,
   parseTemplateScreenshotPolicy,
 } from "../src/options.ts";
 
@@ -32,4 +33,18 @@ Deno.test("parses template screenshot policy", () => {
     Error,
     "must be all or failure-only",
   );
+});
+
+Deno.test("parses window opacity overrides including transparent and opaque endpoints", () => {
+  assertEquals(parsePlanWindowOpacityOverride(undefined), undefined);
+  for (const value of ["0", "0.5", "1", " 0.25 "]) {
+    assertEquals(parsePlanWindowOpacityOverride(value), Number(value));
+  }
+  for (const value of ["", " ", "NaN", "Infinity", "-0.1", "1.01", "false", "0.5,1"]) {
+    assertThrows(
+      () => parsePlanWindowOpacityOverride(value),
+      Error,
+      "--plan-window-opacity-override",
+    );
+  }
 });
