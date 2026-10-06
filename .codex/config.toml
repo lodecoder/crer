@@ -1,0 +1,20 @@
+[mcp_servers.git]
+enabled = true
+command = "C:/Users/a5/.local/bin/uvx.exe"
+args = [
+  "--python", "3.12",
+  "--from", "mcp-server-git==2026.8.18",
+  "mcp-server-git",
+  "--repository", "C:/Users/a5/devai/crer"
+]
+startup_timeout_sec = 60
+enabled_tools = [
+  "git_status",
+  "git_add",
+  "git_commit",
+  "git_reset",
+  "git_create_branch",
+  "git_checkout",
+  "git_branch"
+]
+default_tools_approval_mode = "approve"
