@@ -5,10 +5,14 @@
 
 ## 現在の到達点
 
-- Deno CLI、YAML の基本検証、CfT の隔離起動、CDP 再生の骨格を実装済み。
+- C#/.NET 10 CLI に全コマンド、YAML 検証、CfT の隔離起動、CDP 再生を移植。
 - click / double-click / move / drag / scroll / text / key / key_chord / navigate / wait / assert / screenshot / sleep を実装済み。
 - seed・jitter・artifacts の基本実装と、C# .NET 10 Native AOT の Raw Input DLL を追加済み。
 - Native AOT DLL は `win-x64` で公開ビルド済み。実 CfT fixture の再生結合テストも成功済み。
+
+2026-10-15 の C# 完全移行の要件別受入は [移行対応表](docs/csharp-migration-matrix.md) に記録する。
+以下の過去日付の成功は当時の実装の記録であり、今回の受入には流用しない。
+今回の対象は利用者の指示により win-x64。ARM64 の追加ビルド・実機検証は除外する。
 
 ## P0 — 実ブラウザ再生の結合テスト
 
@@ -60,15 +64,16 @@
 
 ## P2 — 配布と堅牢化
 
-- [x] `deno compile` と Native AOT DLL をパッケージ化する。
+- [x] Native AOT CLI と Native AOT DLL をパッケージ化する。
   - `build-release.ps1`、standalone exe の DLL 自動検出、`test-release.ps1` を実装。2026-08-26 に
     win-x64 配布物の headful CfT fixture 再生、artifact、物理カーソル不変を確認済み。
 - [x] CfT の固定バージョン導入、`doctor` の診断、サンプル scenario を整える。
   - `doctor` に CfT 実行ファイル・バージョン・導入 manifest の診断を追加。2026-08-26 に既存の
     CfT 152.0.7977.42 を manifest 登録し、`isChromeForTesting: true` と `matchesChrome: true` を確認済み。
-- [ ] Windows x64 / ARM64 のビルドと回帰テストを整備する。
-  - `build-native.ps1 -Runtime` と `build-release.ps1 -Runtime` で x64 / ARM64 を選択可能にする。ARM64 実機での
-    `test-release.ps1` 実行が残る（ARM64 環境がないため保留）。
+- [x] Windows x64 の最終配布物による移行受入を完了する。
+  - 2026-10-15: C# 390件とnative lifecycle、実CfT、手動記録、JS runtime不在PATHで標準verify/build/test-releaseが成功。
+    [受入結果](docs/csharp-migration-results.md) を参照。既存の `-Runtime win-arm64` 指定は維持するが、
+    ARM64のpublish・実機検証は今回の利用者指示により除外する。
 
 ## P3 — 運用性
 

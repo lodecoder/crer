@@ -1,5 +1,5 @@
 [CmdletBinding()]
-param([string] $CrerExe = 'dist/csharp/win-x64/crer.exe', [string] $Deno = 'deno')
+param([string] $CrerExe = 'dist/win-x64/crer.exe', [string] $Deno = 'deno')
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 if (-not [IO.Path]::IsPathRooted($CrerExe)) { $CrerExe = Join-Path $projectRoot $CrerExe }

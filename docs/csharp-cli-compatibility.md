@@ -1,4 +1,45 @@
-# C# CLI 初期 milestone の互換性
+# C# CLI の互換性
+
+完全移行の比較基準は `50b50fd8bf82a3ce09c25040bca51f60304ba126`。
+全項目の現在の状態は [移行対応表](csharp-migration-matrix.md) と
+[旧テスト台帳](csharp-migration-tests.tsv) に記録する。
+今回の受入対象は利用者の追加指示により win-x64。ARM64 は除外した。
+
+以下は初期 milestone の判断記録であり、現在の未対応一覧ではない。
+完全移行では旧 CLI が実装した全コマンド・全設定を対象に拡張している。
+`browser install`、`record new/resume`、`run --max-parallel` は元から未実装なので新設しない。
+
+## 完全移行で明示した修正
+
+- 旧 writer の空 `steps` が null になる保存バグは `steps: []` として修正する。
+- 仕様にある `log.message` の成功 artifact 保存を追加する。入力 text の値は追加記録しない。
+- 中断・CDP 喪失時の失敗 step 診断と、解放に失敗した入力の環境エラーを追加する。
+  screenshot 取得失敗が元の操作エラーを置き換えないようにする。
+- `.crer/profiles` の junction をたどってから外部にディレクトリを作ることを防ぎ、
+  作成前にも実体の祖先を検査する。profile lock を CLI 間でも保持する。
+  `Default`、`Preferences`、lock 自体が専用 profile 外へ解決される場合も、読み書きする前に拒否する。
+- CDP の timeout を送信待ち・送信・応答待ち全体へ適用し、診断保存に失敗しても profile lock を解放する。
+- 非 foreground 起動中に利用者が別ウィンドウへ切り替えた場合は、その前景を維持する。
+  CfT が取得した前景だけを起動前のウィンドウへ戻す。
+  専用の無操作観測で、従来の Process.Start は起動時に約1.3秒だけCfTを前景化することを確認した。
+  非foreground再生は `STARTF_USESHOWWINDOW` / `SW_SHOWNOACTIVATE` を指定するC#起動処理へ変更する。
+  [Windowsの起動時表示指定](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/ns-processthreadsapi-startupinfow)
+  に従い表示を維持し、通常のCDP bounds設定と入力後も前景・カーソル不変を実測する。
+  stdioだけを明示継承し、元の引数・環境変数・process終了監視を保つ。明示foregroundと手動recordの起動は維持する。
+  復元が不要な場合の `restoreStatus: 0` は `restorePerformed: false` と区別し、復元APIを呼んだ成功とは表現しない。
+- occluded renderer のリサイズ遅延は読み取りキャプチャで同期後に再測定し、表示の一致条件は維持する。
+- `playback.speed` と `timeouts.navigation_ms` は旧 runtime に参照箇所がない。
+  milestone の navigation_ms による新たな起動 deadline を撤回し、旧実装の固定待機を使う。
+- CLI の point は旧 `pointOption` と同様に最初の2成分を使う。
+  `--position 1,2,3` を milestone が拒否した差は旧契約へ戻す。
+- CfT 導入補助は公式 JSON と PowerShell/BCL に置き換えた。
+  PowerShell の大文字小文字を区別しない変数名のため、旧 script が manifest.requested を実版で
+  上書きしていた点を修正し、`stable` 等の元の指定を保持する。実行ファイルの hash/version 診断は維持する。
+- BCL 結合 fixture の `/seen` 応答に余分な `Cache-Control: no-store` があり、未消費の fetch body に
+  `Network.loadingFinished` が来ない条件を作っていた。旧 Deno.serve と実 HTTP header を比較し、
+  本文・YAML・assertion を維持して余分な header だけを除去した。製品の network idle 条件は変更しない。
+
+## 初期 milestone の調査記録
 
 この一覧は実装前に定める対応範囲であり、動作確認の完了記録ではない。既存 Deno CLI を残し、
 `src/cli.ts`、`src/main.ts`、`src/yaml.ts`、`src/types.ts`、`src/errors.ts`、
