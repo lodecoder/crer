@@ -4,6 +4,9 @@ Windows 上で Chrome for Testing を専用プロファイルで起動し、GUI 
 C#/.NET 10 Native AOT CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使うため、OS の物理マウス・
 キーボードや普段使いの Chrome を操作しません。
 
+公開リリースの利用者向け: [日本語の使い方](docs/user-guide.ja.md) · [English guide](docs/user-guide.en.md)。
+管理者権限不要のインストール・更新・アンインストールと、CfT の設定、記録・再生の例を説明しています。
+
 全コマンドを C# に移植しています。Native AOT のビルド・publish、fixture 検証と現在の受入状況は
 [C# CLI の実行手順](docs/csharp-cli.md) と [移行対応表](docs/csharp-migration-matrix.md) を参照してください。
 win-x64 の移行受入は完了し、C# 390件・native lifecycle、実 CfT と手動記録、JS runtime を
@@ -658,6 +661,8 @@ steps:
 $env:CRER_CHROME = 'C:\path\to\chrome.exe'
 .\dist\win-x64\crer.exe doctor
 ```
+
+公開用 ZIP・チェックサム・日英ガイドをまとめる手順は [リリースの準備](docs/releasing.md) を参照してください。
 
 ARM64 の Windows PC 向けには、ARM64 用の MSVC / Windows SDK を導入した上で次を実行します。
 今回の移行受入は win-x64 を対象とし、ARM64 の publish・実機確認は利用者の指示で対象外です。
