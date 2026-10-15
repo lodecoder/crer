@@ -40,7 +40,11 @@ public sealed partial class Playback
     public Task<JsonObject> RunScenario(Scenario scenario, CliOptions options, string chrome, CancellationToken cancellation, bool retainSession = false)
         => Execute(scenario, options, chrome, cancellation, retainSession);
 
-    public Task CloseSession() => Cleanup(false);
+    public async Task CloseSession()
+    {
+        await Cleanup(false);
+        if (cleanupErrors.Count > 0) throw new CrerException(3, "browser session cleanup failed: " + string.Join("; ", cleanupErrors));
+    }
 
     private async Task<JsonObject> Call(string method, JsonObject? p = null, bool page = true, CancellationToken? cancellation = null, int timeout = 10000)
     {
@@ -66,7 +70,7 @@ public sealed partial class Playback
         cleanupErrors.Clear();
         logger = new(s.Name, Json.Text(s.Playback["log_color"], "default"));
         var reused = cdp != null && !cdp.Disconnected.IsCompleted && process is { HasExited: false };
-        if (!reused && (cdp != null || process != null)) await Cleanup(false);
+        if (!reused && (cdp != null || process != null)) await CloseSession();
         runDir = $".crer/runs/{RunArtifacts.CreateRunId(s.Name)}";
         absoluteRunDir = Path.GetFullPath(runDir);
         var configuredProfile = Profiles.Configured(s, options);

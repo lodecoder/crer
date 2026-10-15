@@ -248,6 +248,18 @@ try
         catch (CrerException error) when (error.Code == 2 && error.Message.Contains("invalid scenario")) { }
         Check(drained, "invalid sibling did not drain running work");
     });
+    await Test("retained session cleanup failure is reported as an environment error", async () =>
+    {
+        var closed = 0;
+        try
+        {
+            await PlanRunner.Run(ValidPlan(Serial(Leaf(persistentFile)), reuse: true), Options(), "fake", default,
+                () => new FakePlayback((_, _, _, _) => Task.FromResult(Result()), () => { closed++; throw new IOException("owned cleanup failure"); }));
+            throw new Exception("session cleanup failure was ignored");
+        }
+        catch (CrerException error) when (error.Code == 3 && error.Message.Contains("owned cleanup failure")) { }
+        Check(closed == 1, "retained session cleanup was not completed exactly once");
+    });
     await Test("run overrides pass through and play position does not leak", async () =>
     {
         var requested = Options() with { BoundsOverride = new() { ["left"] = 10, ["top"] = 20 }, OpacityOverride = 0.4, Position = new() { ["left"] = 99, ["top"] = 99 } };

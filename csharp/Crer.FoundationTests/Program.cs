@@ -233,7 +233,7 @@ Test("diagnostic write failure still releases profile ownership during cleanup",
     var playback = new Playback();
     void Set(string name, object value) => typeof(Playback).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(playback, value);
     Set("profileLock", Profiles.Acquire(directory)); Set("profile", directory); Set("persistent", true); Set("absoluteRunDir", unavailable);
-    playback.CloseSession().GetAwaiter().GetResult();
+    Reject(() => playback.CloseSession().GetAwaiter().GetResult(), "browser session cleanup failed", 3);
     using var nextOwner = Profiles.Acquire(directory); Check(nextOwner.CanWrite);
     Check(Directory.Exists(directory), "persistent profile was removed");
 });
