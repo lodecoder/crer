@@ -96,7 +96,9 @@ await Test("custom Unicode working directory and sorted environment preserve Pro
     Check(value["removed"] == null, "removed environment variable was inherited");
     // Compare the empty-value corner against the BCL's real process path.
     info.RedirectStandardInput = true;
-    using var reference = Process.Start(info)!; reference.StandardInput.Close();
+    Process referenceProcess;
+    lock (BackgroundProcessLauncher.CreationGate) referenceProcess = Process.Start(info)!;
+    using var reference = referenceProcess; reference.StandardInput.Close();
     var baseline = reference.StandardOutput.ReadToEndAsync(); var baselineError = reference.StandardError.ReadToEndAsync();
     await reference.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
     var referenceValue = JsonNode.Parse(await baseline)!; _ = await baselineError;
@@ -149,6 +151,29 @@ await Test("managed Process.Kill and wait remain usable before wrapper disposal"
     Check(await child.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(10)) == "READY", "owned child did not become ready");
     child.Process.Kill(entireProcessTree: true); await child.Process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
     Check(child.Process.HasExited, "managed Kill did not terminate the owned child");
+});
+await Test("parallel background and standard starts retain separate arguments and pipes", async () =>
+{
+    var tasks = Enumerable.Range(0, 12).Select(index => Task.Run(async () =>
+    {
+        var info = Start("echo", index.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        JsonObject capture;
+        if (index % 2 == 0) (capture, _) = await Capture(info);
+        else
+        {
+            info.RedirectStandardInput = true;
+            Process started;
+            lock (BackgroundProcessLauncher.CreationGate) started = Process.Start(info)!;
+            using var standard = started; standard.StandardInput.Close();
+            var output = standard.StandardOutput.ReadToEndAsync(); var error = standard.StandardError.ReadToEndAsync();
+            await standard.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            capture = JsonNode.Parse(await output)!.AsObject();
+            Check(standard.ExitCode == 0 && await error == "owned-error-日本語", "parallel standard child lost stderr");
+        }
+        Check(capture["arguments"]![0]!.GetValue<string>() == index.ToString(System.Globalization.CultureInfo.InvariantCulture), "parallel child received another process's arguments");
+        Check(capture["stdin"]!.GetValue<string>() == "", "parallel child retained an unrelated stdin writer");
+    }));
+    await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(20));
 });
 await Test("wrapper disposal kills its still-running child and is idempotent", async () =>
 {

@@ -50,6 +50,10 @@ public sealed class BackgroundProcess : IDisposable
 /// </summary>
 public static unsafe class BackgroundProcessLauncher
 {
+    // Callers which also use Process.Start in this process must take this gate
+    // around those starts: the BCL can inherit other temporarily inheritable
+    // handles even though this launcher's own children use an explicit list.
+    public static object CreationGate { get; } = new();
     private const uint HandleFlagInherit = 1, CreateSuspended = 4, CreateUnicodeEnvironment = 0x400,
         ExtendedStartupInfoPresent = 0x80000, CreateNoWindow = 0x08000000;
     private const uint StartfUseShowWindow = 1, StartfForceOffFeedback = 0x80, StartfUseStdHandles = 0x100;
@@ -57,6 +61,11 @@ public static unsafe class BackgroundProcessLauncher
     private const nuint ProcThreadAttributeHandleList = 0x20002;
 
     public static BackgroundProcess Start(ProcessStartInfo start)
+    {
+        lock (CreationGate) return StartExclusive(start);
+    }
+
+    private static BackgroundProcess StartExclusive(ProcessStartInfo start)
     {
         ArgumentNullException.ThrowIfNull(start);
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Background process startup requires Windows");

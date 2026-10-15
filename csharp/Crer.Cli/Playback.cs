@@ -192,7 +192,8 @@ public sealed partial class Playback
         using (var file = File.OpenRead(chrome)) metadata["chromeSha256"] = Convert.ToHexStringLower(await SHA256.HashDataAsync(file, token));
         if (s.Window["foreground"]?.GetValue<bool>() == true)
         {
-            process = Process.Start(start) ?? throw new CrerException(3, "CfT process could not start");
+            lock (BackgroundProcessLauncher.CreationGate)
+                process = Process.Start(start) ?? throw new CrerException(3, "CfT process could not start");
             chromeStderr = ReadTail(process.StandardError);
             chromeStdout = ReadTail(process.StandardOutput);
             metadata["launchActivation"] = "foreground";

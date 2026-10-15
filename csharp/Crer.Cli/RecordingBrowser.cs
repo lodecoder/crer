@@ -126,7 +126,11 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
             "--force-device-scale-factor=1", "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding", $"--app={url}",
         }) start.ArgumentList.Add(argument);
         ChromeEnvironment.Apply(start);
-        try { process = Process.Start(start) ?? throw new CrerException(3, "CfT process could not start"); }
+        try
+        {
+            lock (BackgroundProcessLauncher.CreationGate)
+                process = Process.Start(start) ?? throw new CrerException(3, "CfT process could not start");
+        }
         catch (Exception error) when (error is System.ComponentModel.Win32Exception or IOException)
         { throw new CrerException(3, $"CfT process could not start: {error.Message}"); }
         stdout = Drain(process.StandardOutput);
