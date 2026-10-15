@@ -114,6 +114,53 @@ Test("run bounds replaces while position remains a separate play override", () =
     foreach (var value in new[] { "", " ", "-0.1", "1.1", "NaN", "Infinity" }) Reject(() => CliOptions.Parse(["run", "p", "--plan-window-opacity-override", value]), "finite number");
     Check(CliOptions.Parse(["run", "p", "--plan-window-opacity-override", "1"]).OpacityOverride == 1);
 });
+Test("bare plan filenames use cwd and child scenarios resolve from the plan directory", () =>
+{
+    var directory = Path.Combine(root, "path-resolution"); Directory.CreateDirectory(directory);
+    var child = Path.Combine(directory, "child.crer.yaml");
+    File.WriteAllText(child, "version: 1\nname: path-test\nbrowser: { initial_url: 'https://example.com' }\nsteps: []\n");
+    var original = Environment.CurrentDirectory;
+    try
+    {
+        Environment.CurrentDirectory = directory;
+        foreach (var (parent, configuredChild) in new[] { ("plan.crer.plan.yaml", "child.crer.yaml"), (Path.Combine(directory, "plan.crer.plan.yaml"), "child.crer.yaml"), ("plan.crer.plan.yaml", child) })
+        {
+            var playback = new PathPlayback();
+            var plan = new JsonObject { ["version"] = 1, ["name"] = "paths", ["run"] = new JsonObject { ["scenario"] = configuredChild } };
+            var outcome = PlanRunner.Run(plan, CliOptions.Parse(["run", parent]), "unused", default, () => playback).GetAwaiter().GetResult();
+            Check(outcome.Code == 0 && playback.ScenarioPath == child, "child path did not resolve from the parent plan");
+        }
+        Check(Template.PathFor(null, "template.png") == Path.Combine(directory, "template.png"));
+        Check(Template.PathFor(directory, child) == child, "absolute child path was prefixed twice");
+    }
+    finally { Environment.CurrentDirectory = original; }
+});
+var windowType = typeof(Playback).Assembly.GetType("Crer.WindowController")!;
+object InvokeWindow(MethodInfo method, object? owner, params object?[] arguments)
+{
+    try { return method.Invoke(owner, arguments)!; }
+    catch (TargetInvocationException error) when (error.InnerException != null)
+    { System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error.InnerException).Throw(); throw; }
+}
+Test("window opacity validates endpoints and rounds native alpha like JavaScript", () =>
+{
+    var opacity = windowType.GetMethod("OpacityAlpha")!;
+    foreach (var (value, expected) in new[] { (0d, 0u), (.5, 128u), (1d, 255u), (127.5 / 255, 128u), (.1, 26u) })
+        Check((uint)InvokeWindow(opacity, null, value) == expected, $"incorrect native alpha for {value}");
+    foreach (var value in new[] { -.01, 1.01, double.NaN, double.PositiveInfinity, double.NegativeInfinity })
+        Reject(() => InvokeWindow(opacity, null, value), "browser.window.opacity");
+});
+Test("default opaque windows configure without a DLL and transparency fails before native calls", () =>
+{
+    var directory = Path.Combine(root, "opacity"); Directory.CreateDirectory(directory);
+    using var window = (IDisposable)Activator.CreateInstance(windowType, Path.Combine(directory, "missing.dll"))!;
+    var configure = windowType.GetMethod("Configure")!;
+    void Configure(JsonObject setting) => ((Task)InvokeWindow(configure, window, 0, setting, CliOptions.Parse(["play", "unused"]), new ScenarioLogger("test"), directory, false, "once")).GetAwaiter().GetResult();
+    Configure(new()); Configure(new() { ["opacity"] = 1 });
+    Check(Json.Number(JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "opacity.json")))?["alpha"]) == 255);
+    Reject(() => Configure(new() { ["opacity"] = .5 }), "window opacity support", 3);
+    window.Dispose();
+});
 Test("profiles within dedicated root, traversal and outside rejection", () =>
 {
     var configured = $".crer/profiles/foundation-{Guid.NewGuid():N}";
@@ -171,6 +218,14 @@ Test("profile Preferences and lock reparse paths reject external targets before 
         Check(!Directory.EnumerateFileSystemEntries(outside).Any(), "external path was modified");
     }
 });
+Test("nested profile Cache junction cannot direct future browser writes outside the profile", () =>
+{
+    var directory = Path.Combine(root, "cache-link-profile"); var outside = Path.Combine(root, "cache-link-outside");
+    Directory.CreateDirectory(Path.Combine(directory, "Default")); Directory.CreateDirectory(outside);
+    DirectoryLink(Path.Combine(directory, "Default", "Cache"), outside);
+    Reject(() => Profiles.Prepare(directory), "outside its dedicated directory");
+    Check(!Directory.EnumerateFileSystemEntries(outside).Any(), "external cache target was modified");
+});
 Test("diagnostic write failure still releases profile ownership during cleanup", () =>
 {
     var directory = Path.Combine(root, "cleanup-profile"); Directory.CreateDirectory(directory);
@@ -204,3 +259,15 @@ Test("doctor configured manifest, executable hash and CLI precedence", () =>
 });
 Console.WriteLine($"{passed} passed, {failed} failed; evidence: {root}");
 return failed == 0 ? 0 : 1;
+
+sealed class PathPlayback : IPlanPlayback
+{
+    public string FocusPolicy { get; set; } = "once";
+    public string? ScenarioPath { get; private set; }
+    public Task<JsonObject> RunScenario(Scenario scenario, CliOptions options, string chrome, CancellationToken token, bool retainSession)
+    {
+        ScenarioPath = options.File;
+        return Task.FromResult(new JsonObject { ["code"] = 0, ["failures"] = new JsonArray() });
+    }
+    public Task CloseSession() => Task.CompletedTask;
+}

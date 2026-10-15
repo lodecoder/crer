@@ -2,54 +2,25 @@
 param(
   [int] $Port = 8080,
   [string] $Chrome = $env:CRER_CHROME,
-  [string] $Plan = 'fixtures\playback\session-reuse.crer.plan.yaml',
-  [string] $Profile = '.crer\profiles\session-reuse-fixture'
+  [string] $Plan = 'fixtures/playback/session-reuse.crer.plan.yaml',
+  [string] $Profile,
+  [string] $CrerExe = 'dist/win-x64/crer.exe'
 )
-
 $ErrorActionPreference = 'Stop'
-$projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if ([string]::IsNullOrWhiteSpace($Chrome) -or -not (Test-Path -LiteralPath $Chrome -PathType Leaf)) {
-  throw 'Set CRER_CHROME or pass -Chrome with the Chrome for Testing chrome.exe path.'
-}
-$before = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory -ErrorAction SilentlyContinue |
-  ForEach-Object FullName)
-$server = Start-Process -FilePath (Get-Command pwsh -ErrorAction Stop).Source -ArgumentList @(
-  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'serve-playback-fixture.ps1'), '-Port', $Port
-) -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+. (Join-Path $PSScriptRoot 'fixture-common.ps1')
+if ([string]::IsNullOrWhiteSpace($Chrome) -or -not (Test-Path -LiteralPath $Chrome -PathType Leaf)) { throw 'Specify Chrome for Testing with -Chrome or CRER_CHROME.' }
+if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = '.crer/profiles/session-reuse-fixture-' + [Guid]::NewGuid().ToString('N') }
+$server = Start-OwnedFixtureServer -Port $Port
 try {
-  $url = "http://127.0.0.1:$Port/index.html"
-  $deadline = [DateTime]::UtcNow.AddSeconds(5)
-  do {
-    try { $ready = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 $url).StatusCode -eq 200 } catch { $ready = $false; Start-Sleep -Milliseconds 100 }
-  } while (-not $ready -and [DateTime]::UtcNow -lt $deadline)
-  if (-not $ready) { throw "Playback fixture did not start at $url" }
-  Push-Location $projectRoot
-  try { & deno task dev run $Plan --chrome $Chrome --profile-dir $Profile } finally { Pop-Location }
-  if ($LASTEXITCODE -ne 0) { throw "run exited with code $LASTEXITCODE (expected 0)" }
-
-  $runs = @(Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory |
-    Where-Object { $_.FullName -notin $before })
-  if ($runs.Count -ne 2) { throw "Plan created $($runs.Count) run directories (expected 2)." }
-  $metadata = @($runs | ForEach-Object {
-    Get-Content -LiteralPath (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json
-  })
-  if (@($metadata | Where-Object { $_.browserSession.reused -eq $false }).Count -ne 1 -or
-      @($metadata | Where-Object { $_.browserSession.reused -eq $true }).Count -ne 1) {
-    throw 'run.json did not report one new and one reused browser session.'
-  }
-  $first = $runs | Where-Object {
-    (Get-Content -LiteralPath (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json).browserSession.reused -eq $false
-  }
-  $last = $runs | Where-Object {
-    (Get-Content -LiteralPath (Join-Path $_.FullName 'run.json') -Raw | ConvertFrom-Json).browserSession.reused -eq $true
-  }
-  if (Test-Path -LiteralPath (Join-Path $first.FullName 'shutdown.json')) {
-    throw 'CfT was closed after the first scenario instead of being reused.'
-  }
-  if (-not (Test-Path -LiteralPath (Join-Path $last.FullName 'shutdown.json') -PathType Leaf)) {
-    throw 'The reused CfT session did not leave its final shutdown artifact.'
-  }
-  Write-Host "PASS: two scenarios reused one CfT window; artifacts: $($runs.FullName -join ', ')"
-} finally {
-  if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
-}
+  $results = Invoke-FixtureCli -Executable $CrerExe -Arguments @('run', (Resolve-FixturePath $Plan), '--chrome', (Resolve-FixturePath $Chrome), '--profile-dir', $Profile) -ExpectedCode 0 -Evidence $server.Root -Label 'session-reuse'
+  if (@($results).Count -ne 2) { throw 'Reuse plan must produce exactly two scenario results.' }
+  $metadata = @($results | ForEach-Object { Get-Content -Raw -LiteralPath (Join-Path (Resolve-FixturePath $_.runDir) 'run.json') | ConvertFrom-Json })
+  if (@($metadata | Where-Object { $_.browserSession.reused -eq $false }).Count -ne 1 -or @($metadata | Where-Object { $_.browserSession.reused -eq $true }).Count -ne 1) { throw 'Expected one new and one reused browser session.' }
+  if ($metadata[0].chromePid -ne $metadata[1].chromePid) { throw 'Reuse plan created different Chrome processes.' }
+  $last = Resolve-FixturePath $results[-1].runDir
+  $shutdown = Join-Path $last 'shutdown.json'
+  if (-not (Test-Path -LiteralPath $shutdown)) { throw 'Final session shutdown artifact is missing.' }
+  $cleanup = Get-Content -Raw -LiteralPath $shutdown | ConvertFrom-Json
+  if (-not $cleanup.chromeExited -or $cleanup.pendingCdpRequests -ne 0) { throw 'Reused browser did not shut down cleanly.' }
+  Write-Host "PASS one CfT process reused then closed; profile retained at $Profile; harness: $($server.Root)"
+} finally { Stop-OwnedFixtureServer $server }

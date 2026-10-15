@@ -77,13 +77,17 @@ internal static class InterruptTest
     private static async Task ObservePressed(string run, Process child)
     {
         var metadata = JsonNode.Parse(File.ReadAllText(Path.Combine(run, "run.json")))!;
-        var portLines = File.ReadAllLines(Path.Combine(metadata["profile"]!.GetValue<string>(), "DevToolsActivePort"));
+        var launch = JsonNode.Parse(File.ReadAllText(Path.Combine(run, "launch.json")))!;
+        var endpoint = new Uri(metadata["cdpEndpoint"]!.GetValue<string>());
+        if (endpoint.Scheme != "http" || !endpoint.IsLoopback || endpoint.Port <= 0) throw new Exception("owned CDP endpoint is not loopback HTTP");
         using var http = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(3) };
-        var targets = JsonNode.Parse(await http.GetStringAsync($"http://127.0.0.1:{portLines[0]}/json/list"))!.AsArray();
-        var target = targets.First(x => x?["type"]?.GetValue<string>() == "page")!;
+        var targets = JsonNode.Parse(await http.GetStringAsync(new Uri(endpoint, "/json/list")))!.AsArray();
+        var target = targets.First(x => x?["type"]?.GetValue<string>() == "page" && x?["id"]?.GetValue<string>() == launch["targetId"]!.GetValue<string>())!;
+        var socketUri = new Uri(target["webSocketDebuggerUrl"]!.GetValue<string>());
+        if (socketUri.Scheme != "ws" || !socketUri.IsLoopback || socketUri.Port != endpoint.Port) throw new Exception("owned CDP WebSocket endpoint changed");
         using var socket = new ClientWebSocket();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await socket.ConnectAsync(new Uri(target["webSocketDebuggerUrl"]!.GetValue<string>()), timeout.Token);
+        await socket.ConnectAsync(socketUri, timeout.Token);
         var buffer = new byte[8192];
         for (var id = 1; !timeout.IsCancellationRequested; id++)
         {

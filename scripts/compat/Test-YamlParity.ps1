@@ -1,10 +1,11 @@
 [CmdletBinding()]
-param([string] $CrerExe = 'dist/csharp/win-x64/crer.exe')
+param([string] $CrerExe = 'dist/csharp/win-x64/crer.exe', [string] $Deno = 'deno')
 $ErrorActionPreference = 'Stop'
-$projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 if (-not [IO.Path]::IsPathRooted($CrerExe)) { $CrerExe = Join-Path $projectRoot $CrerExe }
 $testRoot = Join-Path $projectRoot ('.crer/csharp-yaml-parity/' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $testRoot -Force
+$legacy = & (Join-Path $PSScriptRoot 'Export-Legacy.ps1')
 $cases = [Collections.Generic.List[object]]::new()
 $prefix = "version: 1`nname: Test`nbrowser: { initial_url: 'http://127.0.0.1:8080/' }`n"
 foreach ($scalar in @('_42', '1__2', '42_', 'yes', 'on', '0x2a', '0o52', '012', '1:20', '12e3', '1e+3', '+42', '.1', '1.', '1_2', '12_34', '0b10', '+0x10', '1e2_3', '-.1', '2026-10-15', '2026-10-15T01:02:03Z', "'2026-10-15'")) {
@@ -21,7 +22,7 @@ try {
   foreach ($case in $cases) {
     $file = Join-Path $testRoot "$index.crer.yaml"
     [IO.File]::WriteAllText($file, $case.yaml + "`n")
-    $denoOutput = (& deno run -A src/main.ts validate $file 2>&1 | Out-String)
+    $denoOutput = (& $Deno run -A --config (Join-Path $legacy 'deno.json') (Join-Path $legacy 'src/main.ts') validate $file 2>&1 | Out-String)
     $denoCode = $LASTEXITCODE
     $csharpOutput = (& $CrerExe validate $file 2>&1 | Out-String)
     $csharpCode = $LASTEXITCODE

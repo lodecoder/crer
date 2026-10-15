@@ -12,6 +12,7 @@ param(
 # dotnet build csharp/Crer.StartupStub -c Release
 # dotnet build csharp/Crer.InterruptHelper -c Release
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'fixture-common.ps1')
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 function Absolute([string] $Path) {
   if ([IO.Path]::IsPathRooted($Path)) { return [IO.Path]::GetFullPath($Path) }
@@ -46,9 +47,11 @@ function New-Scenario([string] $Label, [string] $Steps = '', [string] $Extra = '
 function Find-Run($Case) {
   $runs = Join-Path $projectRoot '.crer\runs'
   if (-not (Test-Path -LiteralPath $runs)) { return $null }
-  return Get-ChildItem -LiteralPath $runs -Directory | Where-Object { $_.Name -like "*-$($Case.Name)-*" } | Select-Object -First 1
+  # These generated case names are ASCII; the public run ID retains at most 64 runes.
+  $artifactName = $Case.Name.Substring(0, [Math]::Min(64, $Case.Name.Length))
+  return Get-ChildItem -LiteralPath $runs -Directory | Where-Object { $_.Name -like "*-$artifactName-*" } | Select-Object -First 1
 }
-function Start-Cli([string[]] $Arguments, [bool] $RemoveChromeEnvironment = $false) {
+function Start-Cli([string[]] $Arguments, [bool] $RemoveChromeEnvironment = $false, [hashtable] $EnvironmentOverrides = @{}) {
   $info = [Diagnostics.ProcessStartInfo]::new($CrerExe)
   $info.WorkingDirectory = $projectRoot
   $info.UseShellExecute = $false
@@ -57,6 +60,7 @@ function Start-Cli([string[]] $Arguments, [bool] $RemoveChromeEnvironment = $fal
   $info.RedirectStandardError = $true
   foreach ($argument in $Arguments) { $info.ArgumentList.Add($argument) }
   if ($RemoveChromeEnvironment) { $null = $info.Environment.Remove('CRER_CHROME') }
+  foreach ($key in $EnvironmentOverrides.Keys) { $info.Environment[$key] = [string]$EnvironmentOverrides[$key] }
   $process = [Diagnostics.Process]::Start($info)
   return @{ Process = $process; Stdout = $process.StandardOutput.ReadToEndAsync(); Stderr = $process.StandardError.ReadToEndAsync() }
 }
@@ -74,7 +78,7 @@ function Finish-Cli($Started, $Case, [int] $Expected, [string] $Diagnostic, [boo
     if ($NoRun) { Check ($null -eq $run) 'Invalid input created a run / launched Chrome' }
     else {
       Check ($null -ne $run) 'Playback did not create artifacts'
-      $result = $out | ConvertFrom-Json
+      $result = Read-CrerResult $out
       Check ($result.code -eq $Expected) 'JSON result disagrees with process exit code'
       Check ($result.failures.Count -gt 0) 'Error result has no failures'
       Check ((Absolute $result.runDir) -eq $run.FullName) 'JSON result points to a different run'
@@ -118,8 +122,8 @@ try {
   $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome, '--chrome', $Chrome)) $case 2 'more than once' $true
   $case = New-Scenario 'missing-option-value'
   $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome')) $case 2 'requires a value' $true
-  $case = New-Scenario 'unsupported-option'
-  $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome, '--profile-dir', '.crer/profiles/test')) $case 2 'unsupported' $true
+  $case = New-Scenario 'unknown-option'
+  $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome, '--migration-unknown')) $case 2 'unknown option' $true
 
   $case = New-Scenario 'invalid-yaml'
   [IO.File]::AppendAllText($case.File, "`nunknown_setting: true`n")
@@ -127,13 +131,16 @@ try {
   $case = New-Scenario 'malformed-yaml'
   [IO.File]::WriteAllText($case.File, 'version: [unclosed')
   $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome)) $case 2 'invalid YAML' $true
-  $case = New-Scenario 'unsupported-step' '  - { do: text, value: forbidden }'
+  $case = New-Scenario 'unsupported-step' '  - { do: migration_unknown }'
   $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome)) $case 2 'not supported' $true
-  $case = New-Scenario 'unsupported-setting' '' 'speed: 2'
-  $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome)) $case 2 'playback.speed' $true
+  $case = New-Scenario 'unsupported-setting' '' 'migration_unknown: 2'
+  $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome)) $case 2 'migration_unknown' $true
 
   $case = New-Scenario 'missing-chrome'
   $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', (Join-Path $testRoot 'missing-chrome.exe'))) $case 3 'does not exist'
+
+  $case = New-Scenario 'chrome-exit-before-endpoint'
+  $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $StartupStub) $false @{ CRER_STARTUP_STUB_EXIT_CODE = '42' }) $case 3 'CfT exited during startup (42)'
 
   $case = New-Scenario 'assertion' '  - { do: assert, locator_hint: { role: status, name: Result, text: "Impossible result" } }'
   $run = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $Chrome)) $case 4 'assert'
@@ -141,6 +148,8 @@ try {
   $steps = Get-Content -LiteralPath (Join-Path $run.FullName 'steps.ndjson') | ForEach-Object { $_ | ConvertFrom-Json }
   Check ($steps[0].status -eq 'failed') 'Failed assert was not recorded'
 
+  # navigation_ms is accepted but the fixed legacy runtime does not read it.
+  # The owned stub exercises the fixed CDP-endpoint deadline instead.
   $case = New-Scenario 'startup-timeout' '' 'timeouts: { navigation_ms: 300, action_ms: 1000 }'
   $null = Finish-Cli (Start-Cli @('play', $case.File, '--chrome', $StartupStub)) $case 3 'startup timed out'
 
@@ -178,7 +187,7 @@ try {
   $evidence = Get-Content -LiteralPath $evidencePath -Raw | ConvertFrom-Json
   Check ($evidence.pressedObserved -eq $true -and $evidence.ctrlCGenerated -eq $true) 'Ctrl+C was not delivered during a verified primary-button hold'
   Check ($evidence.exitCode -eq 5) 'Ctrl+C did not return code 5'
-  $result = Get-Content -LiteralPath (Join-Path $controlDir 'stdout.log') -Raw | ConvertFrom-Json
+  $result = Read-CrerResult (Get-Content -LiteralPath (Join-Path $controlDir 'stdout.log') -Raw)
   Check ($result.code -eq 5 -and $result.failures.Count -gt 0) 'Interrupted JSON result is invalid'
   $run = Find-Run $case
   Check ($null -ne $run) 'Interrupted run artifacts missing'
