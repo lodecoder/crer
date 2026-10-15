@@ -123,21 +123,21 @@ Test("unknown keys rejected at each supported mapping level", () =>
     };
     foreach (var (yaml, diagnostic) in cases) Reject(yaml, diagnostic);
 });
-Test("unported behavior rejected before playback", () =>
+Test("previous milestone exclusions are now schema-compatible", () =>
 {
-    var cases = new (string yaml, string diagnostic)[]
+    var cases = new string[]
     {
-        (prefix + "steps: [{ do: text, value: hello }]", "not supported"),
-        (prefix + "functions: {}\nsteps: []", "scenario.functions"),
-        (prefix + "playback: { speed: 1 }\nsteps: []", "playback.speed"),
-        (prefix + "playback: { on_failure: { default: continue } }\nsteps: []", "only abort"),
-        (prefix + "playback: { jitter: { enabled: true } }\nsteps: []", "enabled: false"),
-        (prefix + "steps: [{ do: click, at: { x: 1, y: 2 }, jitter: { enabled: false, radius_px: 0 } }]", "radius_px"),
-        (minimal.Replace("initial_url:", "profile: 'persistent:tmp', initial_url:"), "only ephemeral"),
-        (minimal.Replace("initial_url:", "display: { zoom_check: off }, initial_url:"), "only strict"),
-        (prefix + "steps: [{ do: assert, title: example }]", "steps[0].title"),
+        prefix + "steps: [{ do: text, value: hello }]",
+        prefix + "functions: {}\nsteps: []",
+        prefix + "playback: { speed: 1 }\nsteps: []",
+        prefix + "playback: { on_failure: { default: continue } }\nsteps: []",
+        prefix + "steps: [{ do: click, at: { x: 1, y: 2 }, jitter: { enabled: false, radius_px: 0 } }]",
+        minimal.Replace("initial_url:", "profile: 'persistent:tmp', initial_url:"),
+        minimal.Replace("initial_url:", "display: { zoom_check: off }, initial_url:"),
     };
-    foreach (var (yaml, diagnostic) in cases) Reject(yaml, diagnostic);
+    foreach (var yaml in cases) Scenario.Parse(yaml);
+    Reject(prefix + "steps: [{ do: assert, state: complete, title: example }]", "title");
+    Reject(prefix + "playback: { jitter: { enabled: true } }\nsteps: []", "playback.jitter");
 });
 Test("invalid scalar types and values rejected", () =>
 {
@@ -147,7 +147,7 @@ Test("invalid scalar types and values rejected", () =>
         (minimal.Replace("name: Test", "name: true"), "version: 1"),
         (minimal.Replace("http://127.0.0.1:8080/", "file:///tmp/fixture.html"), "http or https"),
         (prefix + "playback: { seed: 123 }\nsteps: []", "uint64 decimal string"),
-        (prefix + "playback: { seed: '18446744073709551616' }\nsteps: []", "uint64 decimal string"),
+        (prefix + "playback: { seed: '18446744073709551616' }\nsteps: []", "uint64"),
         (prefix + "playback: { timeouts: { action_ms: -1 } }\nsteps: []", "non-negative"),
         (prefix + "steps: [{ do: click, at: { x: '1', y: 2 } }]", "finite number"),
         (prefix + "steps: [{ do: click, at: { x: 1, y: 2 }, count: 1.5 }]", "positive integer"),
@@ -157,8 +157,8 @@ Test("invalid scalar types and values rejected", () =>
         (prefix + "steps: [{ do: screenshot, name: ../outside.png }]", "safe artifact filename"),
         (prefix + "steps: [{ do: sleep, ms: .inf }]", "finite"),
         (prefix + "steps: [{ do: assert, locator_hint: { text: 1 } }]", "must be a string"),
-        (prefix + "steps: [{ do: wait_for, url: null }]", "http or https"),
-        (prefix + "steps: [{ do: click, at: { x: 1, y: 2 }, jitter: { enabled: 'false' } }]", "enabled: false"),
+        (prefix + "steps: [{ do: wait_for, url: null }]", "steps[0].url"),
+        (prefix + "steps: [{ do: click, at: { x: 1, y: 2 }, jitter: { enabled: 'false' } }]", "jitter"),
     };
     foreach (var (yaml, diagnostic) in cases) Reject(yaml, diagnostic);
 });
@@ -194,11 +194,11 @@ Test("CLI help, validate, and file-before-options calling convention", () =>
     Check(CliOptions.Parse(["help"]).Command == "help", "help command was not recognized");
     var validated = CliOptions.Parse(["validate", "directory with spaces/scenario.crer.yaml"]);
     Check(validated.File == "directory with spaces/scenario.crer.yaml", "scenario path changed");
-    RejectCli(["play"], "scenario path");
+    RejectCli(["play"], "path is required");
     RejectCli(["play", "--chrome", "chrome.exe", "scenario.crer.yaml"], "option");
     RejectCli(["play", "one.yaml", "two.yaml"], "option");
     RejectCli(["validate", "one.yaml", "--chrome", "chrome.exe"], "unknown option");
-    RejectCli(["record", "one.yaml"], "unsupported command");
+    Check(CliOptions.Parse(["record", "one.ndjson"]).Command == "record", "record command missing");
 });
 Test("CLI options preserve values independent of option ordering", () =>
 {
@@ -222,10 +222,13 @@ Test("CLI duplicate options and missing values fail", () =>
         RejectCli(["play", "one.yaml", option, "--keep-artifacts"], "requires a value");
     }
 });
-Test("CLI unsupported options fail explicitly", () =>
+Test("CLI command-specific options and value requirements fail explicitly", () =>
 {
-    foreach (var option in new[] { "--dll", "--profile-dir", "--ignore-viewport-mismatch", "--template-screenshots", "--unknown" })
-        RejectCli(["play", "one.yaml", option], "option");
+    foreach (var option in new[] { "--dll", "--profile-dir", "--template-screenshots" })
+        RejectCli(["play", "one.yaml", option], "requires a value");
+    RejectCli(["play", "one.yaml", "--unknown"], "unknown option");
+    RejectCli(["play", "one.yaml", "--plan-window-opacity-override", "0.5"], "unknown option");
+    Check(CliOptions.Parse(["play", "one.yaml", "--ignore-viewport-mismatch"]).IgnoreViewportMismatch, "ignore flag missing");
 });
 Test("CLI malformed numeric values fail", () =>
 {
@@ -233,8 +236,10 @@ Test("CLI malformed numeric values fail", () =>
         RejectCli(["play", "one.yaml", "--seed", seed], "uint64 decimal string");
     foreach (var delay in new[] { "-1", "NaN", "Infinity", "1,000", "abc" })
         RejectCli(["play", "one.yaml", "--step-delay-ms", delay], "non-negative number");
-    foreach (var position in new[] { "1", "1.5,2", "a,2", "1,2,3" })
-        RejectCli(["play", "one.yaml", "--position", position], "integer left,top");
+    foreach (var position in new[] { "1", "a,2" }) RejectCli(["play", "one.yaml", "--position", position], "must be x,y");
+    RejectCli(["play", "one.yaml", "--position", "1.5,2"], "integer left,top");
+    Check(Json.Number(CliOptions.Parse(["play", "one.yaml", "--position", "1,2,3"]).Position!["top"]) == 2,
+        "original pointOption ignores extra comma-separated values");
 });
 Test("CLI Number conversion preserves decimal, radix, and exponent forms", () =>
 {

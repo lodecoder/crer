@@ -1,0 +1,1049 @@
+{
+  "baseline": "50b50fd8bf82a3ce09c25040bca51f60304ba126",
+  "values": [
+    {
+      "step": {
+        "do": "navigate",
+        "url": "https://example.com"
+      },
+      "calls": [
+        {
+          "method": "Page.navigate",
+          "params": {
+            "url": "https://example.com"
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "click",
+        "hold_ms": 7
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 10,
+            "y": 20
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mousePressed",
+            "x": 10,
+            "y": 20,
+            "button": "left",
+            "buttons": 1,
+            "clickCount": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseReleased",
+            "x": 10,
+            "y": 20,
+            "button": "left",
+            "buttons": 0,
+            "clickCount": 1
+          }
+        }
+      ],
+      "sleeps": [
+        7
+      ],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "double_click",
+        "hold_ms": 7
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 10,
+            "y": 20
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mousePressed",
+            "x": 10,
+            "y": 20,
+            "button": "left",
+            "buttons": 1,
+            "clickCount": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseReleased",
+            "x": 10,
+            "y": 20,
+            "button": "left",
+            "buttons": 0,
+            "clickCount": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 10,
+            "y": 20
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mousePressed",
+            "x": 10,
+            "y": 20,
+            "button": "left",
+            "buttons": 1,
+            "clickCount": 2
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseReleased",
+            "x": 10,
+            "y": 20,
+            "button": "left",
+            "buttons": 0,
+            "clickCount": 2
+          }
+        }
+      ],
+      "sleeps": [
+        7,
+        7
+      ],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "mouse_move"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 10,
+            "y": 20
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "drag",
+        "from": {
+          "x": 10,
+          "y": 20
+        },
+        "to": {
+          "x": 30,
+          "y": 60
+        }
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 10,
+            "y": 20
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mousePressed",
+            "x": 10,
+            "y": 20,
+            "button": "left",
+            "buttons": 1,
+            "clickCount": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 12,
+            "y": 24,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 14,
+            "y": 28,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 16,
+            "y": 32,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 18,
+            "y": 36,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 20,
+            "y": 40,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 22,
+            "y": 44,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 24,
+            "y": 48,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 26,
+            "y": 52,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 28,
+            "y": 56,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseMoved",
+            "x": 30,
+            "y": 60,
+            "button": "left",
+            "buttons": 1
+          }
+        },
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseReleased",
+            "x": 30,
+            "y": 60,
+            "button": "left",
+            "buttons": 0,
+            "clickCount": 1
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "scroll",
+        "delta": {
+          "x": 5,
+          "y": -9
+        }
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchMouseEvent",
+          "params": {
+            "type": "mouseWheel",
+            "x": 10,
+            "y": 20,
+            "deltaX": 5,
+            "deltaY": -9
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "text",
+        "value": "日本語 A"
+      },
+      "calls": [
+        {
+          "method": "Input.insertText",
+          "params": {
+            "text": "日本語 A"
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "Enter"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyDown",
+            "key": "Enter",
+            "code": "Enter",
+            "windowsVirtualKeyCode": 13,
+            "text": "\r",
+            "unmodifiedText": "\r",
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Enter",
+            "code": "Enter",
+            "windowsVirtualKeyCode": 13,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "Space"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyDown",
+            "key": " ",
+            "code": "Space",
+            "windowsVirtualKeyCode": 32,
+            "text": " ",
+            "unmodifiedText": " ",
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": " ",
+            "code": "Space",
+            "windowsVirtualKeyCode": 32,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": " "
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyDown",
+            "key": " ",
+            "code": "Space",
+            "windowsVirtualKeyCode": 32,
+            "text": " ",
+            "unmodifiedText": " ",
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": " ",
+            "code": "Space",
+            "windowsVirtualKeyCode": 32,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "Tab"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Tab",
+            "code": "Tab",
+            "windowsVirtualKeyCode": 9,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Tab",
+            "code": "Tab",
+            "windowsVirtualKeyCode": 9,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "a"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "a",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "a",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "A"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "A",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "A",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "7"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "7",
+            "code": "Digit7",
+            "windowsVirtualKeyCode": 55,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "7",
+            "code": "Digit7",
+            "windowsVirtualKeyCode": 55,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "ArrowLeft"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "ArrowLeft",
+            "code": "ArrowLeft",
+            "windowsVirtualKeyCode": 37,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "ArrowLeft",
+            "code": "ArrowLeft",
+            "windowsVirtualKeyCode": 37,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "Escape"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Escape",
+            "code": "Escape",
+            "windowsVirtualKeyCode": 27,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Escape",
+            "code": "Escape",
+            "windowsVirtualKeyCode": 27,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "ß"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "ß",
+            "code": "ß",
+            "windowsVirtualKeyCode": 83,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "ß",
+            "code": "ß",
+            "windowsVirtualKeyCode": 83,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "ᾀ"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "ᾀ",
+            "code": "ᾀ",
+            "windowsVirtualKeyCode": 7944,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "ᾀ",
+            "code": "ᾀ",
+            "windowsVirtualKeyCode": 7944,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "ΐ"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "ΐ",
+            "code": "ΐ",
+            "windowsVirtualKeyCode": 921,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "ΐ",
+            "code": "ΐ",
+            "windowsVirtualKeyCode": 921,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key",
+        "key": "ﬀ"
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "ﬀ",
+            "code": "ﬀ",
+            "windowsVirtualKeyCode": 70,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "ﬀ",
+            "code": "ﬀ",
+            "windowsVirtualKeyCode": 70,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key_chord",
+        "keys": [
+          "Control",
+          "Shift",
+          "Enter"
+        ]
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Control",
+            "code": "ControlLeft",
+            "windowsVirtualKeyCode": 17,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Shift",
+            "code": "ShiftLeft",
+            "windowsVirtualKeyCode": 16,
+            "modifiers": 2
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Enter",
+            "code": "Enter",
+            "windowsVirtualKeyCode": 13,
+            "modifiers": 10
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Enter",
+            "code": "Enter",
+            "windowsVirtualKeyCode": 13,
+            "modifiers": 10
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Shift",
+            "code": "ShiftLeft",
+            "windowsVirtualKeyCode": 16,
+            "modifiers": 2
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Control",
+            "code": "ControlLeft",
+            "windowsVirtualKeyCode": 17,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "key_chord",
+        "keys": [
+          "Alt",
+          "Meta",
+          "Shift",
+          "a"
+        ]
+      },
+      "calls": [
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Alt",
+            "code": "AltLeft",
+            "windowsVirtualKeyCode": 18,
+            "modifiers": 0
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Meta",
+            "code": "MetaLeft",
+            "windowsVirtualKeyCode": 91,
+            "modifiers": 1
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "Shift",
+            "code": "ShiftLeft",
+            "windowsVirtualKeyCode": 16,
+            "modifiers": 5
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "rawKeyDown",
+            "key": "a",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 13
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "a",
+            "code": "KeyA",
+            "windowsVirtualKeyCode": 65,
+            "modifiers": 13
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Shift",
+            "code": "ShiftLeft",
+            "windowsVirtualKeyCode": 16,
+            "modifiers": 5
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Meta",
+            "code": "MetaLeft",
+            "windowsVirtualKeyCode": 91,
+            "modifiers": 1
+          }
+        },
+        {
+          "method": "Input.dispatchKeyEvent",
+          "params": {
+            "type": "keyUp",
+            "key": "Alt",
+            "code": "AltLeft",
+            "windowsVirtualKeyCode": 18,
+            "modifiers": 0
+          }
+        }
+      ],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "sleep",
+        "ms": "0x10"
+      },
+      "calls": [],
+      "sleeps": [
+        16
+      ],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "screenshot",
+        "name": "capture"
+      },
+      "calls": [],
+      "sleeps": [],
+      "captures": [
+        "capture"
+      ],
+      "logs": [],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "log",
+        "message": "hello"
+      },
+      "calls": [],
+      "sleeps": [],
+      "captures": [],
+      "logs": [
+        "hello"
+      ],
+      "waits": [],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "wait_for",
+        "state": "network_idle"
+      },
+      "calls": [],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [
+        {
+          "step": {
+            "do": "wait_for",
+            "state": "network_idle"
+          },
+          "timeout": 1000
+        }
+      ],
+      "assertions": []
+    },
+    {
+      "step": {
+        "do": "assert",
+        "url": "example"
+      },
+      "calls": [],
+      "sleeps": [],
+      "captures": [],
+      "logs": [],
+      "waits": [],
+      "assertions": [
+        {
+          "do": "assert",
+          "url": "example"
+        }
+      ]
+    }
+  ]
+}

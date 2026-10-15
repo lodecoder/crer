@@ -8,76 +8,6 @@ public sealed class CrerException(int code, string message) : Exception(message)
     public int Code { get; } = code;
 }
 
-public sealed record CliOptions(string Command, string? File, string? Chrome, bool KeepArtifacts,
-    double? StepDelay, ulong? Seed, JsonObject? Position, bool MuteAudio)
-{
-    public static CliOptions Parse(string[] args)
-    {
-        if (args.Length == 0 || args[0] == "help")
-            return new("help", null, null, false, null, null, null, false);
-        var command = args[0];
-        if (command is not ("validate" or "play")) throw new CrerException(2, $"unsupported command: {command}");
-        var file = args.Length > 1 && !args[1].StartsWith("--", StringComparison.Ordinal) ? args[1] : null;
-        var seen = new HashSet<string>();
-        string? chrome = null;
-        double? delay = null;
-        ulong? seed = null;
-        JsonObject? position = null;
-        for (var i = file == null ? 1 : 2; i < args.Length; i++)
-        {
-            var key = args[i];
-            if (!seen.Add(key)) throw new CrerException(2, $"option specified more than once: {key}");
-            if (command == "validate") throw new CrerException(2, $"unknown option for validate: {key}");
-            if (key is "--keep-artifacts" or "--mute-audio") continue;
-            if (key is not ("--chrome" or "--step-delay-ms" or "--seed" or "--position"))
-                throw new CrerException(2, $"unsupported or unknown option for play: {key}");
-            if (++i >= args.Length || args[i].StartsWith("--", StringComparison.Ordinal))
-                throw new CrerException(2, $"{key} requires a value");
-            var value = args[i];
-            switch (key)
-            {
-                case "--chrome": chrome = value; break;
-                case "--step-delay-ms":
-                    if (!TryCliNumber(value, out var d) || d < 0)
-                        throw new CrerException(2, "--step-delay-ms must be a non-negative number");
-                    delay = d; break;
-                case "--seed":
-                    if (!value.All(char.IsAsciiDigit) || !ulong.TryParse(value, out var n))
-                        throw new CrerException(2, "--seed must be a uint64 decimal string");
-                    seed = n; break;
-                case "--position":
-                    var parts = value.Split(',');
-                    if (parts.Length != 2 || !TryCliNumber(parts[0], out var x) || !TryCliNumber(parts[1], out var y)
-                        || Math.Truncate(x) != x || Math.Truncate(y) != y)
-                        throw new CrerException(2, "--position requires integer left,top");
-                    position = new() { ["left"] = x, ["top"] = y }; break;
-            }
-        }
-        if (file == null) throw new CrerException(2, "scenario path is required immediately after command");
-        return new(command, file, chrome, seen.Contains("--keep-artifacts"), delay, seed, position, seen.Contains("--mute-audio"));
-    }
-
-    // The existing CLI uses JavaScript Number for delay and coordinate values.
-    private static bool TryCliNumber(string value, out double number)
-    {
-        value = value.Trim().Trim('\uFEFF').Trim();
-        number = 0;
-        if (value.Length == 0) return true;
-        if (value.Length > 2 && value[0] == '0' && "xXoObB".Contains(value[1]))
-        {
-            var radix = char.ToLowerInvariant(value[1]) switch { 'x' => 16, 'o' => 8, _ => 2 };
-            foreach (var c in value[2..])
-            {
-                var digit = c is >= '0' and <= '9' ? c - '0' : char.ToLowerInvariant(c) - 'a' + 10;
-                if (digit < 0 || digit >= radix) return false;
-                number = number * radix + digit;
-            }
-            return double.IsFinite(number);
-        }
-        return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out number) && double.IsFinite(number);
-    }
-}
-
 public static class Program
 {
     public static async Task<int> Main(string[] args)
@@ -90,19 +20,52 @@ public static class Program
             var options = CliOptions.Parse(args);
             if (options.Command == "help")
             {
-                Console.WriteLine("crer <validate|play> <file> [options]\nplay: --chrome <path> --keep-artifacts --seed <uint64> --position <left,top> --step-delay-ms <ms> --mute-audio\nC# milestone: click, wait_for, assert, screenshot, sleep; jitter must be disabled. See docs/csharp-cli.md.");
+                Console.WriteLine("crer <doctor|inspect|validate|play|run|record|normalize> <file> [options]");
                 return 0;
             }
-            var scenario = Scenario.Load(options.File!);
-            if (options.Command == "validate") { Console.WriteLine($"{options.File}: valid"); return 0; }
+            if (options.Command == "doctor") { Console.WriteLine((await Diagnostics.Doctor(options)).ToJsonString(Json.Indented)); return 0; }
+            if (options.Command == "inspect") { Console.WriteLine(Diagnostics.Inspect(options.File!).ToJsonString(Json.Indented)); return 0; }
+            if (options.Command == "normalize")
+            {
+                var output = options.Value("--output"); var url = options.Value("--url");
+                if (string.IsNullOrEmpty(output) || string.IsNullOrEmpty(url)) throw new CrerException(2, "normalize requires --output <scenario.crer.yaml> and --url <URL>");
+                NormalizePoint? Point(string key)
+                {
+                    var raw = options.Value(key);
+                    if (string.IsNullOrEmpty(raw)) return null;
+                    var pair = CliOptions.Point(raw, key); return new(pair.x, pair.y);
+                }
+                var origin = Point("--client-origin"); var size = Point("--client-size"); var viewport = Point("--viewport");
+                if ((origin != null || size != null || viewport != null) && (origin == null || size == null || viewport == null))
+                    throw new CrerException(2, "coordinate conversion requires --client-origin, --client-size, and --viewport");
+                var normalized = Normalize.FromFile(options.File!, new NormalizeOptions
+                { Url = url, Name = options.Value("--name") ?? "recorded-scenario", UseSidecar = origin == null,
+                    Transform = origin == null ? null : new(origin, size!, viewport!) });
+                Normalize.SaveYaml(output, normalized.Scenario); normalized.WriteWarnings(Console.Error);
+                Console.WriteLine($"Wrote {output}"); return 0;
+            }
+            if (options.Command == "validate")
+            {
+                var value = Scenario.LoadYaml(options.File!);
+                try { Scenario.Validate(value); } catch (CrerException) { Scenario.ValidatePlan(value); }
+                Console.WriteLine($"{options.File}: valid"); return 0;
+            }
+            var scenario = options.Command == "play" ? Scenario.Load(options.File!) : null;
+            var plan = options.Command == "run" ? Scenario.LoadPlan(options.File!) : null;
             var chrome = options.Chrome ?? Environment.GetEnvironmentVariable("CRER_CHROME");
             if (string.IsNullOrEmpty(chrome)) throw new CrerException(3, "Chrome for Testing must be specified with --chrome or CRER_CHROME");
-            var result = await Playback.Run(scenario, options, chrome, cancellation.Token);
+            if (options.Command == "record") return await Recorder.Run(options, chrome, cancellation.Token);
+            if (options.Command == "run")
+            {
+                var outcome = await PlanRunner.Run(plan!, options, chrome, cancellation.Token);
+                Console.WriteLine(outcome.Results.ToJsonString(Json.Indented)); return outcome.Code;
+            }
+            var result = await Playback.Run(scenario!, options, chrome, cancellation.Token);
             Console.WriteLine(result.ToJsonString(Json.Indented));
             return result["code"]!.GetValue<int>();
         }
-        catch (OperationCanceledException) { Console.Error.WriteLine("interrupted by user"); return 5; }
-        catch (CrerException e) { Console.Error.WriteLine(e.Message); return e.Code; }
+        catch (OperationCanceledException) { Console.Error.WriteLine("crer: interrupted by user"); return 5; }
+        catch (CrerException e) { Console.Error.WriteLine($"crer: {e.Message}"); if (Environment.GetEnvironmentVariable("CRER_DEBUG") == "1") Console.Error.WriteLine(e); return e.Code; }
         catch (Exception e) { Console.Error.WriteLine($"crer: {e.Message}"); return 2; }
         finally { Console.CancelKeyPress -= handler; }
     }

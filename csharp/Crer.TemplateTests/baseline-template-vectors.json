@@ -1,0 +1,905 @@
+{
+  "baseline": "50b50fd8bf82a3ce09c25040bca51f60304ba126",
+  "expressions": [
+    "(async () => {\n      const load = (url) => new Promise((resolve, reject) => {\n        const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error(\"image decode failed\")); image.src = url;\n      });\n      const [screen, source] = await Promise.all([load(\"data:image/png;base64,c2NyZWVu\"), load(\"data:image/png;base64,AA==\")]);\n      if (source.width > screen.width || source.height > screen.height) throw new Error(\"template is larger than screenshot\");\n      const canvas = document.createElement(\"canvas\"); canvas.width = screen.width; canvas.height = screen.height;\n      const context = canvas.getContext(\"2d\", { willReadFrequently: true });\n      context.drawImage(screen, 0, 0);\n      const pixels = context.getImageData(0, 0, screen.width, screen.height).data;\n      canvas.width = source.width; canvas.height = source.height;\n      context.drawImage(source, 0, 0);\n      const pattern = context.getImageData(0, 0, source.width, source.height).data;\n      const samples = [];\n      for (let gy = 0; gy < Math.min(8, source.height); gy++) for (let gx = 0; gx < Math.min(8, source.width); gx++) samples.push([Math.floor((gx + 0.5) * source.width / Math.min(8, source.width)), Math.floor((gy + 0.5) * source.height / Math.min(8, source.height))]);\n      let best = { x: 0, y: 0, width: source.width, height: source.height, similarity: -1 };\n      let bestDifference = Number.POSITIVE_INFINITY;\n      for (let y = 0; y <= screen.height - source.height; y++) for (let x = 0; x <= screen.width - source.width; x++) {\n        let difference = 0;\n        for (const [sx, sy] of samples) {\n          const patternOffset = (sy * source.width + sx) * 4;\n          const screenOffset = ((y + sy) * screen.width + x + sx) * 4;\n          difference += Math.abs(pattern[patternOffset] - pixels[screenOffset]) + Math.abs(pattern[patternOffset + 1] - pixels[screenOffset + 1]) + Math.abs(pattern[patternOffset + 2] - pixels[screenOffset + 2]);\n          if (difference >= bestDifference) break;\n        }\n        if (difference < bestDifference) { bestDifference = difference; best = { x, y, width: source.width, height: source.height, similarity: 1 - difference / (samples.length * 255 * 3) }; }\n      }\n      return best;\n    })()",
+    "(async () => {\n      const load = (url) => new Promise((resolve, reject) => {\n        const image = new Image(); image.onload = () => resolve(image); image.onerror = () => reject(new Error(\"image decode failed\")); image.src = url;\n      });\n      const [screen, source] = await Promise.all([load(\"data:image/png;base64,c2NyZWVu\"), load(\"data:image/png;base64,AA==\")]);\n      if (source.width > screen.width || source.height > screen.height) throw new Error(\"template is larger than screenshot\");\n      const canvas = document.createElement(\"canvas\"); canvas.width = screen.width; canvas.height = screen.height;\n      const context = canvas.getContext(\"2d\", { willReadFrequently: true });\n      context.drawImage(screen, 0, 0);\n      const pixels = context.getImageData(0, 0, screen.width, screen.height).data;\n      canvas.width = source.width; canvas.height = source.height;\n      context.drawImage(source, 0, 0);\n      const pattern = context.getImageData(0, 0, source.width, source.height).data;\n      const samples = [];\n      for (let gy = 0; gy < Math.min(8, source.height); gy++) for (let gx = 0; gx < Math.min(8, source.width); gx++) samples.push([Math.floor((gx + 0.5) * source.width / Math.min(8, source.width)), Math.floor((gy + 0.5) * source.height / Math.min(8, source.height))]);\n      const candidates = [];\n      const overlap = (a, b) => {\n        const left = Math.max(a.x, b.x), top = Math.max(a.y, b.y);\n        const right = Math.min(a.x + a.width, b.x + b.width), bottom = Math.min(a.y + a.height, b.y + b.height);\n        const intersection = Math.max(0, right - left) * Math.max(0, bottom - top);\n        const union = a.width * a.height + b.width * b.height - intersection;\n        return union ? intersection / union : 0;\n      };\n      const candidateLimit = Math.max(5 * 20, 5);\n      for (let y = 0; y <= screen.height - source.height; y++) for (let x = 0; x <= screen.width - source.width; x++) {\n        let difference = 0;\n        for (const [sx, sy] of samples) {\n          const patternOffset = (sy * source.width + sx) * 4;\n          const screenOffset = ((y + sy) * screen.width + x + sx) * 4;\n          difference += Math.abs(pattern[patternOffset] - pixels[screenOffset]) + Math.abs(pattern[patternOffset + 1] - pixels[screenOffset + 1]) + Math.abs(pattern[patternOffset + 2] - pixels[screenOffset + 2]);\n          if (difference > (1 - 0.9) * samples.length * 255 * 3) break;\n        }\n        const similarity = 1 - difference / (samples.length * 255 * 3);\n        if (similarity < 0.9) continue;\n        const candidate = { x, y, width: source.width, height: source.height, similarity };\n        const duplicate = candidates.findIndex((existing) => overlap(existing, candidate) >= 0.5);\n        if (duplicate >= 0) {\n          if (candidate.similarity > candidates[duplicate].similarity) candidates[duplicate] = candidate;\n        } else if (candidates.length < candidateLimit) {\n          candidates.push(candidate);\n        } else {\n          let worst = 0;\n          for (let index = 1; index < candidates.length; index++) if (candidates[index].similarity < candidates[worst].similarity) worst = index;\n          if (candidate.similarity > candidates[worst].similarity) candidates[worst] = candidate;\n        }\n      }\n      return candidates.sort((a, b) => b.similarity - a.similarity).slice(0, 5);\n    })()"
+  ],
+  "points": [
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 1,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 2,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 10,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 11,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 11,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 10,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 11,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 3,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 11,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 20,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 20,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 20,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 1,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 20,
+        "y": 20
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 20,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 20,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 20,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 2,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 20,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 20,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 20,
+        "y": 22
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 20,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 3,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 20,
+        "y": 21
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": -5,
+      "point": {
+        "x": 20,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 0,
+      "point": {
+        "x": 20,
+        "y": 42
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 2.8,
+      "point": {
+        "x": 21,
+        "y": 41
+      }
+    },
+    {
+      "match": {
+        "x": 10,
+        "y": 20,
+        "width": 40,
+        "height": 30,
+        "similarity": 1
+      },
+      "inset": 100,
+      "point": {
+        "x": 27,
+        "y": 35
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 
 namespace Crer;
 
-public sealed class Playback
+public sealed partial class Playback
 {
     private Cdp? cdp;
     private Process? process;
@@ -19,14 +19,28 @@ public sealed class Playback
     private readonly object networkLock = new();
     private long lastNetworkActivity = Environment.TickCount64;
     private double width, height;
-    private JsonObject? pressed;
     private readonly List<string> cleanupErrors = [];
     private Task<string>? chromeStderr;
     private JsonObject metadata = new();
     private CancellationToken token;
+    private bool persistent;
+    private FileStream? profileLock;
+    private int windowId;
+    private string targetId = "";
+    private string endpoint = "";
+    private UrlBlocker? blocker;
+    private WindowController? windows;
+    private ScenarioLogger logger = new("crer");
+    public string FocusPolicy { get; set; } = "once";
+    public CancellationToken UserCancellation { get; set; }
 
     public static Task<JsonObject> Run(Scenario scenario, CliOptions options, string chrome, CancellationToken token)
-        => new Playback().Execute(scenario, options, chrome, token);
+        => new Playback().RunScenario(scenario, options, chrome, token);
+
+    public Task<JsonObject> RunScenario(Scenario scenario, CliOptions options, string chrome, CancellationToken cancellation, bool retainSession = false)
+        => Execute(scenario, options, chrome, cancellation, retainSession);
+
+    public Task CloseSession() => Cleanup(false);
 
     private async Task<JsonObject> Call(string method, JsonObject? p = null, bool page = true, CancellationToken? cancellation = null, int timeout = 10000)
     {
@@ -46,31 +60,55 @@ public sealed class Playback
         return reply["result"]?["value"]?.DeepClone();
     }
 
-    private async Task<JsonObject> Execute(Scenario s, CliOptions options, string chrome, CancellationToken cancellation)
+    private async Task<JsonObject> Execute(Scenario s, CliOptions options, string chrome, CancellationToken cancellation, bool retainSession)
     {
         token = cancellation;
-        var safeName = Regex.Replace(s.Name, "[^A-Za-z0-9._-]", "_");
-        safeName = safeName[..Math.Min(safeName.Length, 64)];
-        runDir = $".crer/runs/{DateTime.UtcNow:yyyyMMddTHHmmssfffZ}-{safeName}-{Guid.NewGuid()}";
+        cleanupErrors.Clear();
+        logger = new(s.Name, Json.Text(s.Playback["log_color"], "default"));
+        var reused = cdp != null && !cdp.Disconnected.IsCompleted && process is { HasExited: false };
+        if (!reused && (cdp != null || process != null)) await Cleanup(false);
+        runDir = $".crer/runs/{RunArtifacts.CreateRunId(s.Name)}";
         absoluteRunDir = Path.GetFullPath(runDir);
-        profile = Path.Combine(absoluteRunDir, "profile");
+        var configuredProfile = Profiles.Configured(s, options);
+        persistent = configuredProfile != null;
+        var requestedProfile = persistent ? Profiles.PersistentDirectory(configuredProfile!) : Path.Combine(absoluteRunDir, "profile");
+        if (reused && !string.Equals(profile, requestedProfile, StringComparison.OrdinalIgnoreCase)) throw new CrerException(3, "a browser session cannot be reused with a different profile");
+        profile = requestedProfile;
         Directory.CreateDirectory(absoluteRunDir);
         var failures = new JsonArray();
         var code = 0;
         var seed = options.Seed?.ToString(CultureInfo.InvariantCulture) ?? Json.Text(s.Playback["seed"], RandomSeed());
         metadata = new() { ["scenario"] = s.Name, ["seed"] = seed, ["startedAt"] = DateTime.UtcNow.ToString("O"),
-            ["implementation"] = "csharp", ["templateScreenshots"] = Json.Text(s.Playback["artifacts"]?["template_screenshots"], "all"),
+            ["implementation"] = "csharp", ["templateScreenshots"] = options.TemplateScreenshots ?? Json.Text(s.Playback["artifacts"]?["template_screenshots"], "all"),
             ["scenarioPath"] = Path.GetFullPath(options.File!), ["profile"] = profile };
+        if (retainSession) metadata["browserSession"] = new JsonObject { ["reused"] = reused, ["profile"] = profile };
+        if (options.BoundsOverride != null) metadata["windowBoundsOverride"] = options.BoundsOverride.DeepClone();
+        if (options.OpacityOverride != null) metadata["windowOpacityOverride"] = options.OpacityOverride;
         Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
         File.WriteAllText(Path.Combine(absoluteRunDir, "steps.ndjson"), "");
         try
         {
+            windows ??= new WindowController(Diagnostics.InputDllPath(options));
             using (var startup = CancellationTokenSource.CreateLinkedTokenSource(cancellation))
             {
-                var navigationMs = Json.Number(s.Playback["timeouts"]?["navigation_ms"], 10000);
-                startup.CancelAfter(TimeSpan.FromMilliseconds(Math.Min(navigationMs, uint.MaxValue - 1d)));
+                // navigation_ms is accepted but not read by the fixed original runtime.
+                // Endpoint/document/viewport setup below use its respective fixed deadlines.
+                startup.CancelAfter(TimeSpan.FromSeconds(60));
                 token = startup.Token;
-                try { await Launch(s, options, chrome); }
+                try
+                {
+                    if (reused)
+                    {
+                        windows?.Pause();
+                        metadata["chrome"] = Path.GetFullPath(chrome); metadata["chromePid"] = process!.Id; metadata["cdpEndpoint"] = endpoint;
+                        using var stream = File.OpenRead(chrome);
+                        metadata["chromeSha256"] = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token));
+                        await ConfigurePage(s, options, true);
+                    }
+                    else await Launch(s, options, chrome);
+                    await windows!.Configure(process!.Id, s.Window, options, logger, absoluteRunDir, retainSession, FocusPolicy);
+                    beforeStep = _ => { blocker?.AssertHealthy(); windows.BeforeStep(); return Task.CompletedTask; };
+                }
                 catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
                 { throw new CrerException(3, "CfT startup timed out"); }
                 catch (CrerException e) when (e.Code != 3)
@@ -82,45 +120,29 @@ public sealed class Playback
                 }
                 finally { token = cancellation; }
             }
-            var index = 0;
-            foreach (var entry in s.Steps)
-            {
-                token.ThrowIfCancellationRequested();
-                var step = entry!.AsObject();
-                var record = new JsonObject { ["index"] = index.ToString(CultureInfo.InvariantCulture), ["do"] = Json.Text(step["do"]), ["startedAt"] = DateTime.UtcNow.ToString("O") };
-                try
-                {
-                    await Action(step, s, options);
-                    record["status"] = "ok";
-                    if (step["at"] != null) { record["at"] = step["at"]!.DeepClone(); record["jitterOffset"] = new JsonObject { ["x"] = 0, ["y"] = 0 }; }
-                }
-                catch (Exception e)
-                {
-                    record["status"] = "failed";
-                    record["error"] = e.Message;
-                    record["kind"] = e is OperationCanceledException ? "interrupted" : e is CrerException { Code: 3 } ? "environment"
-                        : e.Message.Contains("timed out", StringComparison.Ordinal) ? "timeout"
-                        : Json.Text(step["do"]) is "wait_for" or "assert" ? "assertion"
-                        : e.Message.Contains("bounds", StringComparison.Ordinal) ? "jitter_bounds" : "action";
-                    await ReleaseInput();
-                    try { await Capture($"failure-{index}", CancellationToken.None); } catch (Exception capture) { record["captureError"] = capture.Message; }
-                    throw;
-                }
-                finally
-                {
-                    try { record["url"] = (await Evaluate("location.href", CancellationToken.None))?.GetValue<string>(); } catch { }
-                    record["completedAt"] = DateTime.UtcNow.ToString("O");
-                    File.AppendAllText(Path.Combine(absoluteRunDir, "steps.ndjson"), record.ToJsonString() + "\n");
-                }
-                index++;
-            }
+            code = await ExecuteSteps(s, options, failures);
         }
-        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { code = 5; failures.Add((JsonNode?)JsonValue.Create("interrupted by user")); }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            var internalAbort = options.Command == "run" && !UserCancellation.IsCancellationRequested;
+            code = internalAbort ? 4 : 5;
+            failures.Add((JsonNode?)JsonValue.Create(internalAbort ? "plan execution aborted" : "interrupted by user"));
+        }
         catch (CrerException e) { code = e.Code; failures.Add((JsonNode?)JsonValue.Create(e.Message)); }
         catch (Exception e) { code = 3; failures.Add((JsonNode?)JsonValue.Create(e.Message)); }
         finally
         {
-            await Cleanup(options.KeepArtifacts);
+            if (retainSession && persistent && code is 0 or 4 && cdp != null && !cdp.Disconnected.IsCompleted)
+            {
+                try
+                {
+                    windows?.WriteDiagnostic();
+                    Json.Write(Path.Combine(absoluteRunDir, "cleanup.json"), new JsonObject { ["sessionRetained"] = true, ["chromeExited"] = false,
+                        ["profileRetained"] = true, ["persistentProfile"] = true, ["pendingCdpRequests"] = cdp.PendingCount, ["errors"] = new JsonArray() });
+                }
+                catch (Exception e) { cleanupErrors.Add($"session diagnostics failed: {e.Message}"); await Cleanup(options.KeepArtifacts); }
+            }
+            else await Cleanup(options.KeepArtifacts);
             if (cleanupErrors.Count > 0)
             {
                 if (code == 0) code = 3;
@@ -129,7 +151,12 @@ public sealed class Playback
             metadata["completedAt"] = DateTime.UtcNow.ToString("O");
             metadata["code"] = code;
             metadata["failures"] = failures.DeepClone();
-            Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
+            try { Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata); }
+            catch (Exception e)
+            {
+                if (code == 0) code = 3;
+                failures.Add((JsonNode?)JsonValue.Create($"final run diagnostics failed: {e.Message}"));
+            }
         }
         foreach (var failure in failures) Console.Error.WriteLine(Json.Text(failure));
         return new() { ["code"] = code, ["failures"] = failures, ["runDir"] = runDir };
@@ -143,16 +170,18 @@ public sealed class Playback
         var chrome = Path.GetFullPath(configuredChrome);
         if (!File.Exists(chrome)) throw new CrerException(3, $"Chrome for Testing does not exist: {chrome}");
         // Never discover Chrome or reuse an existing profile/debugging endpoint.
-        Directory.CreateDirectory(Path.Combine(profile, "Default"));
-        File.WriteAllText(Path.Combine(profile, "Default", "Preferences"), "{\"translate\":{\"enabled\":false},\"credentials_enable_service\":false,\"profile\":{\"password_manager_enabled\":false,\"password_manager_leak_detection\":false}}");
+        if (persistent) profileLock = Profiles.Acquire(profile);
+        Profiles.Prepare(profile);
+        var reservation = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        reservation.Start();
+        var port = ((IPEndPoint)reservation.LocalEndpoint).Port;
+        reservation.Stop();
         var start = new ProcessStartInfo(chrome) { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true, CreateNoWindow = true };
-        foreach (var argument in new[] { "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={profile}",
+        foreach (var argument in new[] { $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check", "--disable-sync", "--disable-infobars", "--disable-save-password-bubble", "--force-device-scale-factor=1",
-            "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding", $"--app={Json.Text(s.Browser["initial_url"])}" }) start.ArgumentList.Add(argument);
+            "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding", $"--app={(s.Browser["block_urls"] is JsonArray { Count: > 0 } ? "data:text/html," : Json.Text(s.Browser["initial_url"]))}" }) start.ArgumentList.Add(argument);
         if (options.MuteAudio) start.ArgumentList.Add("--mute-audio");
-        var layers = (Environment.GetEnvironmentVariable("__COMPAT_LAYER") ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
-            .Where(x => !new[] { "DPIUNAWARE", "GDIDPISCALING", "HIGHDPIAWARE" }.Contains(x, StringComparer.OrdinalIgnoreCase)).ToArray();
-        start.Environment["__COMPAT_LAYER"] = layers.Any(x => x != "~") ? string.Join(' ', layers) : "";
+        ChromeEnvironment.Apply(start);
         metadata["chrome"] = chrome;
         using (var file = File.OpenRead(chrome)) metadata["chromeSha256"] = Convert.ToHexStringLower(await SHA256.HashDataAsync(file, token));
         process = Process.Start(start) ?? throw new CrerException(3, "CfT process could not start");
@@ -160,32 +189,33 @@ public sealed class Playback
         _ = ReadTail(process.StandardOutput);
         metadata["chromePid"] = process.Id;
         Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
-        var navigationMs = Json.Number(s.Playback["timeouts"]?["navigation_ms"], 10000);
         var watch = Stopwatch.StartNew();
-        var activePort = Path.Combine(profile, "DevToolsActivePort");
-        string[]? portLines = null;
-        while (watch.Elapsed.TotalMilliseconds < navigationMs)
+        endpoint = $"http://127.0.0.1:{port}";
+        using var http = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(1) };
+        string? websocket = null;
+        while (watch.Elapsed.TotalMilliseconds < 15000)
         {
             token.ThrowIfCancellationRequested();
             if (process.HasExited) throw new CrerException(3, $"CfT exited during startup ({process.ExitCode})");
-            try { var lines = File.ReadAllLines(activePort); if (lines.Length >= 2 && int.TryParse(lines[0], out var port) && port > 0 && lines[1].StartsWith("/devtools/browser/", StringComparison.Ordinal)) { portLines = lines; break; } }
-            catch (IOException) { }
-            await Task.Delay(50, token);
+            try { websocket = Json.Text(JsonNode.Parse(await http.GetStringAsync(endpoint + "/json/version", token))?["webSocketDebuggerUrl"]); if (websocket.Length > 0) break; }
+            catch (Exception e) when (e is HttpRequestException or TaskCanceledException && !token.IsCancellationRequested) { }
+            await Task.Delay(100, token);
         }
-        if (portLines == null) throw new CrerException(3, "CfT startup timed out waiting for its profile DevToolsActivePort");
-        var endpoint = $"http://127.0.0.1:{portLines[0]}";
+        if (websocket == null || process.HasExited) throw new CrerException(3, "CfT startup timed out waiting for its dedicated CDP endpoint");
+        var websocketUri = new Uri(websocket);
+        if (!websocketUri.IsLoopback || websocketUri.Port != port || !websocketUri.AbsolutePath.StartsWith("/devtools/browser/", StringComparison.Ordinal)) throw new CrerException(3, "CfT returned an unexpected CDP endpoint");
         cdp = new Cdp();
-        await cdp.Open($"ws://127.0.0.1:{portLines[0]}{portLines[1]}", token);
-        using var http = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(5) };
+        await cdp.Open(websocket, token);
         var protocol = JsonNode.Parse(await http.GetStringAsync(endpoint + "/json/protocol", token))!;
-        foreach (var required in new[] { "Input.dispatchMouseEvent", "Target.attachToTarget", "Browser.getWindowForTarget", "Browser.setWindowBounds", "Browser.setContentsSize", "Page.captureScreenshot" })
+        foreach (var required in new[] { "Input.dispatchMouseEvent", "Input.dispatchKeyEvent", "Input.insertText", "Target.attachToTarget", "Browser.getWindowForTarget", "Browser.setWindowBounds", "Browser.setContentsSize", "Page.captureScreenshot" })
         {
             var parts = required.Split('.');
             if (!protocol["domains"]!.AsArray().Any(d => Json.Text(d?["domain"]) == parts[0] && d?["commands"] is JsonArray commands && commands.Any(c => Json.Text(c?["name"]) == parts[1])))
                 throw new CrerException(3, $"CfT does not support required CDP command {required}");
         }
         JsonObject? target = null;
-        while (watch.Elapsed.TotalMilliseconds < navigationMs)
+        watch.Restart();
+        while (watch.Elapsed.TotalMilliseconds < 10000)
         {
             var targets = await Call("Target.getTargets", page: false);
             Json.Write(Path.Combine(absoluteRunDir, "targets.json"), targets);
@@ -196,12 +226,20 @@ public sealed class Playback
             await Task.Delay(50, token);
         }
         if (target == null) throw new CrerException(3, "CfT did not expose a page target");
-        var targetId = Json.Text(target["targetId"]);
+        targetId = Json.Text(target["targetId"]);
         var attached = await Call("Target.attachToTarget", new() { ["targetId"] = targetId, ["flatten"] = true }, false);
         session = Json.Text(attached["sessionId"]);
         var window = await Call("Browser.getWindowForTarget", new() { ["targetId"] = targetId }, false);
-        var windowId = window["windowId"]!.GetValue<int>();
-        var bounds = s.Window["bounds"]?.DeepClone().AsObject() ?? new();
+        windowId = window["windowId"]!.GetValue<int>();
+        cdp.Event += OnNetworkEvent;
+        blocker = new UrlBlocker(cdp, session!);
+        await ConfigurePage(s, options, s.Browser["block_urls"] is JsonArray { Count: > 0 }, true);
+    }
+
+    private async Task ConfigurePage(Scenario s, CliOptions options, bool navigate, bool enable = false)
+    {
+        lock (networkLock) { requests.Clear(); lastNetworkActivity = Environment.TickCount64; }
+        var bounds = options.BoundsOverride?.DeepClone().AsObject() ?? s.Window["bounds"]?.DeepClone().AsObject() ?? new();
         if (options.Position != null) foreach (var kv in options.Position) bounds[kv.Key] = kv.Value?.DeepClone();
         if (bounds.Count > 0)
         {
@@ -211,13 +249,26 @@ public sealed class Playback
             await Call("Browser.setWindowBounds", new() { ["windowId"] = windowId, ["bounds"] = normalize }, false);
             await Call("Browser.setWindowBounds", new() { ["windowId"] = windowId, ["bounds"] = bounds }, false);
         }
-        await Call("Page.enable");
-        await Call("Runtime.enable");
-        cdp.Event += OnNetworkEvent;
-        await Call("Network.enable");
+        if (enable)
+        {
+            await Call("Page.enable");
+            await Call("Runtime.enable");
+            await Call("Network.enable");
+        }
+        await blocker!.Configure(s.Browser["block_urls"] as JsonArray, token);
+        if (navigate)
+        {
+            var navigation = await Call("Page.navigate", new() { ["url"] = s.Browser["initial_url"]!.DeepClone() });
+            if (navigation["errorText"] != null) throw new CrerException(3, $"Initial navigation failed: {Json.Text(navigation["errorText"])}");
+        }
         // A target can advertise its pending URL while its execution context is still about:blank.
         // Wait for the initial document to commit before accepting readyState or sizing its renderer.
-        while (Json.Text(await Evaluate("location.href")) == "about:blank") await Task.Delay(50, token);
+        var watch = Stopwatch.StartNew();
+        while (Json.Text(await Evaluate("location.href")) is "about:blank" or "data:text/html,")
+        {
+            if (watch.ElapsedMilliseconds >= 10000) throw new CrerException(3, "CfT initial document did not commit");
+            await Task.Delay(50, token);
+        }
         if (s.Window["content"] is JsonObject content)
         {
             // CfT creates/resizes its app HWND asynchronously. Match the existing runtime's retry.
@@ -228,6 +279,9 @@ public sealed class Playback
                 var measured = await ReadDisplay();
                 Json.Write(Path.Combine(absoluteRunDir, "sizing.json"), new JsonObject { ["actual"] = measured.DeepClone(), ["url"] = await Evaluate("location.href"), ["bounds"] = await Call("Browser.getWindowBounds", new() { ["windowId"] = windowId }, false) });
                 if (Json.Number(measured["width"]) == Json.Number(content["width"]) && Json.Number(measured["height"]) == Json.Number(content["height"])) break;
+                // Chromium can defer an occluded renderer's resize after the HWND changed.
+                // A read-only capture synchronizes compositor/layout without foreground input.
+                try { await Call("Page.captureScreenshot", new() { ["format"] = "png" }); } catch (CrerException e) when (e.Code == 4) { }
             }
         }
         var expected = s.Window["viewport"] ?? s.Window["content"];
@@ -235,27 +289,39 @@ public sealed class Playback
         string? previous = null;
         long stableSince = Environment.TickCount64;
         watch.Restart();
-        while (watch.Elapsed.TotalMilliseconds < Math.Max(1000, navigationMs))
+        while (watch.Elapsed.TotalMilliseconds < (expected != null && !options.IgnoreViewportMismatch ? 30000 : 10000))
         {
             actual = await ReadDisplay();
             var signature = actual.ToJsonString();
             if (signature != previous) { stableSince = Environment.TickCount64; previous = signature; }
-            var ready = Json.Text(await Evaluate("document.readyState")) == "complete";
-            var matches = expected == null || (Json.Number(actual["width"]) == Json.Number(expected["width"]) && Json.Number(actual["height"]) == Json.Number(expected["height"]));
+            var ready = Json.Text(await Evaluate("document.readyState")) != "loading";
+            var matches = options.IgnoreViewportMismatch || expected == null || (Json.Number(actual["width"]) == Json.Number(expected["width"]) && Json.Number(actual["height"]) == Json.Number(expected["height"]));
             if (ready && matches && Environment.TickCount64 - stableSince >= 1000) break;
             await Task.Delay(100, token);
         }
         actual ??= await ReadDisplay();
-        Json.Write(Path.Combine(absoluteRunDir, "display.json"), new JsonObject { ["actual"] = actual.DeepClone(), ["expectedViewport"] = expected?.DeepClone(), ["display"] = s.Display.DeepClone(), ["ignoreViewportMismatch"] = false });
+        Json.Write(Path.Combine(absoluteRunDir, "display.json"), new JsonObject { ["actual"] = actual.DeepClone(), ["expectedViewport"] = expected?.DeepClone(), ["display"] = s.Display.DeepClone(), ["ignoreViewportMismatch"] = options.IgnoreViewportMismatch });
         width = Json.Number(actual["width"]); height = Json.Number(actual["height"]);
         if (width <= 0 || height <= 0) throw new CrerException(3, "CfT viewport was unavailable");
-        if (Json.Text(await Evaluate("document.readyState")) != "complete") throw new CrerException(3, "CfT initial page loading timed out");
+        if (Json.Text(await Evaluate("document.readyState")) == "loading") throw new CrerException(3, "CfT initial page loading timed out");
         if (expected != null && (width != Json.Number(expected["width"]) || height != Json.Number(expected["height"])))
-            throw new CrerException(3, $"Viewport mismatch: expected {expected}, got {width}x{height}");
-        if (Json.Number(actual["dpr"]) != Json.Number(s.Display["expected_dpr"], 1) || Json.Number(actual["scale"]) != 1 || Json.Number(s.Display["browser_zoom"], 100) != 100)
-            throw new CrerException(3, $"DPR / browser zoom mismatch: {actual.ToJsonString()}; this milestone requires DPR 1 and zoom 100");
+        {
+            var message = $"Viewport mismatch: expected {Json.Number(expected["width"])}x{Json.Number(expected["height"])}, got {width}x{height}";
+            if (!options.IgnoreViewportMismatch) throw new CrerException(3, message);
+            logger.Warn($"Warning: {message}; continuing because --ignore-viewport-mismatch was specified");
+        }
+        var mode = Json.Text(s.Display["zoom_check"]);
+        void Report(string message) { if (mode == "strict") throw new CrerException(3, message); logger.Warn(message); }
+        if (s.Browser["display"] != null && mode != "off")
+        {
+            if (s.Display["expected_dpr"] != null && Json.Number(actual["dpr"]) != Json.Number(s.Display["expected_dpr"])) Report($"DPR mismatch: expected {Json.Number(s.Display["expected_dpr"])}, got {Json.Number(actual["dpr"])}");
+            if (s.Display["browser_zoom"] != null && Json.Number(s.Display["browser_zoom"]) != 100) Report($"browser_zoom {Json.Number(s.Display["browser_zoom"])} is not supported; v1 strictly supports 100 only");
+            if (Json.Number(actual["scale"]) != 1) Report($"Viewport scale mismatch: expected 1, got {Json.Number(actual["scale"])}");
+        }
+        blocker.AssertHealthy();
         metadata["cdpEndpoint"] = endpoint;
-        Json.Write(Path.Combine(absoluteRunDir, "launch.json"), new JsonObject { ["stage"] = "ready", ["pid"] = process.Id, ["targetId"] = targetId, ["sessionId"] = session });
+        Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
+        Json.Write(Path.Combine(absoluteRunDir, "launch.json"), new JsonObject { ["stage"] = "ready", ["pid"] = process!.Id, ["targetId"] = targetId, ["sessionId"] = session });
     }
 
     private void OnNetworkEvent(string method, JsonObject p, string? id)
@@ -265,6 +331,8 @@ public sealed class Playback
         {
             if (method == "Network.requestWillBeSent") { requests.Add(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64; }
             if (method is "Network.loadingFinished" or "Network.loadingFailed") { requests.Remove(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64; }
+            if (method is "Network.requestWillBeSent" or "Network.loadingFinished" or "Network.loadingFailed")
+                File.AppendAllText(Path.Combine(absoluteRunDir, "network.ndjson"), new JsonObject { ["at"] = DateTime.UtcNow.ToString("O"), ["method"] = method, ["requestId"] = p["requestId"]?.DeepClone(), ["pending"] = requests.Count }.ToJsonString() + "\n");
         }
     }
 
@@ -275,53 +343,6 @@ public sealed class Playback
         display["width"] = metrics["cssVisualViewport"]?["clientWidth"]?.DeepClone();
         display["height"] = metrics["cssVisualViewport"]?["clientHeight"]?.DeepClone();
         return display;
-    }
-
-    private async Task Action(JsonObject step, Scenario s, CliOptions options)
-    {
-        var action = Json.Text(step["do"]);
-        var delay = Json.Number(step["delay_ms"]);
-        var stepDelay = options.StepDelay ?? Json.Number(s.Playback["step_delay_ms"]);
-        switch (action)
-        {
-            case "click":
-                var x = Json.Number(step["at"]?["x"]); var y = Json.Number(step["at"]?["y"]);
-                if (x < 0 || y < 0 || x > width || y > height) throw new CrerException(4, "jitter bounds failure: click is outside viewport");
-                var count = Json.Number(step["count"], 1);
-                for (double i = 0; i < count; i++)
-                {
-                    await Call("Input.dispatchMouseEvent", new() { ["type"] = "mouseMoved", ["x"] = x, ["y"] = y });
-                    // Mark before sending: an interrupted response may still have delivered mousePressed.
-                    pressed = new() { ["type"] = "mouseReleased", ["x"] = x, ["y"] = y, ["button"] = "left", ["buttons"] = 0, ["clickCount"] = 1 };
-                    try
-                    {
-                        await Call("Input.dispatchMouseEvent", new() { ["type"] = "mousePressed", ["x"] = x, ["y"] = y, ["button"] = "left", ["buttons"] = 1, ["clickCount"] = 1 });
-                        await Delay(Json.Number(step["hold_ms"]));
-                        await Call("Input.dispatchMouseEvent", pressed.DeepClone().AsObject());
-                        pressed = null;
-                    }
-                    finally { await ReleaseInput(); }
-                    await Delay(delay); await Delay(stepDelay);
-                }
-                return;
-            case "wait_for":
-                var timeout = Json.Number(step["timeout_ms"], Json.Number(s.Playback["timeouts"]?["action_ms"], 10000));
-                var watch = Stopwatch.StartNew();
-                while (watch.Elapsed.TotalMilliseconds < timeout)
-                {
-                    if (await Condition(step, false)) goto success;
-                    await Task.Delay(100, token);
-                }
-                throw new CrerException(4, "wait_for timed out");
-            case "assert":
-                if (!await Condition(step, true)) throw new CrerException(4, "assert URL / ready state / locator failed");
-                break;
-            case "screenshot": await Capture(Json.Text(step["name"]), token); break;
-            case "sleep": await Delay(Json.Number(step["ms"])); break;
-            default: throw new CrerException(2, $"unsupported step: {action}");
-        }
-        success:
-        await Delay(delay); await Delay(stepDelay);
     }
 
     private async Task Delay(double ms)
@@ -344,78 +365,75 @@ public sealed class Playback
         token.ThrowIfCancellationRequested();
     }
 
-    private async Task<bool> Condition(JsonObject step, bool assertion)
-    {
-        var hint = step["locator_hint"]?.ToJsonString() ?? "{}";
-        var state = (await Evaluate("(() => { const hint=" + hint + "; const elements=Array.from(document.querySelectorAll('[role]')); const found=!hint.role&&!hint.name&&!hint.text||elements.some(element=>{const role=element.getAttribute('role'); const name=element.getAttribute('aria-label')||element.textContent?.trim()||''; const text=element.textContent?.trim()||''; return (!hint.role||role===hint.role)&&(!hint.name||name===hint.name)&&(!hint.text||text===hint.text)&&!!(element.getClientRects().length&&getComputedStyle(element).visibility!=='hidden');}); return {url:location.href,state:document.readyState,found};})()"))!.AsObject();
-        if (step["url"] != null)
-        {
-            // Deno replaces only the first '*' in this glob.
-            var pattern = Regex.Escape(Json.Text(step["url"]));
-            var star = pattern.IndexOf("\\*", StringComparison.Ordinal);
-            if (star >= 0) pattern = pattern[..star] + ".*" + pattern[(star + 2)..];
-            if (!Regex.IsMatch(Json.Text(state["url"]), "^" + pattern + "$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))) return false;
-        }
-        var desired = Json.Text(step["state"]);
-        var current = Json.Text(state["state"]);
-        var stateOk = assertion ? desired == "" || desired == current : desired == "visible" || desired == "" || current == "complete";
-        if (!assertion && desired == "network_idle") lock (networkLock) stateOk = current == "complete" && requests.Count == 0 && Environment.TickCount64 - lastNetworkActivity >= 500;
-        return stateOk && state["found"]!.GetValue<bool>();
-    }
-
     private async Task Capture(string name, CancellationToken cancellation)
     {
         var result = await Call("Page.captureScreenshot", new() { ["format"] = "png" }, cancellation: cancellation, timeout: 3000);
         File.WriteAllBytes(Path.Combine(absoluteRunDir, name + ".png"), Convert.FromBase64String(Json.Text(result["data"])));
     }
 
-    private async Task ReleaseInput()
-    {
-        if (pressed == null || cdp == null) return;
-        try { await Call("Input.dispatchMouseEvent", pressed.DeepClone().AsObject(), cancellation: CancellationToken.None, timeout: 1500); }
-        catch (Exception e) { cleanupErrors.Add($"input release failed: {e.Message}"); }
-        finally { pressed = null; }
-    }
-
     private async Task Cleanup(bool keep)
     {
-        await ReleaseInput();
-        if (cdp != null)
+        try
         {
-            try { await Call("Browser.close", page: false, cancellation: CancellationToken.None, timeout: 1500); } catch { }
-            cdp.Event -= OnNetworkEvent;
-            await cdp.DisposeAsync();
-        }
-        var stopped = true;
-        if (process != null)
-        {
-            try
+            if (windows != null)
             {
-                if (!process.HasExited)
+                try { windows.Dispose(); } catch (Exception e) { cleanupErrors.Add($"window cleanup failed: {e.Message}"); }
+                windows = null;
+            }
+            if (blocker != null)
+            {
+                try { await blocker.DisposeAsync(); } catch (Exception e) { cleanupErrors.Add($"URL blocker cleanup failed: {e.Message}"); }
+                blocker = null;
+            }
+            if (cdp != null)
+            {
+                try { await Call("Browser.close", page: false, cancellation: CancellationToken.None, timeout: 1500); } catch { }
+                cdp.Event -= OnNetworkEvent;
+                try { await cdp.DisposeAsync(); } catch (Exception e) { cleanupErrors.Add($"CDP cleanup failed: {e.Message}"); }
+            }
+            var stopped = true;
+            if (process != null)
+            {
+                try
                 {
-                    using var deadline = new CancellationTokenSource(3000);
-                    try { await process.WaitForExitAsync(deadline.Token); } catch (OperationCanceledException) { }
-                    if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)); }
+                    if (!process.HasExited)
+                    {
+                        using var deadline = new CancellationTokenSource(3000);
+                        try { await process.WaitForExitAsync(deadline.Token); } catch (OperationCanceledException) { }
+                        if (!process.HasExited) { process.Kill(entireProcessTree: true); await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(3)); }
+                    }
+                    stopped = process.HasExited;
                 }
-                stopped = process.HasExited;
+                catch (Exception e) { stopped = false; cleanupErrors.Add($"CfT cleanup failed: {e.Message}"); }
+                finally { process.Dispose(); }
             }
-            catch (Exception e) { stopped = false; cleanupErrors.Add($"CfT cleanup failed: {e.Message}"); }
-            finally { process.Dispose(); }
-        }
-        if (chromeStderr != null) try { File.WriteAllText(Path.Combine(absoluteRunDir, "chrome-stderr.log"), await chromeStderr.WaitAsync(TimeSpan.FromSeconds(2))); } catch { }
-        if (!keep && stopped && Directory.Exists(profile))
-        {
-            var deleted = false;
-            for (var i = 0; i < 20 && !deleted; i++)
+            if (chromeStderr != null) try { File.WriteAllText(Path.Combine(absoluteRunDir, "chrome-stderr.log"), await chromeStderr.WaitAsync(TimeSpan.FromSeconds(2))); } catch { }
+            if (!keep && !persistent && stopped && Directory.Exists(profile))
             {
-                try { Directory.Delete(profile, recursive: true); deleted = true; }
-                catch (IOException) { await Task.Delay(100); }
-                catch (UnauthorizedAccessException) { await Task.Delay(100); }
+                var deleted = false;
+                for (var i = 0; i < 20 && !deleted; i++)
+                {
+                    try { Directory.Delete(profile, recursive: true); deleted = true; }
+                    catch (IOException) { await Task.Delay(100); }
+                    catch (UnauthorizedAccessException) { await Task.Delay(100); }
+                }
+                if (!deleted) cleanupErrors.Add("temporary profile could not be deleted");
             }
-            if (!deleted) cleanupErrors.Add("temporary profile could not be deleted");
+            foreach (var name in new[] { "cleanup.json", "shutdown.json" })
+            {
+                try
+                {
+                    Json.Write(Path.Combine(absoluteRunDir, name), new JsonObject { ["chromeExited"] = stopped, ["profileRetained"] = Directory.Exists(profile), ["keepArtifacts"] = keep, ["pendingCdpRequests"] = cdp?.PendingCount ?? 0,
+                        ["persistentProfile"] = persistent, ["errors"] = new JsonArray(cleanupErrors.Select(e => (JsonNode?)JsonValue.Create(e)).ToArray()) });
+                }
+                catch (Exception e) { cleanupErrors.Add($"{name} could not be saved: {e.Message}"); }
+            }
         }
-        Json.Write(Path.Combine(absoluteRunDir, "cleanup.json"), new JsonObject { ["chromeExited"] = stopped, ["profileRetained"] = Directory.Exists(profile), ["keepArtifacts"] = keep, ["pendingCdpRequests"] = cdp?.PendingCount ?? 0,
-            ["errors"] = new JsonArray(cleanupErrors.Select(e => (JsonNode?)JsonValue.Create(e)).ToArray()) });
+        finally
+        {
+            try { profileLock?.Dispose(); }
+            finally { profileLock = null; cdp = null; process = null; session = null; chromeStderr = null; }
+        }
     }
 
     private static async Task<string> ReadTail(StreamReader reader)
