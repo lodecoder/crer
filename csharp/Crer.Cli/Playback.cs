@@ -21,6 +21,8 @@ public sealed partial class Playback
     private double width, height;
     private readonly List<string> cleanupErrors = [];
     private Task<string>? chromeStderr;
+    private Task<string>? chromeStdout;
+    private BackgroundProcess? backgroundProcess;
     private JsonObject metadata = new();
     private CancellationToken token;
     private bool persistent;
@@ -188,9 +190,21 @@ public sealed partial class Playback
         ChromeEnvironment.Apply(start);
         metadata["chrome"] = chrome;
         using (var file = File.OpenRead(chrome)) metadata["chromeSha256"] = Convert.ToHexStringLower(await SHA256.HashDataAsync(file, token));
-        process = Process.Start(start) ?? throw new CrerException(3, "CfT process could not start");
-        chromeStderr = ReadTail(process.StandardError);
-        _ = ReadTail(process.StandardOutput);
+        if (s.Window["foreground"]?.GetValue<bool>() == true)
+        {
+            process = Process.Start(start) ?? throw new CrerException(3, "CfT process could not start");
+            chromeStderr = ReadTail(process.StandardError);
+            chromeStdout = ReadTail(process.StandardOutput);
+            metadata["launchActivation"] = "foreground";
+        }
+        else
+        {
+            backgroundProcess = BackgroundProcessLauncher.Start(start);
+            process = backgroundProcess.Process;
+            chromeStderr = ReadTail(backgroundProcess.StandardError);
+            chromeStdout = ReadTail(backgroundProcess.StandardOutput);
+            metadata["launchActivation"] = "show-without-activation";
+        }
         metadata["chromePid"] = process.Id;
         Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
         var watch = Stopwatch.StartNew();
@@ -409,9 +423,15 @@ public sealed partial class Playback
                     stopped = process.HasExited;
                 }
                 catch (Exception e) { stopped = false; cleanupErrors.Add($"CfT cleanup failed: {e.Message}"); }
-                finally { process.Dispose(); }
+                finally { if (backgroundProcess == null) process.Dispose(); }
             }
             if (chromeStderr != null) try { File.WriteAllText(Path.Combine(absoluteRunDir, "chrome-stderr.log"), await chromeStderr.WaitAsync(TimeSpan.FromSeconds(2))); } catch { }
+            if (chromeStdout != null) try { await chromeStdout.WaitAsync(TimeSpan.FromSeconds(2)); } catch { }
+            if (backgroundProcess != null)
+            {
+                try { backgroundProcess.Dispose(); } catch (Exception e) { cleanupErrors.Add($"background process cleanup failed: {e.Message}"); }
+                backgroundProcess = null;
+            }
             if (!keep && !persistent && stopped && Directory.Exists(profile))
             {
                 var deleted = false;
@@ -435,8 +455,13 @@ public sealed partial class Playback
         }
         finally
         {
-            try { profileLock?.Dispose(); }
-            finally { profileLock = null; cdp = null; process = null; session = null; chromeStderr = null; }
+            try { backgroundProcess?.Dispose(); }
+            catch (Exception e) { cleanupErrors.Add($"background process cleanup failed: {e.Message}"); }
+            finally
+            {
+                try { profileLock?.Dispose(); }
+                finally { profileLock = null; cdp = null; process = null; session = null; chromeStderr = null; chromeStdout = null; backgroundProcess = null; }
+            }
         }
     }
 

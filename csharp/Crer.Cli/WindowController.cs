@@ -16,6 +16,7 @@ internal sealed class WindowController : IDisposable
     private int? lastTopmostWarning, lastOpacityWarning, restoreStatus, clearTopmostStatus;
     private uint alpha = 255;
     private bool opacityUsed;
+    private bool restorePerformed;
     private ScenarioLogger logger = new("crer");
 
     public WindowController(string dll)
@@ -54,7 +55,11 @@ internal sealed class WindowController : IDisposable
                 if (topmost && native != null) { clearTopmostStatus = native.SetProcessTopmostOnly((uint)pid, false); topmost = false; }
                 // A user may have switched applications while CfT was starting.
                 // Restore only focus taken by this owned process.
-                if (!configured && native != null && native.IsProcessForeground((uint)pid)) restoreStatus = native.RestoreForegroundWindow(original);
+                if (!configured && native != null)
+                {
+                    restorePerformed = native.IsProcessForeground((uint)pid);
+                    restoreStatus = restorePerformed ? native.RestoreForegroundWindow(original) : 0;
+                }
             }
             configured = true;
             WriteDiagnostic();
@@ -128,6 +133,7 @@ internal sealed class WindowController : IDisposable
                 ["topmostStatus"] = topmostStatus, ["foregroundStatus"] = foregroundStatus, ["topmostAttempts"] = attempts, ["sharedSession"] = shared };
             if (captureError != null) record["captureError"] = captureError;
             if (restoreStatus != null) record["restoreStatus"] = restoreStatus;
+            record["restorePerformed"] = restorePerformed;
             if (clearTopmostStatus != null) record["clearTopmostStatus"] = clearTopmostStatus;
             Json.Write(Path.Combine(directory, "foreground.json"), record);
             Json.Write(Path.Combine(directory, "opacity.json"), new JsonObject { ["alpha"] = alpha, ["requested"] = alpha / 255d, ["applied"] = opacityUsed });
@@ -144,7 +150,7 @@ internal sealed class WindowController : IDisposable
             {
                 if (topmost) clearTopmostStatus = native.SetProcessTopmostOnly((uint)pid, false);
                 if (opacityUsed) native.SetProcessOpacity((uint)pid, 255);
-                if (everForeground) restoreStatus = native.RestoreForegroundWindow(original);
+                if (everForeground) { restoreStatus = native.RestoreForegroundWindow(original); restorePerformed = true; }
                 WriteDiagnostic();
             }
             finally { native.Dispose(); }
