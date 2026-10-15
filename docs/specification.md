@@ -210,6 +210,11 @@ base point -> seed 付き PRNG -> uniform/normal offset -> bounds check -> CDP m
 
 画面座標の再現性は OS のスケーリングに依存する。v1 は CfT を
 `--force-device-scale-factor=1` で起動し、CSS 座標の `devicePixelRatio` を 1 に固定する。
+起動元の Git Bash・ランチャー等から継承した `__COMPAT_LAYER` の `DPIUNAWARE`、`GDIDPISCALING`、
+`HIGHDPIAWARE` は、記録・再生とも CfT 子プロセスの環境から取り除く。これにより Chrome 本来の
+Per-Monitor DPI awareness を維持し、Windows によるウィンドウ全体の bitmap 拡大を防ぐ。
+親プロセスの環境と DPI 以外の互換設定は変更しない。DPR だけでは bitmap 拡大を検出できないため、
+実機テストは物理ウィンドウ矩形と CDP の bounds の一致、記録の物理座標と CSS 座標の一致も確認する。
 さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
 `--disable-save-password-bubble` と password manager の専用プロファイル設定により、ログイン後の
 パスワード保存・漏えい検出ポップアップも抑止する。既存の永続プロファイルには他の設定を残したまま

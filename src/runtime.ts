@@ -1,6 +1,7 @@
 import { executeAtomicAction } from "./actions.ts";
 import { RunArtifactSink } from "./artifacts.ts";
 import { Cdp } from "./cdp.ts";
+import { chromeEnvironment } from "./chrome_environment.ts";
 import {
   EnvironmentError,
   ExecutionAbortedError,
@@ -545,6 +546,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   const port = (reservation.addr as Deno.NetAddr).port;
   reservation.close();
   const p = new Deno.Command(options.chromePath, {
+    env: chromeEnvironment(),
     args: [
       `--remote-debugging-port=${port}`,
       "--remote-debugging-address=127.0.0.1",

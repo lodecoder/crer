@@ -307,6 +307,9 @@ scrollbar幅を座標倍率へ混ぜないため、記録位置とCDP再生位�
 YAMLを再生成するとscrollbar由来のズレを補正できます。要求contentサイズがない古い記録だけは従来変換へ
 fallbackするため、高精度が必要なら新しいDLLで記録し直してください。
 
+Windows の拡大率が 200% でも CfT は 100% で起動します。Git Bash やランチャーから引き継いだ
+DPI 互換モードは CfT の起動時に取り除き、枠・ページ全体が Windows によって拡大されることを防ぎます。
+
 `record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
 
 記録した Tab は `{ do: key, key: Tab }`、Space は `{ do: key, key: Space }` として再生します。

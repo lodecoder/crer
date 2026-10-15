@@ -26,6 +26,17 @@ CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効�
 
 ## 1. 成功再生とカーソル
 
+DPI 互換モードの回帰テストは Windows の拡大率 200% の環境で次を実行する。
+テスト内で `DPIUNAWARE` 等の環境を付与し、枠の物理サイズと CDP のサイズが一致すること、
+ページ倍率が 1 であること、記録時も物理 pixel と CSS pixel が一致することを確認する。
+Git Bash 経由でも同じテストを実行できる。Windows の表示設定自体は変更しない。
+
+```powershell
+$env:CRER_TEST_CHROME = $env:CRER_CHROME
+deno test -A tests/display_scale_integration_test.ts
+Remove-Item Env:CRER_TEST_CHROME
+```
+
 ログインフォームのキー操作は次で検証する。記録形式のメールアドレス入力・Tab・パスワード入力・
 Tab 2回・Space・Tab・Space を normalize して実機再生し、フォーカス順、チェックボックス ON、
 submit を確認する。パスワード内の空白入力と、旧記録の Unicode 空白・VK_SPACE の両形式も検証する。

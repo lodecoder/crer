@@ -1,5 +1,6 @@
 import { BrowserSessions } from "./browser_sessions.ts";
 import { Cdp } from "./cdp.ts";
+import { chromeEnvironment } from "./chrome_environment.ts";
 import { commandTakesFile, validateCommandOptions } from "./cli.ts";
 import {
   EnvironmentError,
@@ -758,6 +759,7 @@ async function main() {
     reservation.close();
     await prepareChromeProfile(profile);
     const chrome = new Deno.Command(chromePath(), {
+      env: chromeEnvironment(),
       args: [
         `--remote-debugging-port=${port}`,
         "--remote-debugging-address=127.0.0.1",
