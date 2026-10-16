@@ -118,11 +118,25 @@ await Test("classifies and continues a plan timeout", () =>
     Check(!PlanPolicy.ShouldAbort(results, new() { ["timeout"] = "continue" }), "timeout continue was ignored");
     Check(PlanPolicy.AggregateExitCode(results) == 4, "timeout exit code changed"); return Task.CompletedTask;
 });
-await Test("always aborts an environment failure", () =>
+await Test("environment failures respect explicit and default policies while retaining exit code three", () =>
 {
     var results = new[] { Result(3, "CDP disconnected") };
-    Check(PlanPolicy.FailureKind(results) == "environment" && PlanPolicy.ShouldAbort(results, new() { ["environment"] = "continue" }), "environment failure continued");
+    Check(PlanPolicy.FailureKind(results) == "environment" && PlanPolicy.ShouldAbort(results), "environment default abort changed");
+    Check(!PlanPolicy.ShouldAbort(results, new() { ["environment"] = "continue" }), "environment continue was ignored");
+    Check(!PlanPolicy.ShouldAbort(results, new() { ["default"] = "continue" }), "environment default continue was ignored");
+    Check(PlanPolicy.ShouldAbort(results, new() { ["default"] = "continue", ["environment"] = "abort" }), "environment explicit abort was ignored");
     Check(PlanPolicy.AggregateExitCode(results) == 3, "environment exit code changed"); return Task.CompletedTask;
+});
+await Test("a continued environment failure does not hide another failure policy", () =>
+{
+    var scenarioResults = new[] { Result(3, "CDP disconnected"), Result(4, "assertion failed") };
+    var timeoutResults = new[] { Result(3, "CDP disconnected"), Result(4, "plan:timeout:worker_ms") };
+    Check(PlanPolicy.ShouldAbort(scenarioResults, new() { ["environment"] = "continue" }), "continued environment failure hid scenario abort");
+    Check(PlanPolicy.ShouldAbort(timeoutResults, new() { ["environment"] = "continue" }), "continued environment failure hid timeout abort");
+    Check(!PlanPolicy.ShouldAbort(scenarioResults, new() { ["environment"] = "continue", ["scenario_failure"] = "continue" }), "all-continue mixed results aborted");
+    Check(!PlanPolicy.ShouldAbort(timeoutResults, new() { ["environment"] = "continue", ["timeout"] = "continue" }), "all-continue mixed timeout results aborted");
+    Check(PlanPolicy.AggregateExitCode(scenarioResults) == 3 && PlanPolicy.AggregateExitCode(timeoutResults) == 3, "mixed environment exit priority changed");
+    return Task.CompletedTask;
 });
 await Test("prefers an interrupt exit code", () =>
 {
@@ -174,6 +188,63 @@ try
         result = await PlanRunner.Run(ValidPlan(Serial(Leaf(failureFile), Leaf(successFile)), new() { ["scenario_failure"] = "continue" }), Options(), "fake", default, () => new FakePlayback(Play));
         Same(started, "failure", "success"); Check(result.Code == 4 && result.Results.Count == 2, "serial continue aggregation failed");
     });
+    await Test("serial environment failures continue only when their resolved policy allows it", async () =>
+    {
+        foreach (var (policy, continues) in new[]
+        {
+            (new JsonObject(), false),
+            (new JsonObject { ["environment"] = "continue" }, true),
+            (new JsonObject { ["default"] = "continue" }, true),
+            (new JsonObject { ["default"] = "continue", ["environment"] = "abort" }, false),
+        })
+        {
+            var started = new List<string>();
+            Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+            {
+                started.Add(scenario.Name);
+                return Task.FromResult(scenario.Name == "failure" ? Result(3, "Initial navigation failed") : Result());
+            }
+            var result = await PlanRunner.Run(ValidPlan(Serial(Leaf(failureFile), Leaf(successFile)), policy), Options(), "fake", default, () => new FakePlayback(Play));
+            Same(started, continues ? ["failure", "success"] : ["failure"]);
+            Check(result.Code == 3 && result.Results.Count == (continues ? 2 : 1), "environment continuation or aggregate exit code changed");
+        }
+    });
+    await Test("parallel environment continue preserves running siblings and subsequent leaves", async () =>
+    {
+        var siblingStarted = Signal(); var continuationStarted = Signal(); var siblingCancelled = false;
+        var started = new ConcurrentQueue<string>();
+        async Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+        {
+            started.Enqueue(scenario.Name);
+            if (scenario.Name == "failure") { await siblingStarted.Task; return Result(3, "Initial navigation failed"); }
+            if (scenario.Name == "success") { continuationStarted.TrySetResult(); return Result(); }
+            siblingStarted.TrySetResult();
+            try { await continuationStarted.Task.WaitAsync(token); }
+            catch (OperationCanceledException) { siblingCancelled = true; return Result(5, "cancelled"); }
+            return Result();
+        }
+        var result = await PlanRunner.Run(ValidPlan(Parallel(false, Serial(Leaf(failureFile), Leaf(successFile)), Leaf(otherFile)),
+            new() { ["environment"] = "continue" }, maximum: 2), Options(), "fake", default, () => new FakePlayback(Play));
+        Same(result.Results.OfType<JsonObject>().Select(item => Json.Number(item["code"])), 3d, 0d, 0d);
+        Check(started.Count == 3 && !siblingCancelled && result.Code == 3, "environment continue cancelled a running sibling or lost the continuation");
+    });
+    await Test("parallel environment abort cancels running siblings and leaves queued work unstarted", async () =>
+    {
+        var siblingStarted = Signal(); var drained = false; var started = new ConcurrentQueue<string>();
+        async Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+        {
+            started.Enqueue(scenario.Name);
+            if (scenario.Name == "failure") { await siblingStarted.Task; return Result(3, "Initial navigation failed"); }
+            siblingStarted.TrySetResult();
+            try { await Task.Delay(Timeout.Infinite, token); } catch (OperationCanceledException) { }
+            drained = true; return Result(5, "cancelled");
+        }
+        var result = await PlanRunner.Run(ValidPlan(Parallel(false, Leaf(failureFile), Leaf(otherFile), Leaf(successFile)),
+            new() { ["default"] = "continue", ["environment"] = "abort" }, maximum: 2), Options(), "fake", default, () => new FakePlayback(Play));
+        Same(started.OrderBy(name => name), "failure", "other");
+        Same(result.Results.OfType<JsonObject>().Select(item => Json.Number(item["code"])), 3d, 4d);
+        Check(drained && result.Code == 3, "environment abort did not cancel/drain running work or lost exit priority");
+    });
     await Test("worker timeout cancels and classifies the completed worker result", async () =>
     {
         var started = new List<string>(); var drained = false;
@@ -201,6 +272,21 @@ try
         FakePlayback Factory() { var item = new FakePlayback(Play); instances.Add(item); return item; }
         var result = await PlanRunner.Run(ValidPlan(Serial(Leaf(persistentFile), Leaf(persistentNextFile)), reuse: true), Options(), "fake", default, Factory);
         Same(calls, "persistent", "persistentNext"); Check(result.Code == 0 && instances.Count == 1 && instances[0].Closes == 1 && instances[0].FocusPolicy == "before-step", "session reuse/lifetime/focus failed");
+    });
+    await Test("same-profile playback owner executes the next leaf after a continued environment failure", async () =>
+    {
+        var instances = new List<FakePlayback>(); var calls = new List<string>();
+        Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+        {
+            Check(retain && !token.IsCancellationRequested, "continued persistent leaf lost retention or received cancellation");
+            calls.Add(scenario.Name);
+            return Task.FromResult(scenario.Name == "persistent" ? Result(3, "Initial navigation failed") : Result());
+        }
+        FakePlayback Factory() { var item = new FakePlayback(Play); instances.Add(item); return item; }
+        var result = await PlanRunner.Run(ValidPlan(Serial(Leaf(persistentFile), Leaf(persistentNextFile)),
+            new() { ["environment"] = "continue" }, reuse: true), Options(), "fake", default, Factory);
+        Same(calls, "persistent", "persistentNext");
+        Check(result.Code == 3 && instances.Count == 1 && instances[0].Closes == 1, "continued environment failure changed profile ownership or final cleanup");
     });
     await Test("same-profile work serializes before entering the global gate", async () =>
     {
@@ -230,6 +316,23 @@ try
         FakePlayback Factory() { var playback = new FakePlayback(Play, () => Check(drained, "session closed while sibling was running")); instances.Add(playback); return playback; }
         var result = await PlanRunner.Run(ValidPlan(Parallel(true, Leaf(persistentFile), Leaf(otherFile), Leaf(successFile)), new() { ["default"] = "continue" }, reuse: true, maximum: 2), Options(), "fake", default, Factory);
         Check(started.Count == 2 && drained && instances[0].Closes == 1 && result.Code == 4, "fail-fast failed to cancel/drain or queued leaf started");
+    });
+    await Test("parallel fail-fast overrides environment continue and keeps exit code three", async () =>
+    {
+        var siblingStarted = Signal(); var drained = false; var started = new ConcurrentQueue<string>();
+        async Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+        {
+            started.Enqueue(scenario.Name);
+            if (scenario.Name == "failure") { await siblingStarted.Task; return Result(3, "Initial navigation failed"); }
+            siblingStarted.TrySetResult();
+            try { await Task.Delay(Timeout.Infinite, token); } catch (OperationCanceledException) { }
+            drained = true; return Result(5, "cancelled");
+        }
+        var result = await PlanRunner.Run(ValidPlan(Parallel(true, Leaf(failureFile), Leaf(otherFile), Leaf(successFile)),
+            new() { ["environment"] = "continue" }, maximum: 2), Options(), "fake", default, () => new FakePlayback(Play));
+        Same(started.OrderBy(name => name), "failure", "other");
+        Same(result.Results.OfType<JsonObject>().Select(item => Json.Number(item["code"])), 3d, 4d);
+        Check(drained && result.Code == 3, "fail-fast did not override environment continue or failed to drain running work");
     });
     await Test("invalid sibling scenario aborts and drains active workers", async () =>
     {

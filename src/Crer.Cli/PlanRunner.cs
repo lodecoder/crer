@@ -23,10 +23,12 @@ public static class PlanPolicy
     }
     public static bool ShouldAbort(IEnumerable<JsonObject> results, JsonObject? policy = null)
     {
-        var kind = FailureKind(results);
-        if (kind == null) return false;
-        if (kind == "environment") return true;
-        return Json.Text(policy?[kind] ?? policy?["default"], "abort") == "abort";
+        // ネストした job に複数種の失敗があっても、continue の結果で別の abort を隠さない。
+        return results.Any(result =>
+        {
+            var kind = FailureKind([result]);
+            return kind != null && Json.Text(policy?[kind] ?? policy?["default"], "abort") == "abort";
+        });
     }
     public static int AggregateExitCode(IEnumerable<JsonObject> results)
     {

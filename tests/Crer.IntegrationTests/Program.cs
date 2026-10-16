@@ -242,7 +242,8 @@ await Test("startup", "public three-way delayed startup and same-profile navigat
         for (var index = 1; index <= 2; index++)
         {
             var name = label + index;
-            var scenario = Scenario(name, fixture.Base + "/startup/" + name, profile, null, Wait("ready"), Idle());
+            var scenario = Scenario(name, fixture.Base + "/startup/" + name + "?private=crer-network-query-secret", profile, null, Wait("ready"), Idle());
+            scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 0 } };
             if (label != "startup-c") scenario["browser"]!["block_urls"] = new JsonArray("startup-blocked\\.svg");
             scenarios.Add(Leaf(Write(name, scenario)));
         }
@@ -266,15 +267,83 @@ await Test("startup", "public three-way delayed startup and same-profile navigat
         Check(Json.Text(initialLaunch["targetId"]) == Json.Text(finalLaunch["targetId"]) && Json.Text(initialLaunch["sessionId"]) == Json.Text(finalLaunch["sessionId"]), "delayed reuse replaced its target/session: " + label);
         Check(processes.Add(Json.Number(initial["chromePid"])) && endpoints.Add(Json.Text(initial["cdpEndpoint"])), "parallel delayed startup shared a browser process or CDP endpoint");
         Check(fixture.Tokens.TryGetValue(label + "1", out var token) && fixture.Tokens.TryGetValue(label + "2", out var reusedToken) && token == reusedToken, "delayed same-profile navigation lost sessionStorage: " + label);
+        foreach (var result in new[] { first, last })
+        {
+            var startup = Read(RunDirectory(result), "startup.json"); var network = startup["network"]!;
+            Check(Json.Number(network["documentRequests"]) == 1 && Json.Number(network["documentResponses"]) == 1,
+                "startup document diagnostics were missing or retained from the previous scenario: " + label);
+            var trace = File.ReadAllText(Path.Combine(RunDirectory(result), "network.ndjson"));
+            var records = trace.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!).ToArray();
+            Check(records.Any(record => Json.Text(record["method"]) == "Network.responseReceived" && Json.Text(record["type"]) == "Document" && Json.Number(record["status"]) == 200), "network response status was not recorded: " + label);
+            foreach (var hidden in new[] { fixture.Base, "crer-network-query-secret", "crer-network-header-secret", "crer-network-body-secret" })
+                Check(!startup.ToJsonString().Contains(hidden, StringComparison.Ordinal) && !trace.Contains(hidden, StringComparison.Ordinal), "network diagnostics exposed a URL, header or body: " + label);
+        }
         Cleanup(last);
     }
     Check(fixture.StartupOverlapped, "the three delayed initial documents did not overlap");
+});
+
+await Test("startup", "public startup deadline preserves environment continuation and replaces its browser", async () =>
+{
+    var profile = Profile("startup-deadline");
+    var stalled = Scenario("startup-deadline1", fixture.Base + "/startup-hang/startup-deadline1", profile, null, Wait("ready"));
+    stalled["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 6000 } };
+    var slow = Write("startup-deadline1", stalled);
+    var fast = Write("startup-deadline2", Scenario("startup-deadline2", fixture.Base + "/window", profile, null, Wait("ready")));
+    var other = Write("startup-deadline-other", Scenario("startup-deadline-other", fixture.Base + "/window", Profile("startup-deadline-other"), null, Wait("ready"), Sleep(14000)));
+    var plan = Plan(Parallel(false, Serial(Leaf(slow), Leaf(fast)), Leaf(other)));
+    plan["on_failure"] = new JsonObject { ["default"] = "abort", ["environment"] = "continue" };
+    var path = Write("startup-deadline-plan", plan);
+    var (_, value) = await Run("startup-deadline", 3, "run", path, "--ignore-viewport-mismatch");
+    var results = value.AsArray();
+    Check(results.Count == 3, "environment continue discarded a scenario after the startup deadline");
+    JsonNode Result(string label) => results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(label))!;
+    var timedOut = Result("startup-deadline1"); var continued = Result("startup-deadline2"); var unrelated = Result("startup-deadline-other");
+    Check(Json.Number(timedOut["code"]) == 3 && Json.Number(continued["code"]) == 0 && Json.Number(unrelated["code"]) == 0, "startup deadline aborted the continuation or an unrelated profile");
+    Check(timedOut["failures"]!.AsArray().Any(failure => Json.Text(failure) == "CfT startup timed out (stage: navigation)"), "startup deadline did not report its navigation stage");
+    var startup = Read(RunDirectory(timedOut), "startup.json"); var network = startup["network"]!;
+    Check(Json.Text(startup["status"]) == "failed" && Json.Text(startup["stage"]) == "navigation"
+        && fixture.Requests.Contains("/startup-hang/startup-deadline1"), "startup deadline expired before the stalled local navigation");
+    Check(Json.Number(network["documentRequests"]) >= 1 && Json.Number(network["documentResponses"]) == 0 && Json.Number(network["pending"]) >= 1,
+        "startup diagnostics did not distinguish a pending document from a browser launch failure");
+    var original = Read(RunDirectory(timedOut), "run.json"); var replacement = Read(RunDirectory(continued), "run.json");
+    Check(replacement["browserSession"]!["reused"]!.GetValue<bool>() == false && Json.Number(original["chromePid"]) != Json.Number(replacement["chromePid"]), "startup deadline left its failed browser reusable");
+    foreach (var result in results) Cleanup(result!);
+});
+
+await Test("startup", "public startup network failure records its browser error without request data", async () =>
+{
+    var scenario = Scenario("startup-network-failure", fixture.Base + "/startup-close/startup-network-failure?private=crer-network-query-secret");
+    var path = Write("startup-network-failure", scenario);
+    var (_, result) = await Run("startup-network-failure", 3, "play", path);
+    var startup = Read(RunDirectory(result), "startup.json"); var network = startup["network"]!;
+    var error = Json.Text(network["lastError"]);
+    Check(Json.Number(network["failed"]) >= 1 && error.StartsWith("net::ERR_", StringComparison.Ordinal), "startup network failure omitted its browser error");
+    var records = File.ReadAllLines(Path.Combine(RunDirectory(result), "network.ndjson")).Select(line => JsonNode.Parse(line)!).ToArray();
+    Check(records.Any(record => Json.Text(record["method"]) == "Network.loadingFailed" && Json.Text(record["errorText"]) == error), "network failure trace omitted the error in startup diagnostics");
+    Check(!startup.ToJsonString().Contains("crer-network-query-secret", StringComparison.Ordinal)
+        && records.All(record => !record.ToJsonString().Contains("crer-network-query-secret", StringComparison.Ordinal)), "network failure diagnostics exposed request data");
+    Cleanup(result);
+});
+
+await Test("startup", "public startup deadline ends before scenario steps", async () =>
+{
+    // 準備完了後の sleep が起動期限をまたいでも、シナリオのトークンは取消されない。
+    var scenario = Scenario("startup-deadline-steps", fixture.Base + "/window", null, null,
+        Wait("ready"), Sleep(7000), new() { ["do"] = "log", ["message"] = "after startup deadline" });
+    scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 6000 } };
+    var path = Write("startup-deadline-steps", scenario);
+    var (_, result) = await Run("startup-deadline-steps", 0, "play", path);
+    var steps = File.ReadAllLines(Path.Combine(RunDirectory(result), "steps.ndjson")).Select(line => JsonNode.Parse(line)!).ToArray();
+    Check(steps.Length == 3 && steps.All(step => Json.Text(step["status"]) == "ok") && Json.Text(steps[^1]["do"]) == "log", "startup deadline cancelled a step after browser setup");
+    Cleanup(result);
 });
 
 await Test("startup", "public startup worker timeout cancels navigation and replaces its browser", async () =>
 {
     var profile = Profile("startup-cancel");
     var delayed = Scenario("startup-cancel1", fixture.Base + "/startup/startup-cancel1", profile, null, Wait("ready"));
+    delayed["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 0 } };
     delayed["browser"]!["block_urls"] = new JsonArray("startup-blocked\\.svg");
     var slow = Write("startup-cancel1", delayed);
     var fast = Write("startup-cancel2", Scenario("startup-cancel2", fixture.Base + "/window", profile, null, Wait("ready")));
@@ -283,6 +352,7 @@ await Test("startup", "public startup worker timeout cancels navigation and repl
     var results = value.AsArray();
     Check(results.Count == 2 && Json.Number(results[0]!["code"]) == 4 && Json.Number(results[1]!["code"]) == 0, "startup timeout did not permit the fast continuation");
     Check(results[0]!["failures"]!.AsArray().Any(failure => Json.Text(failure) == "plan:timeout:worker_ms"), "startup worker timeout marker missing");
+    Check(!results[0]!["failures"]!.AsArray().Any(failure => Json.Text(failure).Contains("CfT startup timed out", StringComparison.Ordinal)), "unlimited startup replaced the worker cancellation reason");
     var cancelled = Read(RunDirectory(results[0]!), "run.json"); var continued = Read(RunDirectory(results[1]!), "run.json");
     Check(continued["browserSession"]!["reused"]!.GetValue<bool>() == false && Json.Number(cancelled["chromePid"]) != Json.Number(continued["chromePid"]), "cancelled startup browser was reused by the next scenario");
     Cleanup(results[0]!); Cleanup(results[1]!);

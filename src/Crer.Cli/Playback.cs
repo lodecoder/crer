@@ -18,6 +18,8 @@ public sealed partial class Playback
     private string profile = "";
     private readonly HashSet<string> requests = [];
     private readonly object networkLock = new();
+    private int networkRequests, networkResponses, networkFinished, networkFailed, documentRequests, documentResponses;
+    private string? lastNetworkError;
     private long lastNetworkActivity = Environment.TickCount64;
     private double width, height;
     private readonly List<string> cleanupErrors = [];
@@ -96,8 +98,15 @@ public sealed partial class Playback
         if (options.OpacityOverride != null) metadata["windowOpacityOverride"] = options.OpacityOverride;
         Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
         File.WriteAllText(Path.Combine(absoluteRunDir, "steps.ndjson"), "");
+        lock (networkLock)
+        {
+            requests.Clear(); lastNetworkActivity = Environment.TickCount64;
+            networkRequests = networkResponses = networkFinished = networkFailed = documentRequests = documentResponses = 0;
+            lastNetworkError = null;
+        }
         startupWatch.Restart();
-        startupDiagnostic = new() { ["status"] = "starting", ["reused"] = reused, ["stages"] = new JsonArray() };
+        var startupMs = (int)Json.Number(s.Playback["timeouts"]?["startup_ms"], 60000);
+        startupDiagnostic = new() { ["status"] = "starting", ["reused"] = reused, ["timeoutMs"] = startupMs, ["stages"] = new JsonArray() };
         SetStartupStage("initializing");
         try
         {
@@ -106,7 +115,7 @@ public sealed partial class Playback
             {
                 // 初期応答の待機には通常の CDP 操作の10秒ではなく、起動全体の期限を適用する。
                 // 利用者やワーカーからの取消しは、遷移と文書の準備待ちを含む全段階に適用する。
-                startup.CancelAfter(TimeSpan.FromSeconds(60));
+                if (startupMs > 0) startup.CancelAfter(startupMs);
                 token = startup.Token;
                 try
                 {
@@ -207,6 +216,14 @@ public sealed partial class Playback
         try
         {
             startupDiagnostic["elapsedMs"] = startupWatch.Elapsed.TotalMilliseconds;
+            lock (networkLock)
+            {
+                var network = new JsonObject { ["requests"] = networkRequests, ["responses"] = networkResponses,
+                    ["finished"] = networkFinished, ["failed"] = networkFailed, ["pending"] = requests.Count,
+                    ["documentRequests"] = documentRequests, ["documentResponses"] = documentResponses };
+                if (lastNetworkError != null) network["lastError"] = lastNetworkError;
+                startupDiagnostic["network"] = network;
+            }
             Json.Write(Path.Combine(absoluteRunDir, "startup.json"), startupDiagnostic);
         }
         catch { }
@@ -424,10 +441,36 @@ public sealed partial class Playback
         if (id != session) return;
         lock (networkLock)
         {
-            if (method == "Network.requestWillBeSent") { requests.Add(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64; }
+            if (method == "Network.requestWillBeSent")
+            {
+                requests.Add(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64;
+                networkRequests++;
+                if (Json.Text(p["type"]) == "Document") documentRequests++;
+            }
+            if (method == "Network.responseReceived")
+            {
+                networkResponses++;
+                if (Json.Text(p["type"]) == "Document") documentResponses++;
+            }
             if (method is "Network.loadingFinished" or "Network.loadingFailed") { requests.Remove(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64; }
-            if (method is "Network.requestWillBeSent" or "Network.loadingFinished" or "Network.loadingFailed")
-                File.AppendAllText(Path.Combine(absoluteRunDir, "network.ndjson"), new JsonObject { ["at"] = DateTime.UtcNow.ToString("O"), ["method"] = method, ["requestId"] = p["requestId"]?.DeepClone(), ["pending"] = requests.Count }.ToJsonString() + "\n");
+            if (method == "Network.loadingFinished") networkFinished++;
+            if (method == "Network.loadingFailed") networkFailed++;
+            if (method is "Network.requestWillBeSent" or "Network.responseReceived" or "Network.loadingFinished" or "Network.loadingFailed")
+            {
+                // URL、ヘッダー、本文を保存せず、通信の開始・応答・失敗だけを区別する。
+                var trace = new JsonObject { ["at"] = DateTime.UtcNow.ToString("O"), ["method"] = method,
+                    ["requestId"] = p["requestId"]?.DeepClone(), ["pending"] = requests.Count };
+                if (p["type"] != null) trace["type"] = p["type"]!.DeepClone();
+                if (method == "Network.responseReceived") trace["status"] = p["response"]?["status"]?.DeepClone();
+                if (method == "Network.loadingFailed")
+                {
+                    var error = Json.Text(p["errorText"]);
+                    if (error.Length <= 128 && Regex.IsMatch(error, "^net::ERR_[A-Z0-9_]+$", RegexOptions.CultureInvariant))
+                        trace["errorText"] = lastNetworkError = error;
+                    trace["canceled"] = p["canceled"]?.DeepClone();
+                }
+                File.AppendAllText(Path.Combine(absoluteRunDir, "network.ndjson"), trace.ToJsonString() + "\n");
+            }
         }
     }
 

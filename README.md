@@ -81,6 +81,18 @@ plan 全体の不透明度は `run` 専用の `--plan-window-opacity-override` �
 別の profile や ephemeral scenario を挟んでも保持します。ephemeral scenario 自体は再利用しません。
 タイムアウト・続行不能エラー時は対象 profile の CfT を閉じ、同じ profile の次の実行時に起動し直します。
 
+plan の `on_failure.environment: continue` は、環境エラーになった scenario の終了と後始末を待ち、
+後続 scenario と他の並列 job を続行します。最終終了コードは `3` です。
+省略時は `on_failure.default`（既定 `abort`）に従い、`fail_fast: true` は `continue` より優先します。
+
+初回・再利用時のページ準備は既定60秒まで待機します。応答の遅いページでは scenario に
+`playback.timeouts.startup_ms` を指定できます。`0` は無制限で、中断と plan の worker timeout は有効です。
+
+```yaml
+playback:
+  timeouts: { startup_ms: 180000 } # 起動処理全体の期限を3分に設定
+```
+
 ```yaml
 version: 1
 name: daily

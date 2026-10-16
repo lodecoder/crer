@@ -69,6 +69,13 @@ internal sealed class FixtureServer : IAsyncDisposable
                     body = "ok"; type = "text/plain; charset=utf-8";
                 }
                 else if (path == "/redirect") { status = "302 Found"; headers = "Location: " + Base + "/ad.svg?redirected=1\r\n"; body = "redirect"; }
+                else if (path.StartsWith("/startup-hang/"))
+                {
+                    // 応答ヘッダーを送らず、初期遷移が起動期限まで待機する状態を再現する。
+                    await Task.Delay(Timeout.Infinite, lifetime.Token);
+                    return;
+                }
+                else if (path.StartsWith("/startup-close/")) return;
                 else if (path.EndsWith(".svg")) { type = "image/svg+xml"; body = "<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='red'/></svg>"; }
                 else if (path.StartsWith("/initial-viewport/"))
                 {
@@ -99,7 +106,8 @@ internal sealed class FixtureServer : IAsyncDisposable
                     // 従来の文書・CDP の固定10秒期限を超えつつ、ブラウザーの起動期限には余裕を残す。
                     try { await Task.Delay(12000, lifetime.Token); }
                     finally { if (initial) Interlocked.Decrement(ref startupActive); }
-                    body = "<!doctype html><title>crer delayed startup</title><p role='status'>ready</p><img src='/startup-blocked.svg'><script>const token=sessionStorage.token ||= crypto.randomUUID();fetch('/seen?name=" + name + "&token='+token);</script>";
+                    headers = "X-Crer-Test-Private: crer-network-header-secret\r\n";
+                    body = "<!doctype html><!-- crer-network-body-secret --><title>crer delayed startup</title><p role='status'>ready</p><img src='/startup-blocked.svg'><script>const token=sessionStorage.token ||= crypto.randomUUID();fetch('/seen?name=" + name + "&token='+token);</script>";
                 }
                 else if (path.StartsWith("/reuse/"))
                 {

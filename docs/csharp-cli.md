@@ -96,12 +96,20 @@ functions / params / args / call の schema と実行系を移植している。
 
 plan は共通の同時実行上限、profile ごとの排他、協調停止を持つ。
 same-profile reuse では URL・window・display・遮断を再適用し、plan の最後に全 CfT を閉じる。
-初回・再利用時のページ遷移と初期文書の準備待ちは、起動処理全体の60秒期限を共有する。
+初回・再利用時のページ遷移と初期文書の準備待ちは、起動処理全体の期限（既定60秒）を共有する。
+scenario の `playback.timeouts.startup_ms` で変更できる。値は0〜2147483647の整数ミリ秒で、
+`0` は無制限。利用者の中断と plan の `worker_ms` はこの設定にかかわらず有効で、
+準備完了後の step 実行には起動期限を適用しない。既存の `navigation_ms` は引き続き受理のみとする。
 並列起動時などに応答が10秒を超えても待機し、利用者の中断や plan の worker timeout には従う。
 CfT は空の app ウィンドウで起動し、位置・content size・不透明度・前景設定を適用してからページへ遷移する。
 再利用時も同じ順序で設定するため、ページの最初のスクリプトから指定の content size を参照できる。
 重なったウィンドウで描画フレームが停止しないよう `--disable-backgrounding-occluded-windows` を指定する。
-起動の各段階と経過時間は `startup.json` に記録し、タイムアウト時も失敗画像の取得を試みる。
+起動の各段階、経過時間、設定した期限、通信の開始・応答・終了・失敗件数は `startup.json` に記録し、
+タイムアウト時も失敗画像の取得を試みる。`network.documentRequests` / `documentResponses` は
+iframe を含む文書要求の件数で、URL・ヘッダー・本文は追加の診断に保存しない。
+`network.ndjson` には応答の HTTP 状態と安全な `net::ERR_*` コードも記録する。
+要求開始後に文書応答が0件のまま `navigation` で停止した場合は、ページ応答を待っている状態を示す。
+DNS・TLS・サーバーのいずれが原因かは、追加の調査で確認する。
 viewport は `window.viewport ?? window.content` と実測比較する。
 occluded renderer のリサイズが遅延した場合は、読み取り専用キャプチャ後に再測定する。
 一致条件は緩和しない。foreground always / once と opacity は独立して制御する。

@@ -268,7 +268,7 @@ playback:
     radius_px: 3
     min_distance_from_edge_px: 4
     out_of_bounds: fail               # fail | disable-for-step
-  timeouts: { navigation_ms: 30000, action_ms: 10000 }
+  timeouts: { navigation_ms: 30000, action_ms: 10000, startup_ms: 60000 }
   step_delay_ms: 1000               # 任意。各操作後（最後の操作後を含む）の待機時間
   on_failure:                       # ステップ失敗種別ごとの既定動作
     default: abort                   # abort | continue
@@ -453,6 +453,12 @@ artifact screenshot も保存し、標準出力の template 行末に `(reused)`
 目視確認には `1000` 以上を推奨する。CLI の `play --step-delay-ms <ms>` を指定すると、YAML の値を
 その実行だけ上書きする。これは記録済みの `sleep` に**追加する**目視用の固定待機である。
 
+`playback.timeouts.startup_ms` は、初回起動・session 再利用時のページ遷移と初期文書の準備を含む
+起動処理全体の期限である。0〜2147483647の整数ミリ秒を受理し、既定は60000、`0` は無制限とする。
+準備完了後の step 実行には適用しない。利用者の中断と plan の `timeouts.worker_ms` は常に有効である。
+起動期限超過は環境エラー（終了コード `3`）として当該ブラウザーを破棄し、plan の `environment` ポリシーで
+後続処理を決める。`navigation_ms` の従来の受理のみという扱いは変更しない。
+
 `playback.on_failure` は、続行可能なステップ失敗に対するポリシーである。キーは `default`、
 `navigation`、`timeout`、`action`、`assertion`、`jitter_bounds`、`template` のみを許可し、値は `abort` または
 `continue` とする。該当種別の設定を優先し、なければ `default`、さらに `default` もなければ
@@ -502,7 +508,10 @@ run:
 キーは `default`、`scenario_failure`、`timeout`、`environment` で、解決規則は scenario と同じで
 ある。`continue` なら失敗を集約して次項へ進む。`parallel` は全 job の完了を待ち、失敗を集約する。
 `fail_fast: true` は未開始 job を中止し、実行中 job には CDP の graceful close を要求する。環境
-喪失など続行不能な失敗は常に当該 job を停止する。各 leaf に `run-id`、専用プロファイル、専用
+喪失など続行不能な失敗は常に当該 scenario を停止し、ブラウザーを破棄する。
+`environment: continue` の場合も、失敗した scenario 内の操作は再開せず、次の scenario へ進む。
+同じ profile の次回実行ではブラウザーを起動し直し、他の並列 job は継続する。
+各 leaf に `run-id`、専用プロファイル、専用
 artifacts ディレクトリを割り当てる。
 
 plan の `on_failure` では、`scenario_failure` は child scenario が終了コード `4` で終わった場合、

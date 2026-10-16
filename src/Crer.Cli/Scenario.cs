@@ -120,9 +120,11 @@ public sealed class Scenario
         if (playback.ContainsKey("timeouts"))
         {
             var timeouts = Mapping(playback["timeouts"], "playback.timeouts");
-            Keys(timeouts, "playback.timeouts", "navigation_ms", "action_ms");
+            Keys(timeouts, "playback.timeouts", "navigation_ms", "action_ms", "startup_ms");
             OptionalNonNegative(timeouts, "navigation_ms", "playback.timeouts");
             OptionalNonNegative(timeouts, "action_ms", "playback.timeouts");
+            if (timeouts.ContainsKey("startup_ms") && !IntegerOrParameter(timeouts["startup_ms"], [], 0, int.MaxValue))
+                throw Invalid("playback.timeouts.startup_ms must be an integer from 0 to 2147483647");
         }
         if (playback.ContainsKey("log_color") && String(playback["log_color"]) is not ("default" or "black" or "red" or "green" or "yellow" or "blue" or "magenta" or "cyan" or "white"))
             throw Invalid("playback.log_color must be one of: default, black, red, green, yellow, blue, magenta, cyan, white");

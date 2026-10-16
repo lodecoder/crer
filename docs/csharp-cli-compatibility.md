@@ -45,7 +45,12 @@ Windows 操作は `src/Crer.Windows` を通常の C# 参照で組み込み、`cr
 - `playback.speed` と `timeouts.navigation_ms` は旧 runtime に参照箇所がない。
   milestone の navigation_ms による新たな起動 deadline を撤回し、これらの設定値は使わない。
   初期ページの応答が10秒を超える3並列実行での失敗を受け、初回・再利用時の遷移と文書の準備待ちは
-  起動処理全体の60秒期限を共有する。viewport の検証は文書の準備後に行う。
+  起動処理全体の期限（既定60秒）を共有する。`playback.timeouts.startup_ms` で変更でき、
+  `0` は無制限とする。viewport の検証は文書の準備後に行う。
+- plan の `on_failure.environment` に指定された `continue` を適用する。
+  環境エラーになった scenario とそのブラウザーは終了し、同じ profile の次回実行では起動し直す。
+  別 profile の並列実行と後続 scenario は継続し、失敗は最終終了コード `3` に集約する。
+  `abort` と `fail_fast: true` は実行中の兄弟も停止する。
 - 3つの不透明ウィンドウを重ねると背面2つの描画フレームが停止することを実測した。
   `--disable-backgrounding-occluded-windows` だけで3つとも描画を継続するため、この起動引数を追加する。
   [Chrome の task throttling 設定](https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md#task-throttling) に対応する。

@@ -11,6 +11,12 @@ void BadStep(string name, string step, string diagnostic, string extra = "") => 
 
 // Every validating behavior in tests/yaml_test.ts at 50b50fd8 is represented below.
 Accept("minimal scenario", minimal);
+foreach (var timeout in new[] { "0", "1", "60000", "180000", "2147483647" })
+    Accept("起動期限の有効値 " + timeout, prefix + "playback: { timeouts: { startup_ms: " + timeout + " } }\nsteps: []");
+foreach (var timeout in new[] { "-1", "1.5", "2147483648", "'60000'", "true", "null", "'${timeout}'", "{}", "[]" })
+    Reject("起動期限の無効値 " + timeout, prefix + "playback: { timeouts: { startup_ms: " + timeout + " } }\nsteps: []", "startup_ms must be an integer");
+foreach (var timeout in new[] { ".inf", ".NaN" })
+    Reject("起動期限の非有限値 " + timeout, prefix + "playback: { timeouts: { startup_ms: " + timeout + " } }\nsteps: []", "must be finite");
 foreach (var url in new[] { "http:example.test", "http:/example.test", "http:///example.test", @"http:\example.test", " https://example.test ", "http://0x7f.1", "http://01.2.3.4", "http://4294967295", "http://x..y", "http://1..", "http://%31%32%37.0.0.1", "http://exa%6dple.test", "http://a{b}", "http://user@@example.test" })
     Accept("WHATWG http URL " + url, minimal.Replace("https://example.test", url));
 foreach (var url in new[] { "http://999.999.999.999", "http://example.123", "http://[fe80::1%25eth0]", "http://1.2.3.256", "http://4294967296", "http://xn--" })
