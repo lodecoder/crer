@@ -5,7 +5,7 @@ args = [
   "--python", "3.12",
   "--from", "mcp-server-git==2026.8.18",
   "mcp-server-git",
-  "--repository", "C:/Users/a5/devai/crer"
+  "--repository", "D:/devaid/crer"
 ]
 startup_timeout_sec = 60
 enabled_tools = [
