@@ -43,7 +43,9 @@ try {
     & (Join-Path $payload 'install.ps1') -InstallDirectory $destination -NoPath
     $state = Read-CrerInstallState $destination
     Check ($state.version -ceq 'v0.0.0-install-test' -and -not $state.pathAdded) 'Wrong installation state'
-    Check (@($state.files).Count -ge 10) 'Files are not tracked'
+    foreach ($name in (Get-CrerReleaseFiles)) {
+      Check (@($state.files | Where-Object { $_.name -ceq $name }).Count -eq 1) "Release file ownership is missing: $name"
+    }
     Check ([Environment]::GetEnvironmentVariable('Path', 'User') -ceq $userPath) 'User PATH changed'
     Check ($env:CRER_CHROME -ceq $chrome -and $env:CRER_CHROME_MANIFEST -ceq $chromeManifest) 'Chrome settings changed'
     & (Join-Path $destination 'crer.exe') help | Out-Null
@@ -71,7 +73,19 @@ try {
     Check ([IO.File]::ReadAllText($readme).EndsWith('user change')) 'Modified file changed'
     [IO.File]::WriteAllBytes($readme, $original)
   }
-  Test 'a locked DLL rolls back an earlier replacement and preserves installation state' {
+  Test 'updates accept a previous release state and retain ownership of its retired DLL' {
+    $legacyDll = Join-Path $destination 'crer-win-input.dll'
+    [IO.File]::WriteAllText($legacyDll, 'retired release file')
+    $statePath = Join-Path $destination '.crer-install.json'
+    $state = Get-Content -LiteralPath $statePath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $state.files += [pscustomobject]@{ name = 'crer-win-input.dll'; sha256 = Get-CrerFileDigest $legacyDll }
+    [IO.File]::WriteAllText($statePath, ($state | ConvertTo-Json -Depth 6))
+    & (Join-Path $payload 'install.ps1') -InstallDirectory $destination -NoPath
+    Check ([IO.File]::ReadAllText($legacyDll) -ceq 'retired release file') 'Retired owned file changed during update'
+    Check (@((Read-CrerInstallState $destination).files | Where-Object { $_.name -ceq 'crer-win-input.dll' }).Count -eq 1) 'Retired file ownership was lost'
+    Check (-not (Test-Path -LiteralPath (Join-Path $payload 'crer-win-input.dll'))) 'New release still ships the retired DLL'
+  }
+  Test 'a locked release file rolls back an earlier replacement and preserves installation state' {
     $binary = Join-Path $payload 'crer.exe'
     $original = [IO.File]::ReadAllBytes($binary)
     $changedBytes = [byte[]]::new($original.Length + 1)
@@ -79,7 +93,7 @@ try {
     [IO.File]::WriteAllBytes($binary, $changedBytes)
     $stateHash = Get-CrerFileDigest (Join-Path $destination '.crer-install.json')
     $binaryHash = Get-CrerFileDigest (Join-Path $destination 'crer.exe')
-    $locked = [IO.File]::Open((Join-Path $destination 'crer-win-input.dll'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $locked = [IO.File]::Open((Join-Path $destination 'README.en.md'), [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
     try { Reject { & (Join-Path $payload 'install.ps1') -InstallDirectory $destination -NoPath } 'process' }
     finally { $locked.Dispose(); [IO.File]::WriteAllBytes($binary, $original) }
     Check ((Get-CrerFileDigest (Join-Path $destination 'crer.exe')) -ceq $binaryHash) 'Earlier binary replacement was not rolled back'
@@ -132,6 +146,7 @@ try {
     Check (Test-Path -LiteralPath (Join-Path $destination 'uninstall.ps1')) 'Retry script removed'
     Check (Test-Path -LiteralPath (Join-Path $destination 'notes.txt')) 'User notes removed'
     Check (-not (Test-Path -LiteralPath (Join-Path $destination 'crer.exe'))) 'Tracked executable retained'
+    Check (-not (Test-Path -LiteralPath (Join-Path $destination 'crer-win-input.dll'))) 'Retired owned DLL was not removed'
     # Restoring this owned file lets a second invocation finish without recursive directory deletion.
     Copy-Item -LiteralPath (Join-Path $payload 'README.en.md') -Destination (Join-Path $destination 'README.en.md') -Force
     & (Join-Path $destination 'uninstall.ps1')

@@ -43,7 +43,7 @@ Expand-Archive .\crer-win-x64.zip -DestinationPath .\crer-setup
 crer doctor
 ```
 
-Chrome が存在し CfT と認識され、`ffiExists` が `true` になっていることを確認します。`crer.exe` と `crer-win-input.dll` は同じフォルダに置いてください。crer は専用の CfT ウィンドウとプロファイルを使い、普段使いの Chrome は使いません。
+Chrome が存在し CfT と認識されていることを確認します。Windows 入力記録とウィンドウ操作は `crer.exe` に組み込まれており、追加の入力 DLL は不要です。crer は専用の CfT ウィンドウとプロファイルを使い、普段使いの Chrome は使いません。
 
 既存の **CfT** を登録する場合は、同じ補助スクリプトに `-ChromePath 'C:\path\to\chrome.exe'` と `-InstallRoot "$env:LOCALAPPDATA\crer\browsers"` を指定します。manifest と両環境変数をまとめて更新できます。コマンド単位の `--chrome` は `CRER_CHROME` より優先しますが、この環境変数だけを書き換えても manifest は更新されません。同じ PowerShell に設定を反映するときは、補助スクリプトの dot-source も利用できます。
 

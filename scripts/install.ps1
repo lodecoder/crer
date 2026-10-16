@@ -53,7 +53,7 @@ foreach ($name in $files) {
     }
   }
 }
-# Reject running copies before replacing either native binary.
+# 実行ファイルを置き換える前に、実行中のコピーがないことを確認する。
 $running = @(Get-Process -Name crer -ErrorAction SilentlyContinue | Where-Object {
   try { $_.Path -ieq (Join-Path $destination 'crer.exe') } catch { $false }
 })

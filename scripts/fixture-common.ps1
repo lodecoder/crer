@@ -13,9 +13,9 @@ function Read-CrerResult([string] $Text) {
 }
 function Start-OwnedFixtureServer([int] $Port = 8080, [string] $Executable) {
   if ([string]::IsNullOrWhiteSpace($Executable)) {
-    & dotnet build (Join-Path $script:FixtureProjectRoot 'csharp/Crer.FixtureServer/Crer.FixtureServer.csproj') -c Release --nologo | Out-Host
+    & dotnet build (Join-Path $script:FixtureProjectRoot 'tests/Crer.FixtureServer/Crer.FixtureServer.csproj') -c Release --nologo | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "Fixture server build failed ($LASTEXITCODE)." }
-    $Executable = 'csharp/Crer.FixtureServer/bin/Release/net10.0/Crer.FixtureServer.exe'
+    $Executable = 'tests/Crer.FixtureServer/bin/Release/net10.0/Crer.FixtureServer.exe'
   }
   $root = Join-Path $script:FixtureProjectRoot ('.crer/fixture/' + [Guid]::NewGuid().ToString('N'))
   $null = New-Item -ItemType Directory -Path $root -Force

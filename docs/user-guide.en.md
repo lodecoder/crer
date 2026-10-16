@@ -43,7 +43,7 @@ The helper registers `CRER_CHROME` and `CRER_CHROME_MANIFEST` for your user. Ope
 crer doctor
 ```
 
-Check that Chrome exists and is recognized as CfT, and `ffiExists` is `true`. Keep `crer.exe` and `crer-win-input.dll` together. crer uses its own CfT window and profile; it does not use your regular Chrome.
+Check that Chrome exists and is recognized as CfT. Windows input recording and window control are built into `crer.exe`; no additional input DLL is required. crer uses its own CfT window and profile; it does not use your regular Chrome.
 
 To register an existing **CfT** installation instead of downloading one, use the same helper with `-ChromePath 'C:\path\to\chrome.exe'` and `-InstallRoot "$env:LOCALAPPDATA\crer\browsers"`. This updates the manifest and both environment variables together. `--chrome` overrides `CRER_CHROME` for one command; setting that variable alone does not update the manifest. Dot-sourcing the helper is also available when applying its configuration in the current PowerShell.
 

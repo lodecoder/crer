@@ -1,13 +1,14 @@
 # C#/.NET 10 CLI
 
-製品 CLI は `csharp/Crer.Cli` に実装し、公開名は `crer.exe` とする。
+製品 CLI は `src/Crer.Cli`、Windows 入力・ウィンドウ操作は `src/Crer.Windows` に実装する。
+CLI から Windows 実装を通常の `ProjectReference` で参照し、公開名は単一の `crer.exe` とする。
 再生入力、YAML、plan、記録・正規化、診断、artifacts は C# で処理する。
 実行時の .NET SDK / 共有 runtime は不要。PowerShell はビルド・CfT 導入・検証の補助に使う。
 今回の受入対象は利用者の追加指示により **win-x64**。ARM64 は対象外。
 
 実装と実機受入は区別する。[移行対応表](csharp-migration-matrix.md) と
-[テスト台帳](csharp-migration-tests.tsv) に残件・証跡を、
-[互換性調査](csharp-cli-compatibility.md) に判断を記録する。
+[テスト台帳](csharp-migration-tests.tsv) は 2026-10-15 の Deno → C# 移行時の証跡であり、
+その時点の DLL 構成やパスを含む。[互換性調査](csharp-cli-compatibility.md) には現行との差分も記録する。
 
 ## ビルドと検証
 
@@ -22,19 +23,24 @@ Windows、.NET 10 SDK、Visual Studio の C++ x64 build tools と Windows SDK �
 .\scripts\test-release.ps1 -Chrome $env:CRER_CHROME
 ```
 
-`build-release` は Native AOT CLI と同じアーキテクチャの `crer-win-input.dll` を
-`dist/win-x64` に配置する。DLL は record と前景・不透明度の制御に使う。
-選択は `--dll` > `CRER_INPUT_DLL` > exe と同じフォルダ > 開発用 native publish path。
-record は DLL ABI 2 と一致しなければ開始しない。
+`build-release` は Windows 操作を含む単一の Native AOT `crer.exe` を `dist/win-x64` に配置する。
+入力記録と前景・不透明度の制御も同じ exe で処理し、DLL の別ビルド・配置は不要。
+旧 `--dll` option は廃止し、指定すると未知 option として拒否する。`CRER_INPUT_DLL` は参照しない。
+`doctor` から DLL 探索結果の `ffi` / `ffiExists` を削除した。
 
-`verify.ps1` は C# テストプロジェクトを検出し、native lifecycle と共に実行する。
+`build-csharp.ps1` の既定出力先は Native AOT ビルドでは `dist/<Runtime>`、
+開発用の `-NoAot` では `dist/development/<Runtime>` とする。これにより標準配布先の AOT exe を
+開発用ビルドで上書きしない。`-OutputDirectory` を明示した場合は、その指定先を使う。
+
+`verify.ps1` は `tests/` の C# テストプロジェクトを検出し、Windows 入力の lifecycle も実行する。
 実機用 IntegrationTests は別途実行する。個別の再実行例:
 
 ```powershell
-dotnet run --project csharp/Crer.SchemaTests -c Release
-dotnet run --project csharp/Crer.ActionTests -c Release
-dotnet run --project csharp/Crer.NormalizeTests -c Release
-dotnet run --project csharp/Crer.PlanTests -c Release
+dotnet run --project tests/Crer.SchemaTests -c Release
+dotnet run --project tests/Crer.ActionTests -c Release
+dotnet run --project tests/Crer.NormalizeTests -c Release
+dotnet run --project tests/Crer.PlanTests -c Release
+dotnet run --project tests/Crer.WindowsTests -c Release
 .\scripts\build-csharp.ps1
 ```
 
@@ -43,6 +49,12 @@ JSON も reflection serialization を無効にする。
 ECMAScript 正規表現の構文検証には Acornima を使う。URL 遮断の照合は同じ専用 CfT に所有する
 非表示 target の V8 で行い、表示用 page は一つに保つ。照合用 target も終了時に閉じる。
 IANA time zone と Unicode のため globalization を有効にして AOT publish する。
+
+2026-10-16 の構成整理では、`verify.ps1` の13テストプロジェクト（390件と Windows 入力の
+直接 API／lifecycle テスト）、インストーラー／パッケージの13ケース、win-x64 Native AOT publish が成功した。
+外部入力 DLL を同梱しない exe で、検索・キーボード・ドラッグ・plan・session reuse、時間指定／stop-file 記録と
+normalize、前面化・透明度・watchdog・終了時復元を実 CfT で確認した。
+カーソル不変の観測は外部操作により判定不能であり、機能テストの成功とは区別する。ARM64 は今回未検証。
 
 ## CLI 契約
 
@@ -56,11 +68,11 @@ file は command の直後。値付き option と値は別の引数とする。
 
 | command | option |
 | --- | --- |
-| doctor | `--chrome --dll` |
+| doctor | `--chrome` |
 | inspect / validate | なし |
-| play | `--chrome --dll --seed --step-delay-ms --profile-dir --template-screenshots --position`、`--keep-artifacts --ignore-viewport-mismatch --mute-audio` |
-| run | `--chrome --dll --profile-dir --plan-window-bounds-override --plan-window-opacity-override --template-screenshots`、`--ignore-viewport-mismatch --mute-audio` |
-| record | `--chrome --dll --profile-dir --url --content-size --position --duration-ms --stop-file --name` |
+| play | `--chrome --seed --step-delay-ms --profile-dir --template-screenshots --position`、`--keep-artifacts --ignore-viewport-mismatch --mute-audio` |
+| run | `--chrome --profile-dir --plan-window-bounds-override --plan-window-opacity-override --template-screenshots`、`--ignore-viewport-mismatch --mute-audio` |
+| record | `--chrome --profile-dir --url --content-size --position --duration-ms --stop-file --name` |
 | normalize | `--output --url --name --client-origin --client-size --viewport` |
 
 Chrome は `--chrome` > `CRER_CHROME`。通常 Chrome の探索・既存接続は行わない。
@@ -84,11 +96,17 @@ functions / params / args / call の schema と実行系を移植している。
 
 plan は共通の同時実行上限、profile ごとの排他、協調停止を持つ。
 same-profile reuse では URL・window・display・遮断を再適用し、plan の最後に全 CfT を閉じる。
+初回・再利用時のページ遷移と初期文書の準備待ちは、起動処理全体の60秒期限を共有する。
+並列起動時などに応答が10秒を超えても待機し、利用者の中断や plan の worker timeout には従う。
+CfT は空の app ウィンドウで起動し、位置・content size・不透明度・前景設定を適用してからページへ遷移する。
+再利用時も同じ順序で設定するため、ページの最初のスクリプトから指定の content size を参照できる。
+重なったウィンドウで描画フレームが停止しないよう `--disable-backgrounding-occluded-windows` を指定する。
+起動の各段階と経過時間は `startup.json` に記録し、タイムアウト時も失敗画像の取得を試みる。
 viewport は `window.viewport ?? window.content` と実測比較する。
 occluded renderer のリサイズが遅延した場合は、読み取り専用キャプチャ後に再測定する。
 一致条件は緩和しない。foreground always / once と opacity は独立して制御する。
 
-record は既存 native DLL の Raw Input / Low Level Hook を ABI 経由で呼ぶ。
+record は `Crer.Windows` の C# API を直接呼び、Raw Input / Low Level Hook で物理操作を観測する。
 marker の手動クリックで較正し、Enter / Ctrl+C / duration / stop-file / CfT 終了で停止する。
 古い sidecar、requested_content 由来の DPI scale、event ごとの viewport、QPC 間隔、
 layout 由来の文字、Space の既定操作を保持する。IME 確定文字列は元から対象外。
@@ -108,8 +126,11 @@ layout 由来の文字、Space の既定操作を保持する。IME 確定文字
 .\scripts\test-session-reuse-fixture.ps1
 .\scripts\test-csharp-record.ps1
 .\scripts\test-csharp-manual-record.ps1
-dotnet run --project csharp/Crer.IntegrationTests -- --exe dist/win-x64/crer.exe --chrome $env:CRER_CHROME --dll dist/win-x64/crer-win-input.dll --windows
+dotnet run --project tests/Crer.IntegrationTests -- --exe dist/win-x64/crer.exe --chrome $env:CRER_CHROME --windows
 ```
+
+3並列での初回表示サイズ・背面ウィンドウの描画・10秒超の初期応答・同じ profile の再利用・起動中の worker timeout を確認するには、
+上の IntegrationTests コマンドに `--only startup` を追加する。外部サイトや既存の利用者 profile は使わない。
 
 fixture server は BCL 製。サーバーと CfT を同じデスクトップ・ネットワーク環境で動かす。
 カーソル等が動いた観測は、外部操作を切り分けられない場合に判定不能として保存する。
@@ -122,4 +143,5 @@ fixture server は BCL 製。サーバーと CfT を同じデスクトップ・�
 
 終了コードは成功 0、CLI/YAML 2、環境 3、step/assert 4、利用者中断 5。
 ログ、診断 JSON、PNG、raw/sidecar と summary は `.crer` 配下に残す。
-win-x64 の全受入は完了。[最終結果と証跡](csharp-migration-results.md) に環境・再現手順・互換性判断を記録する。
+2026-10-15 の Deno → C# 移行時の win-x64 受入は完了。
+[当時の結果と証跡](csharp-migration-results.md) は、単一 exe 化後の検証結果とは区別する。

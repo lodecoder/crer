@@ -12,20 +12,19 @@ param(
 # Optional historical comparison. The ordinary build and fixture scripts use C# only.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot '../fixture-common.ps1')
-$legacy = & (Join-Path $PSScriptRoot 'Export-Legacy.ps1')
+$legacy = & (Join-Path $PSScriptRoot 'Export-Legacy.ps1') -BuildNative
 $scenarioPath = Resolve-FixturePath $Scenario
 $scenarioHash = (Get-FileHash -LiteralPath $scenarioPath -Algorithm SHA256).Hash
 $server = Start-OwnedFixtureServer -Port $Port
 try {
   $chromePath = Resolve-FixturePath $Chrome
-  $dll = Join-Path (Split-Path -Parent (Resolve-FixturePath $CrerExe)) 'crer-win-input.dll'
-  if (-not (Test-Path -LiteralPath $dll)) { $dll = Resolve-FixturePath 'native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll' }
-  $tail = @($Command, $scenarioPath, '--chrome', $chromePath, '--dll', $dll)
+  $legacyDll = Join-Path $legacy 'native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll'
+  $tail = @($Command, $scenarioPath, '--chrome', $chromePath)
   if ($Command -eq 'play') { $tail += @('--keep-artifacts', '--seed', '42') }
   if ($Profile) { $tail += @('--profile-dir', $Profile) }
   $current = Invoke-FixtureCli -Executable $CrerExe -Arguments $tail -ExpectedCode $ExpectedExitCode -Evidence $server.Root -Label 'csharp'
   $runtime = (Get-Command $Deno -CommandType Application -ErrorAction Stop).Source
-  $oldArguments = @('run', '-A', '--config', (Join-Path $legacy 'deno.json'), (Join-Path $legacy 'src/main.ts')) + $tail
+  $oldArguments = @('run', '-A', '--config', (Join-Path $legacy 'deno.json'), (Join-Path $legacy 'src/main.ts')) + $tail + @('--dll', $legacyDll)
   $old = Invoke-FixtureCli -Executable $runtime -Arguments $oldArguments -ExpectedCode $ExpectedExitCode -Evidence $server.Root -Label 'legacy'
   if (($current.failures | ConvertTo-Json -Compress) -ne ($old.failures | ConvertTo-Json -Compress)) { throw 'Failure results differ; inspect captured stdout/stderr.' }
   $diagnosticDifferences = @()

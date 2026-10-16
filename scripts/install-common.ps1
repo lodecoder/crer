@@ -30,7 +30,7 @@ function Assert-CrerPlainPath {
 }
 
 function Get-CrerReleaseFiles {
-  return @('crer.exe', 'crer-win-input.dll', 'install.ps1', 'uninstall.ps1', 'install-common.ps1',
+  return @('crer.exe', 'install.ps1', 'uninstall.ps1', 'install-common.ps1',
     'install-chrome-for-testing.ps1', 'chrome-for-testing-metadata.ps1', 'README.en.md', 'README.ja.md', 'release.json')
 }
 
@@ -49,7 +49,9 @@ function Read-CrerInstallState {
       $state.directory -ine $Directory -or $state.pathAdded -isnot [bool]) {
     throw "Unrecognized installation state: $statePath"
   }
-  $allowed = @(Get-CrerReleaseFiles) + @('LICENSE')
+  # 旧リリースが管理していた入力 DLL は、現行では同梱も読み込みもしないが、
+  # アンインストールで削除できるよう所有情報を保持する。
+  $allowed = @(Get-CrerReleaseFiles) + @('LICENSE', 'crer-win-input.dll')
   $seen = @{}
   if (@($state.files).Count -eq 0) { throw 'Installation state has no tracked files.' }
   foreach ($file in $state.files) {

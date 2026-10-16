@@ -1,13 +1,27 @@
 # C# CLI の互換性
 
 完全移行の比較基準は `50b50fd8bf82a3ce09c25040bca51f60304ba126`。
-全項目の現在の状態は [移行対応表](csharp-migration-matrix.md) と
-[旧テスト台帳](csharp-migration-tests.tsv) に記録する。
+当時の受入結果は [移行対応表](csharp-migration-matrix.md) と
+[旧テスト台帳](csharp-migration-tests.tsv) に記録する。現行手順は [C# CLI](csharp-cli.md) を参照する。
 今回の受入対象は利用者の追加指示により win-x64。ARM64 は除外した。
 
 以下は初期 milestone の判断記録であり、現在の未対応一覧ではない。
-完全移行では旧 CLI が実装した全コマンド・全設定を対象に拡張している。
+完全移行では旧 CLI が実装した全コマンド・全設定を対象に拡張した。以下の廃止項目はその後の構成整理による。
 `browser install`、`record new/resume`、`run --max-parallel` は元から未実装なので新設しない。
+
+## 単一 exe 化で廃止した契約
+
+Windows 操作は `src/Crer.Windows` を通常の C# 参照で組み込み、`crer.exe` に統合した。
+外部の `crer-win-input.dll`、C ABI、ABI version 検査、DLL の探索・配置は廃止した。
+
+| 旧契約 | 現行の扱い |
+| --- | --- |
+| doctor / play / run / record の `--dll` | 廃止。未知 option として終了コード 2 で拒否する |
+| `CRER_INPUT_DLL` | 参照しない。設定は削除できる |
+| doctor JSON の `ffi` / `ffiExists` | 出力しない。Chrome の path/version/hash/manifest を確認する |
+| `scripts/build-native.ps1` | 廃止。`scripts/build-release.ps1` で単一 exe を作る |
+
+以降の初期 milestone 調査や過去の受入文書にある DLL 関連の option・パスは履歴であり、現行契約ではない。
 
 ## 完全移行で明示した修正
 
@@ -29,7 +43,14 @@
   復元が不要な場合の `restoreStatus: 0` は `restorePerformed: false` と区別し、復元APIを呼んだ成功とは表現しない。
 - occluded renderer のリサイズ遅延は読み取りキャプチャで同期後に再測定し、表示の一致条件は維持する。
 - `playback.speed` と `timeouts.navigation_ms` は旧 runtime に参照箇所がない。
-  milestone の navigation_ms による新たな起動 deadline を撤回し、旧実装の固定待機を使う。
+  milestone の navigation_ms による新たな起動 deadline を撤回し、これらの設定値は使わない。
+  初期ページの応答が10秒を超える3並列実行での失敗を受け、初回・再利用時の遷移と文書の準備待ちは
+  起動処理全体の60秒期限を共有する。viewport の検証は文書の準備後に行う。
+- 3つの不透明ウィンドウを重ねると背面2つの描画フレームが停止することを実測した。
+  `--disable-backgrounding-occluded-windows` だけで3つとも描画を継続するため、この起動引数を追加する。
+  [Chrome の task throttling 設定](https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md#task-throttling) に対応する。
+  空の app ウィンドウで位置・content size・不透明度・前景を適用してから遷移し、初回のレイアウトを安定させる。
+  初回・再利用時の段階別所要時間を `startup.json` に保存し、起動タイムアウト時にも失敗画像を取得する。
 - CLI の point は旧 `pointOption` と同様に最初の2成分を使う。
   `--position 1,2,3` を milestone が拒否した差は旧契約へ戻す。
 - CfT 導入補助は公式 JSON と PowerShell/BCL に置き換えた。

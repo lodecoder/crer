@@ -64,7 +64,6 @@ if ((Test-PackageWithin $outputPath $sourcePath) -or (Test-PackageWithin $output
 
 $payload = [ordered]@{
   'crer.exe' = Join-Path $sourcePath 'crer.exe'
-  'crer-win-input.dll' = Join-Path $sourcePath 'crer-win-input.dll'
   'install.ps1' = Join-Path $PSScriptRoot 'install.ps1'
   'uninstall.ps1' = Join-Path $PSScriptRoot 'uninstall.ps1'
   'install-common.ps1' = Join-Path $PSScriptRoot 'install-common.ps1'

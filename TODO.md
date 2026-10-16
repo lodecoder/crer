@@ -7,8 +7,10 @@
 
 - C#/.NET 10 CLI に全コマンド、YAML 検証、CfT の隔離起動、CDP 再生を移植。
 - click / double-click / move / drag / scroll / text / key / key_chord / navigate / wait / assert / screenshot / sleep を実装済み。
-- seed・jitter・artifacts の基本実装と、C# .NET 10 Native AOT の Raw Input DLL を追加済み。
-- Native AOT DLL は `win-x64` で公開ビルド済み。実 CfT fixture の再生結合テストも成功済み。
+- seed・jitter・artifacts と、C# の Windows Raw Input / Low Level Hook を実装済み。
+- CLI は `src/Crer.Cli`、Windows 操作は `src/Crer.Windows`、テストと fixture/helper は `tests/` に配置。
+- Windows 操作を通常の C# 参照で組み込み、単一の Native AOT `crer.exe` として公開する。
+  外部入力 DLL、C ABI、`--dll`、`CRER_INPUT_DLL` と `doctor` の DLL 診断は廃止。
 
 2026-10-15 の C# 完全移行の要件別受入は [移行対応表](docs/csharp-migration-matrix.md) に記録する。
 以下の過去日付の成功は当時の実装の記録であり、今回の受入には流用しない。
@@ -32,7 +34,7 @@
 
 ## P0 — record から YAML への正規化
 
-- [x] `crer record` から Native AOT DLL を起動し、`raw-input.ndjson` を取得する。
+- [x] `crer record` から Windows 入力記録を開始し、`raw-input.ndjson` を取得する。
 - [x] Raw Input の mouse / wheel / key イベントを click・drag・scroll・key・text の steps へ正規化する。
 - [x] screen px から CSS viewport px への座標変換を実装する。
   - 記録した content bounds と CDP viewport の sidecar を取得し、完全な metadata で自動変換する。手動 record → replay で確認済み。
@@ -64,8 +66,9 @@
 
 ## P2 — 配布と堅牢化
 
-- [x] Native AOT CLI と Native AOT DLL をパッケージ化する。
-  - `build-release.ps1`、standalone exe の DLL 自動検出、`test-release.ps1` を実装。2026-08-26 に
+- [x] Windows 操作を含む単一の Native AOT CLI をパッケージ化する。
+  - 現行は `build-release.ps1` で単一 exe を生成し、`test-release.ps1` で検証する。
+  - 旧 DLL 構成では standalone exe の DLL 自動検出を実装。2026-08-26 に
     win-x64 配布物の headful CfT fixture 再生、artifact、物理カーソル不変を確認済み。
 - [x] CfT の固定バージョン導入、`doctor` の診断、サンプル scenario を整える。
   - `doctor` に CfT 実行ファイル・バージョン・導入 manifest の診断を追加。2026-08-26 に既存の

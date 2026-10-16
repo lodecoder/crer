@@ -7,10 +7,16 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = "dist/$Runtime" }
 $outputPath = if ([IO.Path]::IsPathRooted($OutputDirectory)) { [IO.Path]::GetFullPath($OutputDirectory) } else { [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory)) }
-& (Join-Path $PSScriptRoot 'build-native.ps1') -Runtime $Runtime
-if ($LASTEXITCODE -ne 0) { throw "Native input DLL publish failed ($LASTEXITCODE)." }
 & (Join-Path $PSScriptRoot 'build-csharp.ps1') -Runtime $Runtime -OutputDirectory $outputPath
-$nativeDll = Join-Path $projectRoot "native/bin/Release/net10.0/$Runtime/publish/crer-win-input.dll"
-Copy-Item -LiteralPath $nativeDll -Destination (Join-Path $outputPath 'crer-win-input.dll') -Force
+$retiredDll = Join-Path $outputPath 'crer-win-input.dll'
+if (Test-Path -LiteralPath $retiredDll) {
+  $retiredFile = Get-Item -LiteralPath $retiredDll -Force
+  if ($retiredFile.PSIsContainer -or ($retiredFile.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+      $retiredFile.FullName -ine [IO.Path]::GetFullPath($retiredDll) -or
+      [IO.Path]::GetDirectoryName($retiredFile.FullName) -ine $outputPath.TrimEnd('\', '/')) {
+    throw "Refusing to remove an unexpected retired DLL path: $retiredDll"
+  }
+  Remove-Item -LiteralPath $retiredFile.FullName -Force
+}
 Write-Host "Wrote $Runtime Native AOT distribution: $outputPath"
 Write-Host 'Set CRER_CHROME (or pass --chrome) to a Chrome for Testing chrome.exe path.'

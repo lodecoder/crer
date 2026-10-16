@@ -1,5 +1,10 @@
 # C# 完全移行の対応表と検証台帳
 
+> 履歴資料: 以下の状態・検証コマンド・証跡は 2026-10-15 の Deno → C# 移行受入時点のものです。
+> `csharp/` / `native/`、入力 DLL、ABI 2、`--dll` / `CRER_INPUT_DLL` は当時の構成として保存しています。
+> [テスト台帳](csharp-migration-tests.tsv) のパス・結果も同時点の記録です。現行の製品は `src/`、テストは `tests/` にあり、Windows 操作を単一 exe に組み込んでいます。
+> 現行のビルド・検証・配布手順は [C# CLI](csharp-cli.md) を参照してください。
+
 基準: `50b50fd8bf82a3ce09c25040bca51f60304ba126`。作業開始 HEAD:
 `4ab1f47`、`codex/csharp-migration`。開始時の作業ツリーは clean。
 この基準との差分は `docs/csharp-full-migration-goal.md` の追加だけで、利用者の実装変更はない。

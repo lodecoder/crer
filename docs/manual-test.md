@@ -10,7 +10,7 @@ C#/.NET 10 SDK、Visual Studio Build Tools の MSVC と Windows SDK、明示し�
 .\scripts\verify.ps1
 ```
 
-`doctor` の Chrome path/version/SHA-256/manifest と `ffiExists` を確認する。CfT 未指定時の自動探索は行わない。
+`doctor` の Chrome path/version/SHA-256/manifest を確認する。Windows 操作は exe に組み込み済みで、DLL の診断項目はない。CfT 未指定時の自動探索は行わない。
 manifest に登録する場合は `install-chrome-for-testing.ps1 -ChromePath <chrome.exe> -Version <version>` を使う。
 
 ## 再生と非干渉の観測
@@ -42,11 +42,10 @@ BCL の動的 loopback server と公開 exe を使う。`--only` を省略する
 `--windows` は前景化・重なり順を明示的に操作するテストなので、実行中は CfT の検証を待つ。
 
 ```powershell
-dotnet run --project csharp/Crer.IntegrationTests -c Release -- `
-  --exe dist/win-x64/crer.exe --chrome "$env:CRER_CHROME" `
-  --dll dist/win-x64/crer-win-input.dll --windows
+dotnet run --project tests/Crer.IntegrationTests -c Release -- `
+  --exe dist/win-x64/crer.exe --chrome "$env:CRER_CHROME" --windows
 
-dotnet run --project csharp/Crer.ControlIntegrationTests -c Release -- `
+dotnet run --project tests/Crer.ControlIntegrationTests -c Release -- `
   --exe dist/win-x64/crer.exe --chrome "$env:CRER_CHROME"
 ```
 
@@ -82,8 +81,8 @@ stop file で graceful stop した後、metadata の較正・content/viewport �
 公開 exe の normalize/validate/play と最終 `Clicks: 1` assertion、所有 CfT の終了まで検査する。
 IME の確定文字列は元から観測対象外。mock や hook packet の成功を手動実測の代わりに数えない。
 
-自動の停止経路・DLL 障害検査は `scripts/test-csharp-record.ps1`、hook の overflow/再開始は
-`dotnet run --project native/tests -c Release` と `Crer.RecordTests` に分ける。
+自動の停止経路検査は `scripts/test-csharp-record.ps1`、hook の overflow/再開始は
+`dotnet run --project tests/Crer.WindowsTests -c Release` と `tests/Crer.RecordTests` に分ける。
 
 ## 配布物
 
@@ -91,6 +90,7 @@ IME の確定文字列は元から観測対象外。mock や hook packet の成�
 .\scripts\test-release.ps1
 ```
 
-`dist/win-x64/crer.exe` と同じフォルダの `crer-win-input.dll` を Native AOT でビルドし、公開配布物で
+Windows 操作を組み込んだ単一の `dist/win-x64/crer.exe` を Native AOT でビルドし、公開配布物で
 search/keyboard/drag/plan/session reuse を検証する。実行環境、再現コマンド、結果と証跡は
-[C# 移行対応表](csharp-migration-matrix.md) に記録する。比較専用の旧実装は `scripts/compat` へ隔離する。
+各 harness の summary に保存する。[C# 移行対応表](csharp-migration-matrix.md) は旧 DLL 構成時点の履歴である。
+比較専用の旧実装は `scripts/compat` へ隔離する。

@@ -32,34 +32,34 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 
 | 層          | 採用                                | 理由                                                                                                                        |
 | ----------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| CLI・実行系 | C# / .NET 10 Native AOT              | SDK / 共有 runtime 不要の配布、BCL の WebSocket、YAML／並行制御と native ABI を同じ言語で実装する。                                              |
+| CLI・実行系 | C# / .NET 10 Native AOT              | SDK / 共有 runtime 不要の単一 exe 配布。BCL の WebSocket、YAML／並行制御と Windows 操作を同じ言語で実装する。                   |
 | ブラウザ    | 固定バージョンの Chrome for Testing | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                                                                |
 | 再生入力    | CDP の `Input` ドメイン             | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                                                                     |
 | ウィンドウ  | CDP `Browser.setWindowBounds`       | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                                                                   |
-| 記録入力    | Windows Raw Input + Low Level Hook  | 物理入力を取得する。Chrome が Raw Input を消費する場合は Hook を使う。CDP は注入はできるが物理入力を記録する API ではない。 |
+| 記録入力    | Windows Raw Input + Low Level Hook  | マウスは Raw Input、キーボードは Low Level Hook で物理入力を取得する。CDP は物理入力を記録する API ではない。 |
 | シナリオ    | YAML + JSON Schema                  | 人間編集、バリデーション、将来の自動補完を両立する。                                                                        |
 
 CLI は BCL の WebSocket と HTTP、YamlDotNet の明示的なノード変換、Acornima の ECMAScript 構文検証を使う。
-Raw Input と HWND 操作は C ABI を公開する C# Native AOT DLL `crer-win-input.dll` とし、
-NativeLibrary と unmanaged function pointer で呼び出す。PowerShell は製品機能の runtime 依存にしない。
+CLI は `src/Crer.Cli`、Raw Input と HWND 操作は `src/Crer.Windows` の通常の C# ライブラリとする。
+`ProjectReference` によって結合し、Windows 操作も含めて単一の Native AOT `crer.exe` として公開する。
+Windows API は P/Invoke で呼び出す。PowerShell は製品機能の runtime 依存にしない。
 
-### 3.1.1 ネイティブ DLL 境界
+### 3.1.1 Windows 入力・ウィンドウ操作
 
-`crer-win-input.dll` は .NET Native AOT で各 CLI 配布バイナリと同じアーキテクチャ（`win-x64` または `win-arm64`）で同梱する。DLL は `crer_input_abi_version`、`crer_input_start`、
-`crer_input_stop`、`crer_input_read`、`crer_input_is_running`、`crer_input_last_error`、前景 HWND の取得・復元用 API、
-`crer_input_foreground_process_window`、フォーカスを変更せず topmost だけを設定する
-`crer_input_set_process_topmost_only` を C ABI で export する。
-現行ABIはversion 2とし、mouse eventとcontent HWND矩形を物理pixel座標で返す。C# CLI側と
-`crer_input_abi_version` が一致しないDLLは記録に使用しない。
-イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を CLI と DLL
-の間で共有しない。CLI から DLL への callback は使わず、CLI の非同期ループが
-`crer_input_read` を短い間隔で poll する。これにより DLL のスレッドから CLI の managed runtime を
-呼び出さない。
+`Crer.Windows` は入力記録の開始・停止・読み出し、前景 HWND の取得・復元、対象プロセスの前景化、
+フォーカスを変更しない topmost 設定、不透明度設定を C# API として提供する。
+外部入力 DLL、公開 C ABI、ABI version 検査、DLL 探索は設けない。
+mouse event と content HWND 矩形は物理 pixel 座標で返す。
+入力イベントは有界キューへ格納し、CLI の非同期ループが短い間隔で読み出す。
 
-DLL は専用 native thread 上の message-only window で Raw Input を受信し、時刻は
-`QueryPerformanceCounter` を単調時刻として記録する。`start` は Per-Monitor-V2 DPI awareness
-を設定済みのプロセスで同時に一つだけ成功し、正常な `stop` 後は再開できる。二重起動、イベントバッファのあふれ、Windows API
+専用の記録スレッド上の message-only window で Raw Input を受信し、時刻は
+`QueryPerformanceCounter` を単調時刻として記録する。記録開始は Per-Monitor-V2 DPI awareness
+を設定済みのプロセスで同時に一つだけ成功し、正常な停止後は再開できる。二重起動、イベントバッファのあふれ、Windows API
 失敗は構造化した error code を返し、バッファあふれは記録を続けず `record` を失敗終了する。
+停止時は記録スレッドの終了を待つ。ウィンドウ操作の共有状態と watchdog の並行実行は排他制御する。
+
+製品コードは `src/`、単体・結合テストと fixture server / helper は `tests/` に置く。
+Windows 入力の lifecycle とウィンドウ選別は `tests/Crer.WindowsTests` で検証する。
 
 ### 3.2 プロセス分離
 
@@ -96,11 +96,11 @@ session を維持する。別 profile や ephemeral scenario を挟んでも保�
 CDP が応答しない場合に限り、実行ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。
 
 通常の再生は利用者の前景ウィンドウへ干渉しない。Web アプリケーションが前景状態を要求する場合だけ、
-scenario の `browser.window.foreground: true` を指定できる。この場合、Native DLL は対象 CfT の
+scenario の `browser.window.foreground: true` を指定できる。この場合、`Crer.Windows` は対象 CfT の
 トップレベル HWND をプロセス ID から探索し、起動直後に `SetWindowPos(HWND_TOPMOST)` で常時最前面に
 固定して `SetForegroundWindow` で前景化する。終了処理では `HWND_NOTOPMOST` へ戻してから、実行開始時の
 前景 HWND を復元する。Windows の foreground lock などで前景フォーカスだけを取得できない場合は、
-Native DLL は `AttachThreadInput` を使って再試行する。それでも拒否された場合は、topmost 化を維持したまま
+`Crer.Windows` は `AttachThreadInput` を使って再試行する。それでも拒否された場合は、topmost 化を維持したまま
 Win32 error code を artifacts の `foreground.json` と警告へ記録し、再生は続行する。topmost 化そのものに
 失敗した場合だけ再生を環境エラーとして終了する。起動直後と各 step の直前に HWND をプロセス ID から再探索し
 topmost を再適用する。探索では非表示の補助ウィンドウと owner を持つメニュー・ツールチップを除外し、
@@ -119,22 +119,22 @@ watchdog と各 step の直前の topmost・フォーカス再適用を行わず
 両モードとも終了時は topmost を解除し、`foreground.json` の `mode` に実効モードを保存する。
 
 `browser.window.opacity` は CfT 本体ウィンドウの不透明度を指定する有限数値（範囲 `0..1`、既定 `1`）。
-`0` は完全透明、`1` は完全不透明とし、Native DLL の `crer_input_set_process_opacity(pid, alpha)` に
+`0` は完全透明、`1` は完全不透明とし、`Crer.Windows` の不透明度設定に
 `round(opacity * 255)` を渡す。表示中かつ所有者のない CfT 本体 HWND に `WS_EX_LAYERED` と
 `SetLayeredWindowAttributes(LWA_ALPHA)` を適用する。所有 popup・非表示 widget は対象外とする。
 起動時と scenario の再利用時に適用し、省略時は完全不透明へ戻す。透過中は 250 ms 間隔で HWND を
 再探索して維持するが、フォーカス・最前面属性・重なり順は変更しない。`foreground_mode: once` の動作にも干渉しない。
 ページの CSS、CDP のスクリーンショットおよび画像テンプレート照合の入力は変更しない。
-透過指定時に DLL が未対応、または初回の適用に失敗した場合は環境エラーとする。監視中の失敗は警告を出して再試行する。
+初回の不透明度適用に失敗した場合は環境エラーとする。監視中の失敗は警告を出して再試行する。
 
 ## 4. 入力の記録と再生
 
 ### 4.1 記録
 
 `crer record` は CfT を専用プロファイルで起動し、対象のトップレベル HWND と CDP target を
-対応付ける。Windows Raw Input から受けた入力について、カーソル直下の HWND が対象 CfT の
-コンテンツ領域である時だけ採用する。物理スクリーン座標は低レベルmouse hookの
-`MSLLHOOKSTRUCT.pt` をイベント時点の値として保存し、較正マーカーとCDP
+対応付ける。Windows Raw Input から受けたマウス入力は、カーソル直下の HWND の root owner が
+対象 CfT プロセスに属する場合だけ採用する。物理スクリーン座標は Raw Input パケットの処理時に
+`GetPhysicalCursorPos` で取得し、較正マーカーと CDP
 `Page.getLayoutMetrics` を使って CSS viewport 座標に正規化する。
 
 - `WM_INPUT` の移動、ボタン、ホイールを時間順に採取する。
@@ -154,7 +154,7 @@ YAML へは不完全な操作を出力せず警告する。CfT が前景でな�
 較正後の左クリックは記録中の標準出力へ CSS 座標として表示し、content bounds を得られない場合は
 物理画面座標であることを示す `screen_px` 表記で表示する。ドラッグはクリックとして表示しない。
 
-Native DLLのhook threadとcontent HWND計測は Per-Monitor-V2 DPI awarenessを使い、DPI仮想化された
+`Crer.Windows` の記録スレッドと content HWND 計測は Per-Monitor-V2 DPI awareness を使い、DPI 仮想化された
 `GetCursorPos` の再取得値を使わない。再生ブラウザはdevice scale factorを1に固定するため、座標は
 較正したpage原点から物理1 px = CSS 1 pxとして正規化する。content HWNDの矩形にはscrollbar領域も
 含まれる一方、CDPのvisual viewportにはscrollbarが含まれないため、両者の幅・高さの比を座標倍率には
@@ -611,7 +611,7 @@ assert の失敗、`5` 中断とする。
 
 1. **基盤**: C#/.NET 10 Native AOT CLI、CfT のダウンロード／固定、専用起動、CDP client、`doctor`、YAML schema。
 2. **再生 MVP**: navigate/wait/click/scroll/text/key、window bounds、DPR・viewport 検証、artifacts。
-3. **記録**: Windows Raw Input ネイティブブリッジ、座標正規化、イベント圧縮、YAML 出力、locator hint。
+3. **記録**: `Crer.Windows` の Windows Raw Input、座標正規化、イベント圧縮、YAML 出力、locator hint。
 4. **合成**: plan scheduler、並列 worker、キャンセル、統合レポート。
 5. **堅牢化**: profile template、drag/IME、スクリーンショット差分、署名済み Windows 配布物。
 

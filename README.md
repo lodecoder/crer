@@ -7,10 +7,10 @@ C#/.NET 10 Native AOT CLI です。再生は Chrome DevTools Protocol (CDP) の�
 公開リリースの利用者向け: [日本語の使い方](docs/user-guide.ja.md) · [English guide](docs/user-guide.en.md)。
 管理者権限不要のインストール・更新・アンインストールと、CfT の設定、記録・再生の例を説明しています。
 
-全コマンドを C# に移植しています。Native AOT のビルド・publish、fixture 検証と現在の受入状況は
-[C# CLI の実行手順](docs/csharp-cli.md) と [移行対応表](docs/csharp-migration-matrix.md) を参照してください。
-win-x64 の移行受入は完了し、C# 390件・native lifecycle、実 CfT と手動記録、JS runtime を
-PATH から外した標準 build/test-release を確認しました。[結果と証跡](docs/csharp-migration-results.md) にまとめています。
+全コマンドを C# に移植し、Windows 操作も組み込んだ単一の `crer.exe` として配布します。
+Native AOT のビルド・publish と fixture 検証の現行手順は [C# CLI の実行手順](docs/csharp-cli.md) を参照してください。
+2026-10-15 の Deno → C# 移行時の受入記録は [移行対応表](docs/csharp-migration-matrix.md) と
+[結果と証跡](docs/csharp-migration-results.md) に保存しています。
 
 CfT には翻訳、パスワード保存、パスワード漏えい検出のブラウザ UI を抑止する設定を適用するため、
 記録・再生中にログインパスワードを保存するか確認するポップアップは表示しません。
@@ -21,7 +21,7 @@ CfT には翻訳、パスワード保存、パスワード漏えい検出のブ�
 - click / double-click / move / drag / scroll / text / key / key_chord / navigate / wait / assert / screenshot / sleep
 - シード付きクリック揺らぎ、失敗 artifacts、YAML plan の直列・並列実行（`max_parallel` 対応）
 - 画像 template、条件分岐・繰り返し・関数、profile ごとの browser session 再利用
-- C# .NET 10 Native AOT の Raw Input DLL と NDJSON 記録
+- C# の Windows Raw Input / Low Level Hook と NDJSON 記録
 
 記録は較正・DPI と viewport の metadata を保存し、screen px を CSS viewport px へ正規化します。
 
@@ -177,10 +177,10 @@ worker 独自の通信、WebSocket、`data:` / `blob:` URL は保証対象外で
 
 ### 手動記録と正規化
 
-初回だけ Native AOT DLL を公開ビルドします。Visual Studio Build Tools の MSVC と Windows SDK が必要です。
+ソースから使う場合は Native AOT CLI をビルドします。Visual Studio Build Tools の MSVC と Windows SDK が必要です。
 
 ```powershell
-dotnet publish native/Crer.WinInput.csproj -c Release -r win-x64
+.\scripts\build-release.ps1
 ```
 
 CfT のコンテンツ領域で操作を記録し、直接起動時は PowerShell で `Enter` または `Ctrl+C` を押して停止します。
@@ -290,7 +290,7 @@ browser:
 `foreground` や `foreground_mode` とは独立して適用され、フォーカスや重なり順を変更しません。
 同じ CfT を次の scenario で再利用するときはその scenario の値を適用し、省略時は完全不透明へ戻します。
 表示には Windows の 256 段階のアルファ値へ丸めた値を使います。ページ自体の CSS や CDP のスクリーンショットには影響しません。
-透過表示には対応する `crer-win-input.dll` が必要です。既存環境では `.\scripts\build-native.ps1` で再ビルドしてください。
+透過表示の Windows 操作は `crer.exe` に組み込まれています。
 
 ローカル fixture を使う手動 P0 テストは、次の補助スクリプトで一つの PowerShell から実行できます。
 
@@ -308,17 +308,17 @@ sidecar が作成され、`normalize` はこれを使って CSS 座標へ自動�
 `browser.window.viewport` として YAML に保存します。sidecar がない場合は、従来どおり
 `--client-origin`、`--client-size`、`--viewport` をすべて指定してください。
 
-新しい記録ではmouse hookのイベント座標とcontent HWNDを物理pixelへ統一し、較正したpage原点から
+新しい記録では Raw Input のマウスイベント処理時に取得した物理カーソル位置と content HWND を物理 pixel へ統一し、較正した page 原点から
 物理1 px = CSS 1 pxとして保存します。Windowsの表示倍率によるDPI仮想化や、content領域にだけ含まれる
 scrollbar幅を座標倍率へ混ぜないため、記録位置とCDP再生位置は整数CSS pixel単位で一致します。
 修正前のsidecarでも `requested_content` があれば正しいDPI倍率を復元できるため、新しい `normalize` で
 YAMLを再生成するとscrollbar由来のズレを補正できます。要求contentサイズがない古い記録だけは従来変換へ
-fallbackするため、高精度が必要なら新しいDLLで記録し直してください。
+fallbackするため、高精度が必要なら新しい `crer.exe` で記録し直してください。
 
 Windows の拡大率が 200% でも CfT は 100% で起動します。Git Bash やランチャーから引き継いだ
 DPI 互換モードは CfT の起動時に取り除き、枠・ページ全体が Windows によって拡大されることを防ぎます。
 
-`record --duration-ms 500` は、実入力をせずに DLL の起動・停止を確認する smoke test です。
+`record --duration-ms 500` は、実入力をせずに Windows 入力記録の開始・停止を確認する smoke test です。
 
 記録した Tab は `{ do: key, key: Tab }`、Space は `{ do: key, key: Space }` として再生します。
 Space は入力欄では空白入力、チェックボックスでは切り替え、ボタンでは押下として動作します。
@@ -653,7 +653,7 @@ steps:
 
 ### 配布用ビルド
 
-次で `dist\win-x64\crer.exe` と同じフォルダの `crer-win-input.dll` を生成します。CfT は配布物に
+次で Windows 操作を組み込んだ単一の `dist\win-x64\crer.exe` を生成します。CfT は配布物に
 含めないため、実行時に `CRER_CHROME` または `--chrome` で専用の `chrome.exe` を指定してください。
 
 ```powershell
@@ -699,4 +699,4 @@ jitter offset、URL、成否が追記され、`crer inspect` で件数と失敗�
 
 - 仕様書: [docs/specification.md](docs/specification.md)
 - 手動結合テスト: [docs/manual-test.md](docs/manual-test.md)
-- Raw Input bridge: [native/README.md](native/README.md)
+- Windows 入力・ウィンドウ操作: [src/Crer.Windows/README.md](src/Crer.Windows/README.md)

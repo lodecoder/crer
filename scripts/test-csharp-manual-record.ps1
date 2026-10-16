@@ -2,8 +2,7 @@
 param(
   [string] $CrerExe = 'dist/win-x64/crer.exe',
   [string] $Chrome = $env:CRER_CHROME,
-  [string] $InputDll,
-  [string] $FixtureServerExe = 'csharp/Crer.FixtureServer/bin/Release/net10.0/Crer.FixtureServer.exe',
+  [string] $FixtureServerExe = 'tests/Crer.FixtureServer/bin/Release/net10.0/Crer.FixtureServer.exe',
   [int] $ManualTimeoutSeconds = 900
 )
 
@@ -16,15 +15,12 @@ function Absolute([string] $Path) {
   return [IO.Path]::GetFullPath((Join-Path $projectRoot $Path))
 }
 function Check([bool] $Condition, [string] $Message) { if (-not $Condition) { throw $Message } }
-if (-not $PSBoundParameters.ContainsKey('InputDll')) {
-  $InputDll = Join-Path (Split-Path -Parent (Absolute $CrerExe)) 'crer-win-input.dll'
-}
-foreach ($path in @($CrerExe, $Chrome, $InputDll)) {
-  Check (-not [string]::IsNullOrWhiteSpace($path)) 'Specify all executables and the native input DLL.'
+foreach ($path in @($CrerExe, $Chrome)) {
+  Check (-not [string]::IsNullOrWhiteSpace($path)) 'Specify the crer and Chrome executables.'
   Check (Test-Path -LiteralPath (Absolute $path) -PathType Leaf) "Required executable missing: $path"
 }
 if (-not $PSBoundParameters.ContainsKey('FixtureServerExe') -and -not (Test-Path -LiteralPath (Absolute $FixtureServerExe) -PathType Leaf)) {
-  & dotnet build (Join-Path $projectRoot 'csharp/Crer.FixtureServer/Crer.FixtureServer.csproj') -c Release --nologo | Out-Host
+  & dotnet build (Join-Path $projectRoot 'tests/Crer.FixtureServer/Crer.FixtureServer.csproj') -c Release --nologo | Out-Host
   Check ($LASTEXITCODE -eq 0) 'Building the BCL fixture server failed.'
 }
 Check (-not [string]::IsNullOrWhiteSpace($FixtureServerExe)) 'Specify the BCL fixture server executable.'
@@ -32,7 +28,6 @@ Check (Test-Path -LiteralPath (Absolute $FixtureServerExe) -PathType Leaf) "Requ
 Check ($ManualTimeoutSeconds -gt 0) 'ManualTimeoutSeconds must be positive.'
 $CrerExe = Absolute $CrerExe
 $Chrome = Absolute $Chrome
-$InputDll = Absolute $InputDll
 $FixtureServerExe = Absolute $FixtureServerExe
 $runId = [Guid]::NewGuid().ToString('N')
 $testRoot = Join-Path $projectRoot ('.crer/manual-record/' + $runId)
@@ -106,7 +101,7 @@ try {
   $response = Invoke-WebRequest -Uri $url -TimeoutSec 5
   Check ($response.StatusCode -eq 200) 'BCL fixture server is unreachable in this execution context'
   $state.url = $url
-  $record = Start-Owned $CrerExe @('record', $raw, '--chrome', $Chrome, '--dll', $InputDll, '--url', $url,
+  $record = Start-Owned $CrerExe @('record', $raw, '--chrome', $Chrome, '--url', $url,
     '--stop-file', $stopFile, '--content-size', '800,600', '--position', '1200,80', '--name', '手動記録受入')
   $state.recordPid = $record.Id
   $state.stage = 'preparing-marker'
@@ -166,7 +161,7 @@ try {
   Copy-Item -LiteralPath $normalized -Destination $asserted
   [IO.File]::AppendAllText($asserted, '  - { do: assert, state: complete, locator_hint: { role: status, name: Result, text: "Clicks: 1" } }' + [Environment]::NewLine)
   $null = Invoke-Crer 'validate-asserted' @('validate', $asserted)
-  $playText = Invoke-Crer 'play' @('play', $asserted, '--chrome', $Chrome, '--dll', $InputDll)
+  $playText = Invoke-Crer 'play' @('play', $asserted, '--chrome', $Chrome)
   $play = $playText | ConvertFrom-Json
   Check ($play.code -eq 0 -and $play.failures.Count -eq 0) 'Replayed recording returned a failure result'
   $run = Absolute $play.runDir

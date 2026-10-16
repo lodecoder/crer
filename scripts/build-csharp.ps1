@@ -6,7 +6,9 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = "dist/csharp/$Runtime" }
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+  $OutputDirectory = if ($NoAot) { "dist/development/$Runtime" } else { "dist/$Runtime" }
+}
 $outputPath = if ([IO.Path]::IsPathRooted($OutputDirectory)) { [IO.Path]::GetFullPath($OutputDirectory) } else { [IO.Path]::GetFullPath((Join-Path $projectRoot $OutputDirectory)) }
 $vsInstaller = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer'
 $originalPath = $env:Path
@@ -14,6 +16,6 @@ Push-Location $projectRoot
 try {
   $env:Path = "$vsInstaller;$env:Path"
   $aot = if ($NoAot) { 'false' } else { 'true' }
-  & dotnet publish csharp/Crer.Cli/Crer.Cli.csproj -c Release -r $Runtime --self-contained true "-p:PublishAot=$aot" -o $outputPath
+  & dotnet publish src/Crer.Cli/Crer.Cli.csproj -c Release -r $Runtime --self-contained true "-p:PublishAot=$aot" -o $outputPath
   if ($LASTEXITCODE -ne 0) { throw "C# publish failed ($LASTEXITCODE)" }
 } finally { $env:Path = $originalPath; Pop-Location }

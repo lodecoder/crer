@@ -5,9 +5,5 @@ coverage/
 *.log
 repomix-output.*
 
-native/bin/
-native/obj/
-native/**/bin/
-native/**/obj/
-csharp/**/bin/
-csharp/**/obj/
+**/bin/
+**/obj/

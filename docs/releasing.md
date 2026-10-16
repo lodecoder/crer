@@ -22,9 +22,10 @@ $tag = Read-Host 'GitHub Release tag'
 - `crer-win-x64.zip`
 - `SHA256SUMS`（ZIP の SHA-256）
 
-ZIP 直下は `crer.exe`、`crer-win-input.dll`、`install.ps1`、`uninstall.ps1`、
+ZIP 直下は Windows 操作を含む単一の `crer.exe`、`install.ps1`、`uninstall.ps1`、
 `install-common.ps1`、CfT 導入補助2本、`README.en.md`、`README.ja.md`、`release.json`。
 ルートに LICENSE があれば同梱する。CfT 本体、PDB、profile、検証 artifacts は含めない。
+Windows 入力 DLL の別ビルド・同梱は不要。
 
 GitHub Release のタグは `$tag` と一致させ、上記 ZIP と SHA256SUMS を添付する。
 利用者は ZIP 全体を展開し、同梱 installer を実行する。利用者の .NET SDK は不要。

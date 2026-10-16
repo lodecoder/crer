@@ -2,15 +2,15 @@
 param(
   [Parameter(Mandatory)][string] $CrerExe,
   [string] $Chrome = $env:CRER_CHROME,
-  [string] $StartupStub = 'csharp\Crer.StartupStub\bin\Release\net10.0\Crer.StartupStub.exe',
-  [string] $InterruptHelper = 'csharp\Crer.InterruptHelper\bin\Release\net10.0\Crer.InterruptHelper.exe',
+  [string] $StartupStub = 'tests\Crer.StartupStub\bin\Release\net10.0\Crer.StartupStub.exe',
+  [string] $InterruptHelper = 'tests\Crer.InterruptHelper\bin\Release\net10.0\Crer.InterruptHelper.exe',
   [int] $Port = 8080
 )
 
 # Requires the externally started BCL fixture server. Does not start/stop a shared server.
 # Build test helpers first:
-# dotnet build csharp/Crer.StartupStub -c Release
-# dotnet build csharp/Crer.InterruptHelper -c Release
+# dotnet build tests/Crer.StartupStub -c Release
+# dotnet build tests/Crer.InterruptHelper -c Release
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'fixture-common.ps1')
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))

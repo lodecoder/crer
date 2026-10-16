@@ -2,8 +2,7 @@
 param(
   [string] $CrerExe = 'dist/win-x64/crer.exe',
   [string] $Chrome = $env:CRER_CHROME,
-  [string] $InputDll,
-  [string] $FixtureServerExe = 'csharp/Crer.FixtureServer/bin/Release/net10.0/Crer.FixtureServer.exe'
+  [string] $FixtureServerExe = 'tests/Crer.FixtureServer/bin/Release/net10.0/Crer.FixtureServer.exe'
 )
 
 # Automatic lifecycle acceptance only. This harness observes physical input and never injects it.
@@ -15,22 +14,18 @@ function Absolute([string] $Path) {
   return [IO.Path]::GetFullPath((Join-Path $projectRoot $Path))
 }
 function Check([bool] $Condition, [string] $Message) { if (-not $Condition) { throw $Message } }
-if (-not $PSBoundParameters.ContainsKey('InputDll')) {
-  $InputDll = Join-Path (Split-Path -Parent (Absolute $CrerExe)) 'crer-win-input.dll'
-}
-foreach ($path in @($CrerExe, $Chrome, $InputDll)) {
-  Check (-not [string]::IsNullOrWhiteSpace($path)) 'Specify all executables and the native input DLL.'
+foreach ($path in @($CrerExe, $Chrome)) {
+  Check (-not [string]::IsNullOrWhiteSpace($path)) 'Specify the crer and Chrome executables.'
   Check (Test-Path -LiteralPath (Absolute $path) -PathType Leaf) "Required executable missing: $path"
 }
 if (-not $PSBoundParameters.ContainsKey('FixtureServerExe') -and -not (Test-Path -LiteralPath (Absolute $FixtureServerExe) -PathType Leaf)) {
-  & dotnet build (Join-Path $projectRoot 'csharp/Crer.FixtureServer/Crer.FixtureServer.csproj') -c Release --nologo | Out-Host
+  & dotnet build (Join-Path $projectRoot 'tests/Crer.FixtureServer/Crer.FixtureServer.csproj') -c Release --nologo | Out-Host
   Check ($LASTEXITCODE -eq 0) 'Building the BCL fixture server failed.'
 }
 Check (-not [string]::IsNullOrWhiteSpace($FixtureServerExe)) 'Specify the BCL fixture server executable.'
 Check (Test-Path -LiteralPath (Absolute $FixtureServerExe) -PathType Leaf) "Required executable missing: $FixtureServerExe"
 $CrerExe = Absolute $CrerExe
 $Chrome = Absolute $Chrome
-$InputDll = Absolute $InputDll
 $FixtureServerExe = Absolute $FixtureServerExe
 $testRoot = Join-Path $projectRoot ('.crer/csharp-record/' + [Guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $testRoot -Force
@@ -78,7 +73,7 @@ try {
   Check ($response.StatusCode -eq 200) 'Fixture server is unreachable in this execution context'
 
   $raw = Join-Path $testRoot 'timed.ndjson'
-  Invoke-Crer 'timed-record' @('record', $raw, '--chrome', $Chrome, '--dll', $InputDll, '--url', $url,
+  Invoke-Crer 'timed-record' @('record', $raw, '--chrome', $Chrome, '--url', $url,
     '--duration-ms', '3000', '--content-size', '800,600', '--position', '1200,80', '--name', '記録自動受入')
   Check (Test-Path -LiteralPath $raw -PathType Leaf) 'Timed recorder did not create raw NDJSON'
   $metadata = Get-Content -LiteralPath ($raw + '.meta.json') -Raw | ConvertFrom-Json
@@ -94,7 +89,7 @@ try {
   # because specifying --duration-ms 0 preserves the established no-calibration option.
   $stopFile = Join-Path $testRoot 'stop'
   $rawStop = Join-Path $testRoot 'stop-file.ndjson'
-  $record = Start-Owned $CrerExe @('record', $rawStop, '--chrome', $Chrome, '--dll', $InputDll,
+  $record = Start-Owned $CrerExe @('record', $rawStop, '--chrome', $Chrome,
     '--url', $url, '--duration-ms', '0', '--stop-file', $stopFile, '--content-size', '800,600', '--name', 'stop-file')
   $outTask = $record.StandardOutput.ReadToEndAsync()
   $errTask = $record.StandardError.ReadToEndAsync()
@@ -112,10 +107,9 @@ try {
   $summary.Add([pscustomobject]@{ name = 'stop-file'; code = $record.ExitCode })
   Check (-not (Get-Content -LiteralPath ($rawStop + '.meta.json') -Raw | ConvertFrom-Json).incomplete) 'Stop-file recording incomplete'
 
-  # Failure must be a diagnostic with environment code 3; it must not masquerade as successful recording.
-  $missingDll = Join-Path $testRoot 'missing.dll'
-  Invoke-Crer 'missing-dll' @('record', (Join-Path $testRoot 'missing.ndjson'), '--chrome', $Chrome,
-    '--dll', $missingDll, '--duration-ms', '1') 3
+  # Windows 入力は実行ファイルに組み込み済みで、廃止した DLL オプションは明示的に拒否する。
+  Invoke-Crer 'removed-dll-option' @('record', (Join-Path $testRoot 'rejected.ndjson'), '--chrome', $Chrome,
+    '--dll', 'unused.dll', '--duration-ms', '1') 2
 
   [IO.File]::WriteAllText((Join-Path $testRoot 'summary.json'), ($summary | ConvertTo-Json -Depth 10))
   Write-Output "C# record lifecycle acceptance passed: $testRoot"
