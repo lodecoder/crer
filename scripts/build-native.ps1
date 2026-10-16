@@ -9,6 +9,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $vswhereDirectory = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
 $vswhere = Join-Path $vswhereDirectory 'vswhere.exe'
+$originalPath = $env:Path
 
 if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
   throw "vswhere.exe was not found at '$vswhere'. Install Visual Studio Build Tools with the C++ desktop development workload."
@@ -24,8 +25,9 @@ Push-Location $repoRoot
 try {
   dotnet publish native\Crer.WinInput.csproj -c Release -r $Runtime
   if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+    throw "Native input DLL publish failed ($LASTEXITCODE)."
   }
 } finally {
+  $env:Path = $originalPath
   Pop-Location
 }

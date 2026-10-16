@@ -2,75 +2,33 @@
 param(
   [int] $Port = 8080,
   [string] $Chrome = $env:CRER_CHROME,
-  [string] $Scenario = 'fixtures\\playback\\search.crer.yaml',
+  [string] $Scenario = 'fixtures/playback/search.crer.yaml',
   [int] $ExpectedExitCode = 0,
-  [string] $CrerExe
+  [string] $CrerExe = 'dist/win-x64/crer.exe'
 )
-
 $ErrorActionPreference = 'Stop'
-$projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if ([string]::IsNullOrWhiteSpace($Chrome) -or -not (Test-Path -LiteralPath $Chrome -PathType Leaf)) {
-  throw 'Set CRER_CHROME or pass -Chrome with the Chrome for Testing chrome.exe path.'
-}
-if (-not [string]::IsNullOrWhiteSpace($CrerExe) -and -not (Test-Path -LiteralPath $CrerExe -PathType Leaf)) {
-  throw "CRER executable was not found: $CrerExe"
-}
+. (Join-Path $PSScriptRoot 'fixture-common.ps1')
+if ([string]::IsNullOrWhiteSpace($Chrome) -or -not (Test-Path -LiteralPath $Chrome -PathType Leaf)) { throw 'Specify Chrome for Testing with -Chrome or CRER_CHROME.' }
+if ([string]::IsNullOrWhiteSpace($CrerExe)) { $CrerExe = 'dist/win-x64/crer.exe' }
 Add-Type -AssemblyName System.Windows.Forms
-$server = Start-Process -FilePath (Get-Command pwsh -ErrorAction Stop).Source -ArgumentList @(
-  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'serve-playback-fixture.ps1'), '-Port', $Port
-) -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+$server = Start-OwnedFixtureServer -Port $Port
 try {
-  $url = "http://127.0.0.1:$Port/index.html"
-  $deadline = [DateTime]::UtcNow.AddSeconds(5)
-  do {
-    try { $ready = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 $url).StatusCode -eq 200 } catch { $ready = $false; Start-Sleep -Milliseconds 100 }
-  } while (-not $ready -and [DateTime]::UtcNow -lt $deadline)
-  if (-not $ready) { throw "Playback fixture did not start at $url" }
   $before = [System.Windows.Forms.Cursor]::Position
-  Start-Sleep -Seconds 1
+  Start-Sleep -Milliseconds 1000
   $control = [System.Windows.Forms.Cursor]::Position
-  Push-Location $projectRoot
-  try {
-    if ([string]::IsNullOrWhiteSpace($CrerExe)) {
-      & deno task dev play $Scenario --chrome $Chrome --keep-artifacts
-    } else {
-      & $CrerExe play $Scenario --chrome $Chrome --keep-artifacts
-    }
-  } finally { Pop-Location }
-  if ($LASTEXITCODE -ne $ExpectedExitCode) { throw "play exited with code $LASTEXITCODE (expected $ExpectedExitCode)" }
-  $run = Get-ChildItem -LiteralPath (Join-Path $projectRoot '.crer\runs') -Directory |
-    Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 1
-  $requiredArtifacts = @('run.json', 'display.json', 'foreground.json')
-  if ($ExpectedExitCode -eq 0) {
-    $requiredArtifacts += 'result.png'
-  } else {
-    $requiredArtifacts += 'failure-0.png'
+  $result = Invoke-FixtureCli -Executable $CrerExe -Arguments @('play', (Resolve-FixturePath $Scenario), '--chrome', (Resolve-FixturePath $Chrome), '--keep-artifacts') -ExpectedCode $ExpectedExitCode -Evidence $server.Root -Label 'play'
+  $run = Resolve-FixturePath $result.runDir
+  foreach ($artifact in @('run.json', 'steps.ndjson', 'display.json', 'foreground.json', 'cleanup.json')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $run $artifact) -PathType Leaf)) { throw "Missing artifact: $artifact" }
   }
-  if (-not $run) {
-    throw 'Playback did not create a run directory.'
-  }
-  $missingArtifacts = $requiredArtifacts | Where-Object {
-    -not (Test-Path -LiteralPath (Join-Path $run.FullName $_) -PathType Leaf)
-  }
-  if ($missingArtifacts) {
-    throw "Playback artifacts were not all created: $($requiredArtifacts -join ', ')."
-  }
-  $foreground = Get-Content -LiteralPath (Join-Path $run.FullName 'foreground.json') -Raw | ConvertFrom-Json
-  if ($null -ne $foreground.captureError) {
-    throw "Foreground window capture failed: $($foreground.captureError)"
-  }
-  if ($foreground.restoreStatus -ne 0) {
-    throw "Foreground window restore failed with Win32 status $($foreground.restoreStatus)"
-  }
-  Write-Host "Artifacts: $($run.FullName)"
+  $image = if ($ExpectedExitCode -eq 0) { 'result.png' } else { 'failure-0.png' }
+  if (-not (Test-Path -LiteralPath (Join-Path $run $image))) { throw "Missing screenshot: $image" }
+  $cleanup = Get-Content -Raw -LiteralPath (Join-Path $run 'cleanup.json') | ConvertFrom-Json
+  if (-not $cleanup.chromeExited -or $cleanup.pendingCdpRequests -ne 0 -or $cleanup.errors.Count -ne 0) { throw 'Chrome/CDP cleanup failed.' }
+  $foreground = Get-Content -Raw -LiteralPath (Join-Path $run 'foreground.json') | ConvertFrom-Json
+  if ($foreground.captureError -or $foreground.restoreStatus -ne 0) { throw 'Foreground capture/restore failed.' }
   $after = [System.Windows.Forms.Cursor]::Position
-  if ($before -ne $control) {
-    Write-Warning "INCONCLUSIVE: cursor changed without playback ($before to $control); playback cannot be isolated in this desktop session."
-  } elseif ($control -ne $after) {
-    Write-Warning "INCONCLUSIVE: cursor changed during playback ($control to $after). This can be user or external input; rerun without operating the mouse to verify isolation."
-  } else {
-    Write-Host "PASS: playback completed without changing the physical cursor ($before)."
-  }
-} finally {
-  if (-not $server.HasExited) { Stop-Process -Id $server.Id -Force }
-}
+  if ($before -ne $control -or $control -ne $after) { Write-Warning 'INCONCLUSIVE: physical cursor moved; external input cannot be isolated.' }
+  else { Write-Host "PASS observed no physical cursor change ($before)." }
+  Write-Host "PASS playback code $ExpectedExitCode; artifacts: $run; harness: $($server.Root)"
+} finally { Stop-OwnedFixtureServer $server }

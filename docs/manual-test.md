@@ -1,221 +1,96 @@
-# CRER 手動結合テスト手順
+# Windows の実機受入
 
-Windows 11 上で PowerShell を開き、リポジトリのルートへ移動して実行する。
-
-```powershell
-cd C:\Users\a5\devai\crer
-$env:CRER_CHROME = 'C:\path\to\chrome.exe'
-.\scripts\build-native.ps1
-deno task dev doctor
-```
-
-`build-native.ps1` は Visual Studio 2026 の `vswhere.exe` をそのビルド処理だけ PATH に追加する。
-同じ PowerShell で直接 `dotnet publish` を実行する必要がある場合は、先に次を実行する。
+C#/.NET 10 SDK、Visual Studio Build Tools の MSVC と Windows SDK、明示した Chrome for Testing を用意する。
+配布済み `crer.exe` の実行には .NET SDK・共有 runtime は不要。今回の対象は win-x64。
+既存の通常 Chrome・profile を使わず、各 harness が所有する専用 CfT と `.crer` の検証ディレクトリを使う。
 
 ```powershell
-$env:Path = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:Path"
-dotnet publish native\Crer.WinInput.csproj -c Release -r win-x64
+.\scripts\build-release.ps1
+.\dist\win-x64\crer.exe doctor --chrome $env:CRER_CHROME
+.\scripts\verify.ps1
 ```
 
-`doctor` で `chrome.exists: true` と `ffiExists: true` を確認する。`chrome.manifest` がある場合は
-`matchesChrome: true`、`matchesSha256: true`、`isChromeForTesting: true` も確認する。manifest がない場合、CfT かどうかは
-パスだけでは確定できないため `isChromeForTesting: "unverified"` となる。以下のテスト中は普段使いの
-Chrome を操作しない。CRER は `CRER_CHROME` または `--chrome` を明示しない限り起動しない。
-CRER は CfT を `devicePixelRatio: 1` および翻訳ポップアップ無効で起動するため、Windows の表示倍率を
-変更する必要はない。
+`doctor` の Chrome path/version/SHA-256/manifest と `ffiExists` を確認する。CfT 未指定時の自動探索は行わない。
+manifest に登録する場合は `install-chrome-for-testing.ps1 -ChromePath <chrome.exe> -Version <version>` を使う。
 
-## 1. 成功再生とカーソル
-
-DPI 互換モードの回帰テストは Windows の拡大率 200% の環境で次を実行する。
-テスト内で `DPIUNAWARE` 等の環境を付与し、枠の物理サイズと CDP のサイズが一致すること、
-ページ倍率が 1 であること、記録時も物理 pixel と CSS pixel が一致することを確認する。
-Git Bash 経由でも同じテストを実行できる。Windows の表示設定自体は変更しない。
-
-```powershell
-$env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/display_scale_integration_test.ts
-Remove-Item Env:CRER_TEST_CHROME
-```
-
-ログインフォームのキー操作は次で検証する。記録形式のメールアドレス入力・Tab・パスワード入力・
-Tab 2回・Space・Tab・Space を normalize して実機再生し、フォーカス順、チェックボックス ON、
-submit を確認する。パスワード内の空白入力と、旧記録の Unicode 空白・VK_SPACE の両形式も検証する。
-
-```powershell
-$env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/login_keyboard_integration_test.ts
-Remove-Item Env:CRER_TEST_CHROME
-```
-
-profile ごとの並列 session 再利用は次で検証する。a1 → a2 と b1 → b2 を別 profile で同時実行し、
-初回ページの応答を双方の到着まで待たせて並列性を確認する。ページの sessionStorage と run artifacts で
-再利用・分離・plan 終了時の終了処理を検証し、一方の worker timeout が他方の再利用を壊さないことも確認する。
-
-```powershell
-$env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/plan_sessions_integration_test.ts
-Remove-Item Env:CRER_TEST_CHROME
-```
-
-URL ブロックの実機テストは、導入済み CfT を明示して次で実行できる。ローカル HTTP サーバーと
-専用の一時 profile を使い、初回・後続遷移・リダイレクト先の画像遮断、非一致画像の取得、
-同一 session での設定変更・解除、network idle を検証する。各 scenario の後で `display-mode: standalone`
-と page target が一つであることも検証し、タブ付きウィンドウへの退行を検出する。
-
-```powershell
-$env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/url_blocker_integration_test.ts
-Remove-Item Env:CRER_TEST_CHROME
-```
-
-最前面制御の回帰テストは次で実行する。ネイティブテストでは Chrome と同じクラス名の
-本体・非表示 widget・所有 popup を一時作成し、本体の `WS_EX_TOPMOST`、解除、フォーカス不変を検証する。
-実機テストでは専用 CfT を起動し、単独再生・session 再利用の sleep 中に最前面属性を解除して
-自動復帰を確認する。`foreground: false` への切り替えで監視が停止することも確認する。
-`foreground_mode: once` では別の最前面ウィンドウを CfT の上に重ね、複数の step を実行しても
-CfT が上へ移動しないことと、最前面属性自体が保持されることを確認する。
-単独再生、再利用、`always` → `once` → `always` の切り替えと、各 once scenario の適用回数が一回で
-あることを検証する。`focus: before-step` を指定した plan でも once が優先されることを確認する。
-同じテストで `opacity` の完全透明・半透明・完全不透明と、再利用時の変更・省略時の復帰を検証する。
-`foreground: false` でも透過でき、`once` と透過の併用時に他の最前面ウィンドウを追い越さないことを確認する。
-ネイティブテストではアルファ値に加えて、他のウィンドウ属性とフォーカスを変更しないことも検証する。
-
-```powershell
-.\scripts\build-native.ps1
-$env:CRER_TEST_WINDOWS = '1'
-$env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno task test:native
-deno test -A tests/topmost_integration_test.ts
-Remove-Item Env:CRER_TEST_WINDOWS, Env:CRER_TEST_CHROME
-```
-
-マウスを動かさず、次を実行する。
+## 再生と非干渉の観測
 
 ```powershell
 .\scripts\test-playback-fixture.ps1
+.\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\keyboard-submit.crer.yaml
+.\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\drag.crer.yaml
+.\scripts\test-plan-fixture.ps1
+.\scripts\test-session-reuse-fixture.ps1
 ```
 
-期待結果:
-
-- CfT が表示され、fixture の Search に `crer` が入力され Submit が押される。
-- 終了コードは 0。
-- `.crer\runs\<run-id>` に `run.json`、`display.json`、`result.png` がある。
-- 同じフォルダの `foreground.json` に `restoreStatus: 0` がある。
-- `PASS` が表示される。デスクトップ環境自体がカーソルを動かす場合は `INCONCLUSIVE` 警告でもよい。
-
-この補助テストはカーソルの**変化だけ**を観測するため、実行中に利用者がマウスを動かした場合も原因を
-区別できない。その場合は失敗ではなく `INCONCLUSIVE` 警告となる。無操作で `PASS` になることを
-非干渉の確認条件とする。キーボード入力はこのカーソル検査の対象外であり、再生処理は利用者の
-キーボードを注入・ブロックしない。
-
-カーソルと前面ウィンドウだけを観察する場合は、5 秒間何も操作しない fixture を使う。コマンド実行後は
-マウス・キーボードへ触れずに待機する。
+各 assertion、終了コード、PNG、run/display/cleanup 診断を検査する。通常の非 foreground 再生中は
+マウスやキーボードに触れずに待つ。外部操作が入ったカーソル・前景観測は `INCONCLUSIVE` として残し、
+再生の機能成功と分けて扱う。通常 Chrome の既存 PID を読み取り比較し、終了対象に含めない。
 
 ```powershell
 .\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\cursor-idle.crer.yaml
+.\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\failure.crer.yaml -ExpectedExitCode 4
+.\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\explicit-failure.crer.yaml -ExpectedExitCode 4
 ```
 
-2026-08-26 にこの fixture は物理カーソル不変で PASS した。`foreground.json` の
-`restoreStatus: 0` と合わせ、通常 Chrome を開いたままの非干渉確認に使う。
+明示 fail は continue 指定があっても停止し、`failure-0.png` と kind: explicit の診断を保存する。
+後続の screenshot は生成されない。ephemeral profile は既定で削除し、診断・画像と persistent profile は保持する。
 
-## 2. 失敗 artifacts
+## 結合テスト
+
+BCL の動的 loopback server と公開 exe を使う。`--only` を省略すると全グループを実行する。
+`--windows` は前景化・重なり順を明示的に操作するテストなので、実行中は CfT の検証を待つ。
 
 ```powershell
-.\scripts\test-playback-fixture.ps1 `
-  -Scenario fixtures\playback\failure.crer.yaml `
-  -ExpectedExitCode 4
+dotnet run --project csharp/Crer.IntegrationTests -c Release -- `
+  --exe dist/win-x64/crer.exe --chrome "$env:CRER_CHROME" `
+  --dll dist/win-x64/crer-win-input.dll --windows
+
+dotnet run --project csharp/Crer.ControlIntegrationTests -c Release -- `
+  --exe dist/win-x64/crer.exe --chrome "$env:CRER_CHROME"
 ```
 
-期待結果:
+前者は plan の並列性・profile 分離・再利用・worker timeout・fail_fast、URL 遮断の初回/差替え/解除、
+Tab と Space の旧記録、DPI・viewport、profile 排他、非干渉観測を検証する。
+Windows グループは foreground always/once の優先順位、sleep 中の topmost watchdog、opacity と
+再利用時の変更・解除、終了時の復元を実際の HWND で検証する。
+選択例は `--only plan,blocking`、`--only keyboard,display,profiles`、`--only windows --windows`。
+後者は template の単/複数一致、cache、missing、画像保存方針、条件・反復・break・関数、seed/jitter を検証する。
 
-- 実行は終了コード 4 を確認して完了する。
-- 最新 `.crer\runs\<run-id>` に `failure-0.png`、`run.json`、`display.json` がある。
-- CfT ウィンドウが終了する。
-
-明示的な `do: fail` が `playback.on_failure.default: continue` より優先されることは、次で確認する。
-
-```powershell
-.\scripts\test-playback-fixture.ps1 `
-  -Scenario fixtures\playback\explicit-failure.crer.yaml `
-  -ExpectedExitCode 4
-```
-
-- 最新 run の `steps.ndjson` に index `0`、`status: failed`、`kind: explicit`、指定した `message` がある。
-- `failure-0.png` があり、`should-not-run.png` と index `1` の step record はない。
-- CfT ウィンドウが終了する。
-
-## 3. 手動 record → YAML → replay
+## 手動 record → normalize → validate → play
 
 ```powershell
 .\scripts\record-playback-fixture.ps1
 ```
 
-この補助スクリプトは、指定した raw NDJSON・metadata・生成 YAML を開始時に削除して、新しい記録だけを
-出力する。残したい記録には `-Output` と `-Scenario` で別のパスを指定する。
+1. CfT 左上のマゼンタの較正点を一度クリックする。
+2. 点が消えたら Search 欄をクリックし、`Crer42` を入力して Submit を押す。
+3. 記録元の PowerShell に戻り Enter を一度押す。
 
-CfT の fixture が開いたら次を行う。
-
-1. ページ左上に表示されるマゼンタ色の 64×64 CSS px 点をクリックする。点が消え、以後の操作の記録が始まる。
-2. Search 欄をクリックする。
-3. `Crer42` と入力する。
-4. Submit をクリックする。
-5. 記録元の PowerShell に戻り、Enter を一度押す。
-
-Windows の `Ctrl+C` は PowerShell の子プロセスを強制終了して後続の normalize を実行できないことがある。
-このスクリプトは Enter を受けると stop file を作成し、record に graceful close を依頼してから normalize する。
-
-期待結果:
-
-- `.crer\fixture.raw-input.ndjson` が作成される。
-- `.crer\fixture.recorded.crer.yaml` が作成される。
-- 有効な content bounds を取得でき、較正点をクリックした場合は `.crer\fixture.raw-input.ndjson.meta.json` に
-  `marker_calibration` と `screen_pixels_per_css_pixel: { x: 1, y: 1 }` が作成される。
-- 記録中に表示されたclickのCSS座標と生成YAMLの `click.at` が一致する。再生時の `steps.ndjson` にも同じ
-  実効座標が記録される。
-- bounds 警告が出た場合、YAML の座標は物理 screen px の可能性があるため replay は行わず、その警告文を報告する。
-
-metadata が作成され、bounds 警告がなければ再生する。記録時の操作間隔は YAML の `sleep` ステップに
-自動保存され、通常の再生ではその間隔を再現する。
+このスクリプトは出力先の既存 raw/metadata/YAML を置き換えるため、保護したい記録には
+`-Output` と `-Scenario` で新しいパスを指定する。record は物理操作の観測だけを行う。
+stop file で graceful stop した後、metadata の較正・content/viewport と不完全入力の警告を確認する。
+操作間隔は直前 action の `delay_ms` として保存される。
 
 ```powershell
-deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts
+.\dist\win-x64\crer.exe validate .crer\fixture.recorded.crer.yaml
+.\dist\win-x64\crer.exe play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts
 ```
 
-Tab で Submit にフォーカスして Enter で実行するキー再生は、次の fixture で確認できる。
+`test-csharp-manual-record.ps1` は一意な保存先に受入用 counter を開く。
+較正点、Increment を各一度クリックし、表示が `Clicks: 1` になったら、出力された stopFile を作成する。
+公開 exe の normalize/validate/play と最終 `Clicks: 1` assertion、所有 CfT の終了まで検査する。
+IME の確定文字列は元から観測対象外。mock や hook packet の成功を手動実測の代わりに数えない。
 
-```powershell
-.\scripts\test-playback-fixture.ps1 -Scenario fixtures\playback\keyboard-submit.crer.yaml
-```
+自動の停止経路・DLL 障害検査は `scripts/test-csharp-record.ps1`、hook の overflow/再開始は
+`dotnet run --project native/tests -c Release` と `Crer.RecordTests` に分ける。
 
-失敗を記録したまま次の scenario を続行し、plan が code 4 に集約されることは次で確認できる。
-
-```powershell
-.\scripts\test-plan-fixture.ps1
-```
-
-目視確認でさらに待機したい場合は、記録済みの `sleep` に 1 秒を追加する。
-
-```powershell
-deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts --step-delay-ms 1000
-```
-
-## 5. standalone 配布物
-
-Native AOT DLL を横に置いた standalone 実行ファイルを生成し、同じ fixture で再生する。
+## 配布物
 
 ```powershell
 .\scripts\test-release.ps1
 ```
 
-期待結果:
-
-- `dist\win-x64\crer.exe` と `dist\win-x64\crer-win-input.dll` が生成される。
-- fixture 再生は終了コード 0 で終了し、`result.png` を含む artifact が作成される。
-- `PASS: standalone distribution playback completed` が表示され、物理カーソル不変の判定も通る。
-
-報告してほしい情報:
-
-- 各コマンドの出力全体
-- 成功／失敗の終了コード
-- `.crer\runs\<run-id>` のファイル名一覧
-- 手動 record 時に表示された警告
+`dist/win-x64/crer.exe` と同じフォルダの `crer-win-input.dll` を Native AOT でビルドし、公開配布物で
+search/keyboard/drag/plan/session reuse を検証する。実行環境、再現コマンド、結果と証跡は
+[C# 移行対応表](csharp-migration-matrix.md) に記録する。比較専用の旧実装は `scripts/compat` へ隔離する。

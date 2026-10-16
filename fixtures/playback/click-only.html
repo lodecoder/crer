@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <title>crer click-only playback fixture</title>
+  <style>
+    body { margin: 0; font: 20px sans-serif; background: #f5f7fa; color: #152238; }
+    #increment { position: absolute; left: 40px; top: 40px; width: 180px; height: 48px; font: inherit; }
+    #result { position: absolute; left: 40px; top: 112px; }
+  </style>
+  <body>
+    <button id="increment" role="button">Increment</button>
+    <output id="result" role="status" aria-label="Result">Clicks: 0</output>
+    <script>
+      let clicks = 0;
+      document.querySelector('#increment').addEventListener('click', () => {
+        clicks++;
+        document.querySelector('#result').textContent = `Clicks: ${clicks}`;
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,35 @@
+version: 1
+name: playback-fixture-click-only
+browser:
+  chrome: chrome-for-testing@pinned
+  profile: ephemeral
+  initial_url: http://127.0.0.1:8080/click-only.html
+  window:
+    bounds: { left: 120, top: 80, width: 900, height: 700 }
+    content: { width: 860, height: 560 }
+  display:
+    expected_dpr: 1
+    browser_zoom: 100
+    zoom_check: strict
+playback:
+  seed: "42"
+  jitter: { enabled: false }
+steps:
+  - do: wait_for
+    state: complete
+    locator_hint: { role: button, name: Increment }
+  - do: assert
+    state: complete
+    locator_hint: { role: status, name: Result, text: "Clicks: 0" }
+  - do: screenshot
+    name: before
+  - do: click
+    at: { x: 130, y: 64 }
+  - do: wait_for
+    state: visible
+    locator_hint: { role: status, name: Result, text: "Clicks: 1" }
+  - do: assert
+    state: complete
+    locator_hint: { role: status, name: Result, text: "Clicks: 1" }
+  - do: screenshot
+    name: result

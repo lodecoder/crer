@@ -1,8 +1,16 @@
 # crer
 
 Windows 上で Chrome for Testing を専用プロファイルで起動し、GUI ブラウザ操作を記録・再生する
-Deno CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使うため、OS の物理マウス・
+C#/.NET 10 Native AOT CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使うため、OS の物理マウス・
 キーボードや普段使いの Chrome を操作しません。
+
+公開リリースの利用者向け: [日本語の使い方](docs/user-guide.ja.md) · [English guide](docs/user-guide.en.md)。
+管理者権限不要のインストール・更新・アンインストールと、CfT の設定、記録・再生の例を説明しています。
+
+全コマンドを C# に移植しています。Native AOT のビルド・publish、fixture 検証と現在の受入状況は
+[C# CLI の実行手順](docs/csharp-cli.md) と [移行対応表](docs/csharp-migration-matrix.md) を参照してください。
+win-x64 の移行受入は完了し、C# 390件・native lifecycle、実 CfT と手動記録、JS runtime を
+PATH から外した標準 build/test-release を確認しました。[結果と証跡](docs/csharp-migration-results.md) にまとめています。
 
 CfT には翻訳、パスワード保存、パスワード漏えい検出のブラウザ UI を抑止する設定を適用するため、
 記録・再生中にログインパスワードを保存するか確認するポップアップは表示しません。
@@ -12,17 +20,17 @@ CfT には翻訳、パスワード保存、パスワード漏えい検出のブ�
 - `.crer.yaml` の検証、CfT の隔離起動、headful な CDP 入力再生
 - click / double-click / move / drag / scroll / text / key / key_chord / navigate / wait / assert / screenshot / sleep
 - シード付きクリック揺らぎ、失敗 artifacts、YAML plan の直列・並列実行（`max_parallel` 対応）
+- 画像 template、条件分岐・繰り返し・関数、profile ごとの browser session 再利用
 - C# .NET 10 Native AOT の Raw Input DLL と NDJSON 記録
 
-screen px から CSS viewport px への正確な変換、IME を含む text
-正規化は次の実装段階です。
+記録は較正・DPI と viewport の metadata を保存し、screen px を CSS viewport px へ正規化します。
 
 現在の `record` は Windows のキーボードレイアウトを使って英数字と記号を正規化します。日本語 IME の
 確定文字列、特殊キー、複雑なショートカットは YAML を後から編集してください。
 
 ## 実行
 
-Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイルを `CRER_CHROME` に設定するか
+Chrome for Testing と公開した crer.exe を用意し、Chrome 実行ファイルを `CRER_CHROME` に設定するか
 `--chrome` で渡します。未指定時に通常 Chrome へフォールバックすることはありません。
 
 固定版を導入する場合は `./scripts/install-chrome-for-testing.ps1 -Version 152.0.7977.42` を実行します。
@@ -32,16 +40,16 @@ Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイル�
 
 ```powershell
 . .\scripts\install-chrome-for-testing.ps1 -ChromePath $env:CRER_CHROME -Version 152.0.7977.42
-deno task dev doctor
+.\dist\win-x64\crer.exe doctor
 ```
 
 ```powershell
 $env:CRER_CHROME = 'C:\\path\\to\\chrome.exe'
-deno task dev validate scenario.crer.yaml
-deno task dev play scenario.crer.yaml --keep-artifacts
-deno task dev run nightly.crer.plan.yaml
-deno task dev inspect .crer\runs\<run-id>
-deno task verify
+.\dist\win-x64\crer.exe validate scenario.crer.yaml
+.\dist\win-x64\crer.exe play scenario.crer.yaml --keep-artifacts
+.\dist\win-x64\crer.exe run nightly.crer.plan.yaml
+.\dist\win-x64\crer.exe inspect .crer\runs\<run-id>
+.\scripts\verify.ps1
 ```
 
 `run` で plan に含まれるすべての scenario を同じウィンドウ bounds で起動するには、
@@ -51,7 +59,7 @@ deno task verify
 `left,top,width,height`（いずれも整数）です。実効値は各 run artifact の `run.json` に保存されます。
 
 ```powershell
-deno task dev run .crer\daily.crer.plan.yaml `
+.\dist\win-x64\crer.exe run .crer\daily.crer.plan.yaml `
   --plan-window-bounds-override 10,10,1280,900
 ```
 
@@ -61,7 +69,7 @@ plan 全体の不透明度は `run` 専用の `--plan-window-opacity-override` �
 指定値は各 run の `run.json.windowOpacityOverride` に保存します。
 
 ```powershell
-deno task dev run .crer\daily.crer.plan.yaml `
+.\dist\win-x64\crer.exe run .crer\daily.crer.plan.yaml `
   --plan-window-bounds-override 10,10,1280,900 `
   --plan-window-opacity-override 0.5
 ```
@@ -181,11 +189,11 @@ CfT のコンテンツ領域で操作を記録し、直接起動時は PowerShel
 content bounds を取得できない場合だけ、代わりに物理画面座標を `screen_px` として表示します。
 
 ```powershell
-deno task dev record .crer\raw-input.ndjson `
+.\dist\win-x64\crer.exe record .crer\raw-input.ndjson `
   --url 'https://example.test' `
   --content-size 860,560 `
   --position 1200,80
-deno task dev normalize .crer\raw-input.ndjson `
+.\dist\win-x64\crer.exe normalize .crer\raw-input.ndjson `
   --url 'https://example.test' `
   --output recorded.crer.yaml `
   --name example-recording
@@ -198,11 +206,11 @@ deno task dev normalize .crer\raw-input.ndjson `
 ```powershell
 $profile = "$PWD\.crer\profiles\yahoo"
 
-deno task dev record .crer\yahoo.ndjson `
+.\dist\win-x64\crer.exe record .crer\yahoo.ndjson `
   --url https://www.yahoo.co.jp/ `
   --profile-dir $profile
 
-deno task dev play .crer\yahoo.recorded.crer.yaml `
+.\dist\win-x64\crer.exe play .crer\yahoo.recorded.crer.yaml `
   --chrome $env:CRER_CHROME `
   --profile-dir $profile `
   --mute-audio
@@ -347,7 +355,7 @@ template以外の失敗画像、`result.png` には影響しません。
 CLIはYAMLより優先し、`play` と `run` の全scenarioへ適用できます。
 
 ```powershell
-deno task dev run plan.crer.plan.yaml --template-screenshots failure-only
+.\dist\win-x64\crer.exe run plan.crer.plan.yaml --template-screenshots failure-only
 ```
 
 `on_missing` は step 直下ではなく、必ず `template` 内へ指定します。`fail` は template 失敗を発生させますが、
@@ -654,7 +662,10 @@ $env:CRER_CHROME = 'C:\path\to\chrome.exe'
 .\dist\win-x64\crer.exe doctor
 ```
 
+公開用 ZIP・チェックサム・日英ガイドをまとめる手順は [リリースの準備](docs/releasing.md) を参照してください。
+
 ARM64 の Windows PC 向けには、ARM64 用の MSVC / Windows SDK を導入した上で次を実行します。
+今回の移行受入は win-x64 を対象とし、ARM64 の publish・実機確認は利用者の指示で対象外です。
 
 ```powershell
 .\scripts\build-release.ps1 -Runtime win-arm64
