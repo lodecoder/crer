@@ -1,3 +1,8 @@
+import { open, readFile, writeFile } from "node:fs/promises";
+import { loadNativeLibrary } from "./native.ts";
+
+const isNotFound = (error: unknown) =>
+  error instanceof Error && "code" in error && error.code === "ENOENT";
 export type MarkerCalibration = {
   screenClick: { x: number; y: number };
   cssPoint: { x: number; y: number };
@@ -6,11 +11,11 @@ export type MarkerCalibration = {
 async function markIncompleteRecording(output: string, error: string) {
   let metadata: Record<string, unknown> = {};
   try {
-    metadata = JSON.parse(await Deno.readTextFile(`${output}.meta.json`));
+    metadata = JSON.parse(await readFile(`${output}.meta.json`, "utf8"));
   } catch (readError) {
-    if (!(readError instanceof Deno.errors.NotFound)) throw readError;
+    if (!isNotFound(readError)) throw readError;
   }
-  await Deno.writeTextFile(
+  await writeFile(
     `${output}.meta.json`,
     JSON.stringify({ ...metadata, incomplete: true, recording_error: error }, null, 2) + "\n",
   );
@@ -28,7 +33,7 @@ export async function recordRaw(
   requestedContent?: { x: number; y: number },
   profileDir?: string,
 ) {
-  const lib = Deno.dlopen(dllPath, {
+  const lib = loadNativeLibrary(dllPath, {
     crer_input_abi_version: { parameters: [], result: "u32" },
     crer_input_qpc_frequency: { parameters: [], result: "u64" },
     crer_input_start: { parameters: ["u32"], result: "i32" },
@@ -89,7 +94,7 @@ export async function recordRaw(
     const writeMetadata = async (recordingError?: unknown) => {
       const rect = contentRect();
       const validRect = rect.status === 0 && rect.width >= 32 && rect.height >= 32;
-      await Deno.writeTextFile(
+      await writeFile(
         `${output}.meta.json`,
         JSON.stringify(
           {
@@ -125,7 +130,7 @@ export async function recordRaw(
     console.error(
       "Click the 64x64 magenta marker at the page's upper-left corner to calibrate and begin recording.",
     );
-    const file = await Deno.open(output, { create: true, write: true, append: true });
+    const file = await open(output, "a");
     let recordingError: unknown;
     let metadataError: unknown;
     let metadata = { rectStatus: 0, validRect: false };
@@ -198,7 +203,7 @@ export async function recordRaw(
             mouseDown = undefined;
             mouseMoved = false;
           }
-          await file.write(new TextEncoder().encode(JSON.stringify(event) + "\n"));
+          await file.writeFile(new TextEncoder().encode(JSON.stringify(event) + "\n"));
         }
         await new Promise((r) => setTimeout(r, 16));
       }
@@ -206,7 +211,7 @@ export async function recordRaw(
       recordingError = error;
       throw error;
     } finally {
-      file.close();
+      await file.close();
       try {
         metadata = await writeMetadata(recordingError);
       } catch (error) {

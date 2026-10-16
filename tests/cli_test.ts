@@ -1,8 +1,10 @@
 import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { test } from "node:test";
 import { validateCommandOptions } from "../src/cli.ts";
 import { EnvironmentError, exitCodeFor, InterruptedError, ValidationError } from "../src/errors.ts";
+import { runCli } from "./helpers.ts";
 
-Deno.test("validates command-specific options", () => {
+test("validates command-specific options", () => {
   validateCommandOptions("play", ["--seed", "42", "--mute-audio"]);
   assertThrows(
     () => validateCommandOptions("play", ["--seed"]),
@@ -21,20 +23,15 @@ Deno.test("validates command-specific options", () => {
   );
 });
 
-Deno.test("maps validation failures to exit code 2 without an uncaught stack", async () => {
-  const result = await new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "src/main.ts", "validate", "missing.crer.yaml"],
-    cwd: Deno.cwd(),
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+test("maps validation failures to exit code 2 without an uncaught stack", async () => {
+  const result = await runCli(["validate", "missing.crer.yaml"]);
   const stderr = new TextDecoder().decode(result.stderr);
   assertEquals(result.code, 2);
   assertStringIncludes(stderr, "invalid scenario or plan");
   assertEquals(stderr.includes("Uncaught"), false);
 });
 
-Deno.test("window opacity override is a run-only option with a required value", () => {
+test("window opacity override is a run-only option with a required value", () => {
   validateCommandOptions("run", ["--plan-window-opacity-override", "0"]);
   assertThrows(
     () => validateCommandOptions("run", ["--plan-window-opacity-override"]),
@@ -50,8 +47,27 @@ Deno.test("window opacity override is a run-only option with a required value", 
   }
 });
 
-Deno.test("maps typed failures to the documented process exit codes", () => {
+test("maps typed failures to the documented process exit codes", () => {
   assertEquals(exitCodeFor(new ValidationError("bad input")), 2);
   assertEquals(exitCodeFor(new EnvironmentError("browser lost")), 3);
   assertEquals(exitCodeFor(new InterruptedError("cancelled")), 5);
 });
+
+for (const duration of ["NaN", "-1"]) {
+  test(
+    `record rejects duration ${duration} before resolving Chrome`,
+    { timeout: 10_000 },
+    async (context) => {
+      const result = await runCli([
+        "record",
+        ".crer/invalid-duration.ndjson",
+        "--chrome",
+        "does-not-exist.exe",
+        "--duration-ms",
+        duration,
+      ], { signal: context.signal });
+      assertEquals(result.code, 2, result.stderr.toString("utf8"));
+      assertStringIncludes(result.stderr.toString("utf8"), "--duration-ms");
+    },
+  );
+}

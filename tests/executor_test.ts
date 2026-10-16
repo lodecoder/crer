@@ -1,16 +1,20 @@
 import { assertEquals, assertRejects } from "@std/assert";
+import { test } from "node:test";
 import { ExecutionContext, StepExecutor } from "../src/executor.ts";
 import type { Step } from "../src/types.ts";
 
-Deno.test("step executor preserves nested indexes and one-child cache scope", async () => {
+test("step executor preserves nested indexes and one-child cache scope", async () => {
   const visited: Array<{ index: string; cache?: string }> = [];
   const context = new ExecutionContext();
-  const executor = new StepExecutor<string>(context, async ({ step, index, cachedTemplate }, run) => {
-    visited.push({ index, ...(cachedTemplate ? { cache: cachedTemplate } : {}) });
-    if (step.do === "parent") {
-      await run([{ do: "child" }, { do: "sibling" }], index, "cached");
-    }
-  });
+  const executor = new StepExecutor<string>(
+    context,
+    async ({ step, index, cachedTemplate }, run) => {
+      visited.push({ index, ...(cachedTemplate ? { cache: cachedTemplate } : {}) });
+      if (step.do === "parent") {
+        await run([{ do: "child" }, { do: "sibling" }], index, "cached");
+      }
+    },
+  );
   await executor.execute([{ do: "parent" }, { do: "last" }] as Step[]);
   assertEquals(visited, [
     { index: "0" },
@@ -20,7 +24,7 @@ Deno.test("step executor preserves nested indexes and one-child cache scope", as
   ]);
 });
 
-Deno.test("execution context stops traversal and rejects recursive calls", async () => {
+test("execution context stops traversal and rejects recursive calls", async () => {
   const context = new ExecutionContext();
   const visited: string[] = [];
   const executor = new StepExecutor<never>(context, ({ index }) => {

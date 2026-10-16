@@ -1,8 +1,11 @@
 import { assertEquals, assertThrows } from "@std/assert";
+import { readFile, rm } from "node:fs/promises";
+import { test } from "node:test";
 import { loadYaml, saveYaml, scenarioFrom } from "../src/yaml.ts";
 import { planFrom } from "../src/yaml.ts";
+import { temporaryFile } from "./helpers.ts";
 
-Deno.test("validates URL blocking regex lists before browser launch", () => {
+test("validates URL blocking regex lists before browser launch", () => {
   const make = (block_urls: unknown) => ({
     version: 1,
     name: "url-blocking",
@@ -23,7 +26,7 @@ Deno.test("validates URL blocking regex lists before browser launch", () => {
   assertThrows(() => scenarioFrom(make(["valid", "("])), Error, "browser.block_urls[1]");
 });
 
-Deno.test("validates key_chord keys", () => {
+test("validates key_chord keys", () => {
   const scenario = {
     version: 1,
     name: "shortcut",
@@ -43,7 +46,7 @@ Deno.test("validates key_chord keys", () => {
   );
 });
 
-Deno.test("rejects unsupported or incomplete atomic steps", () => {
+test("rejects unsupported or incomplete atomic steps", () => {
   const scenario = {
     version: 1,
     name: "strict-steps",
@@ -72,7 +75,7 @@ Deno.test("rejects unsupported or incomplete atomic steps", () => {
   );
 });
 
-Deno.test("validates unconditional fail steps", () => {
+test("validates unconditional fail steps", () => {
   const scenario = {
     version: 1,
     name: "explicit-failure",
@@ -106,7 +109,7 @@ Deno.test("validates unconditional fail steps", () => {
   );
 });
 
-Deno.test("rejects unsafe scenario resources and unknown fields", () => {
+test("rejects unsafe scenario resources and unknown fields", () => {
   const scenario = {
     version: 1,
     name: "safe-resources",
@@ -135,14 +138,27 @@ Deno.test("rejects unsafe scenario resources and unknown fields", () => {
   );
 });
 
-Deno.test("rejects invalid jitter settings", () => {
-  assertThrows(() => scenarioFrom({
-    version: 1,
-    name: "bad-jitter",
-    browser: { initial_url: "https://example.test" },
-    playback: { jitter: { enabled: true, distribution: "random", radius_px: -1, min_distance_from_edge_px: 0, out_of_bounds: "fail" } },
-    steps: [],
-  }), Error, "playback.jitter is invalid");
+test("rejects invalid jitter settings", () => {
+  assertThrows(
+    () =>
+      scenarioFrom({
+        version: 1,
+        name: "bad-jitter",
+        browser: { initial_url: "https://example.test" },
+        playback: {
+          jitter: {
+            enabled: true,
+            distribution: "random",
+            radius_px: -1,
+            min_distance_from_edge_px: 0,
+            out_of_bounds: "fail",
+          },
+        },
+        steps: [],
+      }),
+    Error,
+    "playback.jitter is invalid",
+  );
   const disabled = {
     version: 1,
     name: "no-jitter",
@@ -153,7 +169,7 @@ Deno.test("rejects invalid jitter settings", () => {
   assertEquals(scenarioFrom(disabled).steps.length, 1);
 });
 
-Deno.test("validates locator hint text", () => {
+test("validates locator hint text", () => {
   const scenario = {
     version: 1,
     name: "result",
@@ -168,7 +184,7 @@ Deno.test("validates locator hint text", () => {
   );
 });
 
-Deno.test("validates click template matching options", () => {
+test("validates click template matching options", () => {
   const scenario = {
     version: 1,
     name: "template",
@@ -178,7 +194,11 @@ Deno.test("validates click template matching options", () => {
   };
   assertEquals(scenarioFrom(scenario).steps.length, 1);
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "click", at: { x: 1, y: 1 }, template: { path: "x.png" } }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "click", at: { x: 1, y: 1 }, template: { path: "x.png" } }],
+      }),
     Error,
     "cannot specify both at and template",
   );
@@ -188,21 +208,25 @@ Deno.test("validates click template matching options", () => {
     "playback.template.on_missing must be fail or skip",
   );
   assertThrows(
-    () => scenarioFrom({
-      ...scenario,
-      steps: [{ do: "click", template: { path: "templates/button.png" }, on_missing: "fail" }],
-    }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "click", template: { path: "templates/button.png" }, on_missing: "fail" }],
+      }),
     Error,
     "steps[0].on_missing must be nested under template",
   );
-  assertEquals(scenarioFrom({
-    ...scenario,
-    steps: [{
-      do: "click",
-      template: { path: "templates/button.png" },
-      then: [{ do: "log", message: "clicked" }],
-    }],
-  }).steps.length, 1);
+  assertEquals(
+    scenarioFrom({
+      ...scenario,
+      steps: [{
+        do: "click",
+        template: { path: "templates/button.png" },
+        then: [{ do: "log", message: "clicked" }],
+      }],
+    }).steps.length,
+    1,
+  );
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "click", then: [] }] }),
     Error,
@@ -210,7 +234,7 @@ Deno.test("validates click template matching options", () => {
   );
 });
 
-Deno.test("validates template screenshot artifact policy", () => {
+test("validates template screenshot artifact policy", () => {
   const scenario = {
     version: 1,
     name: "template-artifacts",
@@ -234,7 +258,7 @@ Deno.test("validates template screenshot artifact policy", () => {
   );
 });
 
-Deno.test("validates optional CfT foreground mode", () => {
+test("validates optional CfT foreground mode", () => {
   const scenario = {
     version: 1,
     name: "foreground",
@@ -256,22 +280,27 @@ Deno.test("validates optional CfT foreground mode", () => {
   }
   for (const foreground_mode of [true, 1, null, "", "sometimes"]) {
     assertThrows(
-      () => scenarioFrom({
-        ...scenario,
-        browser: { ...scenario.browser, window: { foreground: true, foreground_mode } },
-      }),
+      () =>
+        scenarioFrom({
+          ...scenario,
+          browser: { ...scenario.browser, window: { foreground: true, foreground_mode } },
+        }),
       Error,
       "browser.window.foreground_mode must be always or once",
     );
   }
   assertThrows(
-    () => scenarioFrom({ ...scenario, browser: { ...scenario.browser, window: { foreground: "always" } } }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        browser: { ...scenario.browser, window: { foreground: "always" } },
+      }),
     Error,
     "browser.window.foreground must be a boolean",
   );
 });
 
-Deno.test("validates a post-operation delay", () => {
+test("validates a post-operation delay", () => {
   const scenario = {
     version: 1,
     name: "delayed-click",
@@ -286,7 +315,7 @@ Deno.test("validates a post-operation delay", () => {
   );
 });
 
-Deno.test("validates a click hold duration", () => {
+test("validates a click hold duration", () => {
   const scenario = {
     version: 1,
     name: "held-click",
@@ -295,7 +324,11 @@ Deno.test("validates a click hold duration", () => {
   };
   assertEquals(scenarioFrom(scenario).steps.length, 1);
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "double_click", at: { x: 1, y: 2 }, hold_ms: 1 }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "double_click", at: { x: 1, y: 2 }, hold_ms: 1 }],
+      }),
     Error,
     "steps[0].hold_ms must be a non-negative number on a click step",
   );
@@ -306,7 +339,7 @@ Deno.test("validates a click hold duration", () => {
   );
 });
 
-Deno.test("validates console log steps", () => {
+test("validates console log steps", () => {
   const scenario = {
     version: 1,
     name: "progress",
@@ -321,7 +354,7 @@ Deno.test("validates console log steps", () => {
   );
 });
 
-Deno.test("validates repeat steps", () => {
+test("validates repeat steps", () => {
   const scenario = {
     version: 1,
     name: "repeat",
@@ -345,7 +378,7 @@ Deno.test("validates repeat steps", () => {
   );
 });
 
-Deno.test("validates repeated click counts", () => {
+test("validates repeated click counts", () => {
   const scenario = {
     version: 1,
     name: "repeated-click",
@@ -359,13 +392,17 @@ Deno.test("validates repeated click counts", () => {
     "steps[0].count must be a positive integer for click",
   );
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "navigate", url: "https://example.test", count: 1 }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "navigate", url: "https://example.test", count: 1 }],
+      }),
     Error,
     "steps[0].count is supported only for repeat or click",
   );
 });
 
-Deno.test("validates template repeat-until steps", () => {
+test("validates template repeat-until steps", () => {
   const scenario = {
     version: 1,
     name: "repeat-until",
@@ -397,7 +434,7 @@ Deno.test("validates template repeat-until steps", () => {
   );
 });
 
-Deno.test("validates static template iteration steps", () => {
+test("validates static template iteration steps", () => {
   const scenario = {
     version: 1,
     name: "for-each-template",
@@ -419,21 +456,28 @@ Deno.test("validates static template iteration steps", () => {
     "steps[0].max_matches must be an integer from 1 through 100 for for_each_template",
   );
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "for_each_template", max_matches: 1, steps: [] }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "for_each_template", max_matches: 1, steps: [] }],
+      }),
     Error,
     "steps[0].template is required for for_each_template",
   );
-  assertEquals(scenarioFrom({
-    ...scenario,
-    steps: [{
-      ...scenario.steps[0],
+  assertEquals(
+    scenarioFrom({
+      ...scenario,
       steps: [{
-        do: "if",
-        equals: { left: 1, right: 1 },
-        then: [{ do: "break" }],
+        ...scenario.steps[0],
+        steps: [{
+          do: "if",
+          equals: { left: 1, right: 1 },
+          then: [{ do: "break" }],
+        }],
       }],
-    }],
-  }).steps.length, 1);
+    }).steps.length,
+    1,
+  );
   assertThrows(
     () => scenarioFrom({ ...scenario, steps: [{ do: "break" }] }),
     Error,
@@ -441,7 +485,7 @@ Deno.test("validates static template iteration steps", () => {
   );
 });
 
-Deno.test("validates named function calls", () => {
+test("validates named function calls", () => {
   const scenario = {
     version: 1,
     name: "functions",
@@ -462,7 +506,7 @@ Deno.test("validates named function calls", () => {
   );
 });
 
-Deno.test("validates function call arguments", () => {
+test("validates function call arguments", () => {
   const scenario = {
     version: 1,
     name: "parameterized-functions",
@@ -482,34 +526,41 @@ Deno.test("validates function call arguments", () => {
     "steps[0].args must provide exactly the function parameters",
   );
   assertThrows(
-    () => scenarioFrom({ ...scenario, functions: { search: { params: ["query", "query"], steps: [] } } }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        functions: { search: { params: ["query", "query"], steps: [] } },
+      }),
     Error,
     "functions.search.params must be unique identifiers",
   );
-  assertEquals(scenarioFrom({
-    ...scenario,
-    functions: {
-      repeat: { params: ["count"], steps: [{ do: "repeat", count: "${count}", steps: [] }] },
-      repeatUntil: {
-        params: ["attempts"],
-        steps: [{
-          do: "repeat_until",
-          template: { path: "templates/done.png" },
-          state: "visible",
-          max_attempts: "${attempts}",
-          on_limit: "continue",
-          steps: [],
-        }],
+  assertEquals(
+    scenarioFrom({
+      ...scenario,
+      functions: {
+        repeat: { params: ["count"], steps: [{ do: "repeat", count: "${count}", steps: [] }] },
+        repeatUntil: {
+          params: ["attempts"],
+          steps: [{
+            do: "repeat_until",
+            template: { path: "templates/done.png" },
+            state: "visible",
+            max_attempts: "${attempts}",
+            on_limit: "continue",
+            steps: [],
+          }],
+        },
       },
-    },
-    steps: [
-      { do: "call", function: "repeat", args: { count: 3 } },
-      { do: "call", function: "repeatUntil", args: { attempts: 3 } },
-    ],
-  }).steps.length, 2);
+      steps: [
+        { do: "call", function: "repeat", args: { count: 3 } },
+        { do: "call", function: "repeatUntil", args: { attempts: 3 } },
+      ],
+    }).steps.length,
+    2,
+  );
 });
 
-Deno.test("validates template conditional branches", () => {
+test("validates template conditional branches", () => {
   const scenario = {
     version: 1,
     name: "conditional-template",
@@ -533,13 +584,17 @@ Deno.test("validates template conditional branches", () => {
     "steps[0].then must be a step array for if",
   );
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "if", template: { path: "x.png" }, then: [], else: {} }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "if", template: { path: "x.png" }, then: [], else: {} }],
+      }),
     Error,
     "steps[0].else must be a step array for if",
   );
 });
 
-Deno.test("validates weekday conditional branches", () => {
+test("validates weekday conditional branches", () => {
   const scenario = {
     version: 1,
     name: "conditional-weekday",
@@ -553,13 +608,17 @@ Deno.test("validates weekday conditional branches", () => {
     "steps[0].weekdays must be a non-empty array of mon through sun",
   );
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "if", weekdays: ["mon"], time_zone: "JST", then: [] }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "if", weekdays: ["mon"], time_zone: "JST", then: [] }],
+      }),
     Error,
     "steps[0].time_zone must be an IANA time zone string",
   );
 });
 
-Deno.test("validates string equality conditional branches", () => {
+test("validates string equality conditional branches", () => {
   const scenario = {
     version: 1,
     name: "conditional-equals",
@@ -568,19 +627,27 @@ Deno.test("validates string equality conditional branches", () => {
   };
   assertEquals(scenarioFrom(scenario).steps.length, 1);
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "if", equals: { left: "a", right: true }, then: [] }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "if", equals: { left: "a", right: true }, then: [] }],
+      }),
     Error,
     "steps[0].equals requires string or finite-number left and right",
   );
   assertThrows(
-    () => scenarioFrom({ ...scenario, steps: [{ do: "if", equals: { left: "a", right: "a" }, weekdays: ["mon"], then: [] }] }),
+    () =>
+      scenarioFrom({
+        ...scenario,
+        steps: [{ do: "if", equals: { left: "a", right: "a" }, weekdays: ["mon"], then: [] }],
+      }),
     Error,
     "steps[0] requires exactly one of template, weekdays, or equals for if",
   );
 });
 
-Deno.test("writes each scenario step as a one-line flow mapping", async () => {
-  const path = await Deno.makeTempFile();
+test("writes each scenario step as a one-line flow mapping", async () => {
+  const path = await temporaryFile();
   try {
     await saveYaml(path, {
       version: 1,
@@ -591,7 +658,7 @@ Deno.test("writes each scenario step as a one-line flow mapping", async () => {
         { do: "click", at: { x: 10, y: 20 }, delay_ms: 1040 },
       ],
     });
-    const text = await Deno.readTextFile(path);
+    const text = await readFile(path, "utf8");
     assertEquals(text.includes("  - { do: sleep, ms: 6575 }\n"), true);
     assertEquals(
       text.includes("  - { do: click, at: { x: 10, y: 20 }, delay_ms: 1040 }\n"),
@@ -599,11 +666,11 @@ Deno.test("writes each scenario step as a one-line flow mapping", async () => {
     );
     assertEquals(scenarioFrom(await loadYaml(path)).steps.length, 2);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("validates plan failure policies and nodes", () => {
+test("validates plan failure policies and nodes", () => {
   const plan = {
     version: 1,
     name: "plan",
@@ -624,7 +691,7 @@ Deno.test("validates plan failure policies and nodes", () => {
   );
 });
 
-Deno.test("validates reusable plan browser sessions", () => {
+test("validates reusable plan browser sessions", () => {
   const plan = {
     version: 1,
     name: "reused-session",

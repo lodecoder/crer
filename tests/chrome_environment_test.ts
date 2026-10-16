@@ -1,7 +1,8 @@
 import { assertEquals } from "@std/assert";
+import { test } from "node:test";
 import { chromeEnvironment } from "../src/chrome_environment.ts";
 
-Deno.test("CfT drops inherited DPI shims but preserves unrelated compatibility settings", () => {
+test("CfT drops inherited DPI shims but preserves unrelated compatibility settings", () => {
   for (
     const layer of ["DPIUNAWARE", "GDIDPISCALING DPIUNAWARE", "~ HIGHDPIAWARE", "dpiunaware", ""]
   ) {

@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
+import { test } from "node:test";
 import { type AtomicActionAdapter, executeAtomicAction } from "../src/actions.ts";
 import { Random } from "../src/prng.ts";
 import type { Step } from "../src/types.ts";
@@ -18,7 +19,7 @@ function adapter(calls: Array<[string, Record<string, unknown>]>): AtomicActionA
   };
 }
 
-Deno.test("routes navigation through the atomic action adapter", async () => {
+test("routes navigation through the atomic action adapter", async () => {
   const calls: Array<[string, Record<string, unknown>]> = [];
   await executeAtomicAction(
     adapter(calls),
@@ -31,7 +32,7 @@ Deno.test("routes navigation through the atomic action adapter", async () => {
   assertEquals(calls, [["Page.navigate", { url: "https://example.com" }]]);
 });
 
-Deno.test("keeps paired mouse input inside an atomic handler", async () => {
+test("keeps paired mouse input inside an atomic handler", async () => {
   const calls: Array<[string, Record<string, unknown>]> = [];
   await executeAtomicAction(
     adapter(calls),
@@ -48,7 +49,7 @@ Deno.test("keeps paired mouse input inside an atomic handler", async () => {
   ]);
 });
 
-Deno.test("rejects control-flow steps at the atomic handler boundary", async () => {
+test("rejects control-flow steps at the atomic handler boundary", async () => {
   await assertRejects(
     () =>
       executeAtomicAction(
@@ -64,7 +65,7 @@ Deno.test("rejects control-flow steps at the atomic handler boundary", async () 
   );
 });
 
-Deno.test("releases the mouse when a drag move fails", async () => {
+test("releases the mouse when a drag move fails", async () => {
   const events: Array<Record<string, unknown>> = [];
   let moved = 0;
   const value = adapter([]);
@@ -91,7 +92,7 @@ Deno.test("releases the mouse when a drag move fails", async () => {
   assertEquals(events.at(-1)?.type, "mouseReleased");
 });
 
-Deno.test("retries key release after the first keyUp failure", async () => {
+test("retries key release after the first keyUp failure", async () => {
   const events: Array<Record<string, unknown>> = [];
   let failed = false;
   const value = adapter([]);
@@ -119,7 +120,7 @@ Deno.test("retries key release after the first keyUp failure", async () => {
   assertEquals(events.slice(-2).map((event) => event.type), ["keyUp", "keyUp"]);
 });
 
-Deno.test("releases a modifier when the final chord keyDown fails", async () => {
+test("releases a modifier when the final chord keyDown fails", async () => {
   const events: Array<Record<string, unknown>> = [];
   const value = adapter([]);
   value.call = (_method, params) => {

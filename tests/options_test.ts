@@ -1,11 +1,12 @@
 import { assertEquals, assertThrows } from "@std/assert";
+import { test } from "node:test";
 import {
   parsePlanWindowBoundsOverride,
   parsePlanWindowOpacityOverride,
   parseTemplateScreenshotPolicy,
 } from "../src/options.ts";
 
-Deno.test("parses a run-only window bounds override", () => {
+test("parses a run-only window bounds override", () => {
   assertEquals(parsePlanWindowBoundsOverride(undefined), undefined);
   assertEquals(parsePlanWindowBoundsOverride("-800,40"), { left: -800, top: 40 });
   assertEquals(
@@ -24,7 +25,7 @@ Deno.test("parses a run-only window bounds override", () => {
   );
 });
 
-Deno.test("parses template screenshot policy", () => {
+test("parses template screenshot policy", () => {
   assertEquals(parseTemplateScreenshotPolicy(undefined), undefined);
   assertEquals(parseTemplateScreenshotPolicy("all"), "all");
   assertEquals(parseTemplateScreenshotPolicy("failure-only"), "failure-only");
@@ -35,7 +36,7 @@ Deno.test("parses template screenshot policy", () => {
   );
 });
 
-Deno.test("parses window opacity overrides including transparent and opaque endpoints", () => {
+test("parses window opacity overrides including transparent and opaque endpoints", () => {
   assertEquals(parsePlanWindowOpacityOverride(undefined), undefined);
   for (const value of ["0", "0.5", "1", " 0.25 "]) {
     assertEquals(parsePlanWindowOpacityOverride(value), Number(value));

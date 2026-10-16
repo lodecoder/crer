@@ -1,4 +1,5 @@
 import { EnvironmentError } from "./errors.ts";
+import { loadNativeLibrary, type NativeLibrary } from "./native.ts";
 
 export function opacityAlpha(value: unknown = 1): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
@@ -13,7 +14,7 @@ const symbols = {
 
 /** A separate controller so opacity never changes focus or the topmost monitoring policy. */
 export class WindowOpacity {
-  #lib?: Deno.DynamicLibrary<typeof symbols>;
+  #lib?: NativeLibrary<typeof symbols>;
   #timer?: ReturnType<typeof setInterval>;
 
   constructor(private pid: number, private dllPath?: string) {}
@@ -31,7 +32,7 @@ export class WindowOpacity {
         );
       }
       try {
-        this.#lib = Deno.dlopen(this.dllPath, symbols);
+        this.#lib = loadNativeLibrary(this.dllPath, symbols);
       } catch (error) {
         throw new EnvironmentError(
           `Could not load window opacity support; rebuild crer-win-input.dll: ${error}`,

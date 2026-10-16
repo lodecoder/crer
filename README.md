@@ -1,7 +1,7 @@
 # crer
 
 Windows 上で Chrome for Testing を専用プロファイルで起動し、GUI ブラウザ操作を記録・再生する
-Deno CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使うため、OS の物理マウス・
+Node.js CLI です。再生は Chrome DevTools Protocol (CDP) の入力注入を使うため、OS の物理マウス・
 キーボードや普段使いの Chrome を操作しません。
 
 CfT には翻訳、パスワード保存、パスワード漏えい検出のブラウザ UI を抑止する設定を適用するため、
@@ -14,16 +14,19 @@ CfT には翻訳、パスワード保存、パスワード漏えい検出のブ�
 - シード付きクリック揺らぎ、失敗 artifacts、YAML plan の直列・並列実行（`max_parallel` 対応）
 - C# .NET 10 Native AOT の Raw Input DLL と NDJSON 記録
 
-screen px から CSS viewport px への正確な変換、IME を含む text
-正規化は次の実装段階です。
+記録した画面座標は、較正と content bounds / viewport の metadata を使って CSS viewport 座標へ
+変換します。metadata のない古い記録は、`normalize` の座標指定オプションで変換できます。
 
 現在の `record` は Windows のキーボードレイアウトを使って英数字と記号を正規化します。日本語 IME の
 確定文字列、特殊キー、複雑なショートカットは YAML を後から編集してください。
 
 ## 実行
 
-Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイルを `CRER_CHROME` に設定するか
+Node.js 24 LTS と Chrome for Testing を用意し、Chrome 実行ファイルを `CRER_CHROME` に設定するか
 `--chrome` で渡します。未指定時に通常 Chrome へフォールバックすることはありません。
+
+最初に `npm ci` で依存パッケージをインストールします。開発実行には `tsx` を使い、
+`npm run dev -- <コマンド>` または `node --import tsx src/main.ts <コマンド>` で起動できます。
 
 固定版を導入する場合は `./scripts/install-chrome-for-testing.ps1 -Version 152.0.7977.42` を実行します。
 導入結果は `.crer/browsers/crer-chrome.json` に保存されます。
@@ -32,16 +35,16 @@ Deno 2.8 以降と Chrome for Testing を用意し、Chrome 実行ファイル�
 
 ```powershell
 . .\scripts\install-chrome-for-testing.ps1 -ChromePath $env:CRER_CHROME -Version 152.0.7977.42
-deno task dev doctor
+npm run dev -- doctor
 ```
 
 ```powershell
 $env:CRER_CHROME = 'C:\\path\\to\\chrome.exe'
-deno task dev validate scenario.crer.yaml
-deno task dev play scenario.crer.yaml --keep-artifacts
-deno task dev run nightly.crer.plan.yaml
-deno task dev inspect .crer\runs\<run-id>
-deno task verify
+npm run dev -- validate scenario.crer.yaml
+npm run dev -- play scenario.crer.yaml --keep-artifacts
+npm run dev -- run nightly.crer.plan.yaml
+npm run dev -- inspect .crer\runs\<run-id>
+npm run verify
 ```
 
 `run` で plan に含まれるすべての scenario を同じウィンドウ bounds で起動するには、
@@ -51,7 +54,7 @@ deno task verify
 `left,top,width,height`（いずれも整数）です。実効値は各 run artifact の `run.json` に保存されます。
 
 ```powershell
-deno task dev run .crer\daily.crer.plan.yaml `
+npm run dev -- run .crer\daily.crer.plan.yaml `
   --plan-window-bounds-override 10,10,1280,900
 ```
 
@@ -61,7 +64,7 @@ plan 全体の不透明度は `run` 専用の `--plan-window-opacity-override` �
 指定値は各 run の `run.json.windowOpacityOverride` に保存します。
 
 ```powershell
-deno task dev run .crer\daily.crer.plan.yaml `
+npm run dev -- run .crer\daily.crer.plan.yaml `
   --plan-window-bounds-override 10,10,1280,900 `
   --plan-window-opacity-override 0.5
 ```
@@ -181,11 +184,11 @@ CfT のコンテンツ領域で操作を記録し、直接起動時は PowerShel
 content bounds を取得できない場合だけ、代わりに物理画面座標を `screen_px` として表示します。
 
 ```powershell
-deno task dev record .crer\raw-input.ndjson `
+npm run dev -- record .crer\raw-input.ndjson `
   --url 'https://example.test' `
   --content-size 860,560 `
   --position 1200,80
-deno task dev normalize .crer\raw-input.ndjson `
+npm run dev -- normalize .crer\raw-input.ndjson `
   --url 'https://example.test' `
   --output recorded.crer.yaml `
   --name example-recording
@@ -198,11 +201,11 @@ deno task dev normalize .crer\raw-input.ndjson `
 ```powershell
 $profile = "$PWD\.crer\profiles\yahoo"
 
-deno task dev record .crer\yahoo.ndjson `
+npm run dev -- record .crer\yahoo.ndjson `
   --url https://www.yahoo.co.jp/ `
   --profile-dir $profile
 
-deno task dev play .crer\yahoo.recorded.crer.yaml `
+npm run dev -- play .crer\yahoo.recorded.crer.yaml `
   --chrome $env:CRER_CHROME `
   --profile-dir $profile `
   --mute-audio
@@ -347,7 +350,7 @@ template以外の失敗画像、`result.png` には影響しません。
 CLIはYAMLより優先し、`play` と `run` の全scenarioへ適用できます。
 
 ```powershell
-deno task dev run plan.crer.plan.yaml --template-screenshots failure-only
+npm run dev -- run plan.crer.plan.yaml --template-screenshots failure-only
 ```
 
 `on_missing` は step 直下ではなく、必ず `template` 内へ指定します。`fail` は template 失敗を発生させますが、
@@ -645,8 +648,12 @@ steps:
 
 ### 配布用ビルド
 
-次で `dist\win-x64\crer.exe` と同じフォルダの `crer-win-input.dll` を生成します。CfT は配布物に
-含めないため、実行時に `CRER_CHROME` または `--chrome` で専用の `chrome.exe` を指定してください。
+次で Node.js 24 の Single Executable Application (SEA) として `dist\win-x64\crer.exe` を生成します。
+同じフォルダの `crer-win-input.dll`、`node_modules\koffi`、
+`node_modules\@koromix\koffi-win32-x64`（ARM64 では末尾が `arm64`）も必要な配布物です。出力ディレクトリ全体を
+配布し、受け取り側への Node.js / .NET runtime のインストールは不要です。ビルドには Node.js 24、
+.NET 10 SDK、MSVC、Windows SDK が必要です。CfT は配布物に含めないため、実行時に
+`CRER_CHROME` または `--chrome` で専用の `chrome.exe` を指定してください。
 
 ```powershell
 .\scripts\build-release.ps1
@@ -654,7 +661,9 @@ $env:CRER_CHROME = 'C:\path\to\chrome.exe'
 .\dist\win-x64\crer.exe doctor
 ```
 
-ARM64 の Windows PC 向けには、ARM64 用の MSVC / Windows SDK を導入した上で次を実行します。
+ARM64 の Windows PC 向けには、ARM64 Windows 上に ARM64 版 Node.js 24 と MSVC / Windows SDK を
+導入した上で次を実行します。SEA は実行中の Node.js と同じアーキテクチャだけを生成し、
+x64 ホストからのクロスビルドは行いません。ARM64 の実機回帰テストは別途必要です。
 
 ```powershell
 .\scripts\build-release.ps1 -Runtime win-arm64
@@ -666,6 +675,8 @@ CfT を使う配布物の smoke test は次です。これは `crer.exe` で fix
 ```powershell
 .\scripts\test-release.ps1
 ```
+
+ARM64 実機では `-Runtime win-arm64` を指定します。`-OutputDirectory` は相対パス・絶対パスの両方を指定できます。
 
 ### 全体コードレビュー用bundle
 
@@ -687,5 +698,6 @@ repomix
 jitter offset、URL、成否が追記され、`crer inspect` で件数と失敗数を確認できます。
 
 - 仕様書: [docs/specification.md](docs/specification.md)
+- Node.js 移行の実装・検証記録: [docs/nodejs-migration.md](docs/nodejs-migration.md)
 - 手動結合テスト: [docs/manual-test.md](docs/manual-test.md)
 - Raw Input bridge: [native/README.md](native/README.md)

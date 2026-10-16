@@ -10,8 +10,8 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $fixtureUrl = "http://127.0.0.1:$Port/index.html"
 
-if (-not (Get-Command deno -ErrorAction SilentlyContinue)) {
-  throw 'deno was not found.'
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+  throw 'Node.js 24 was not found.'
 }
 if ([string]::IsNullOrWhiteSpace($Chrome)) {
   throw 'Set CRER_CHROME or pass -Chrome with the Chrome for Testing chrome.exe path.'
@@ -27,10 +27,9 @@ $stopPath = "$outputPath.stop"
 @($outputPath, "$outputPath.meta.json", $scenarioPath, $stopPath) | ForEach-Object {
   Remove-Item -LiteralPath $_ -Force -ErrorAction SilentlyContinue
 }
-$serverScript = Join-Path $PSScriptRoot 'serve-playback-fixture.ps1'
-$pwsh = (Get-Command pwsh -ErrorAction Stop).Source
-$server = Start-Process -FilePath $pwsh -ArgumentList @(
-  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $serverScript, '-Port', $Port
+$serverScript = Join-Path $PSScriptRoot 'serve-playback-fixture.mjs'
+$server = Start-Process -FilePath (Get-Command node -ErrorAction Stop).Source -ArgumentList @(
+  ('"{0}"' -f $serverScript), $Port
 ) -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
 
 try {
@@ -52,8 +51,9 @@ try {
   Push-Location $projectRoot
   $record = $null
   try {
-    $record = Start-Process -FilePath (Get-Command deno -ErrorAction Stop).Source -ArgumentList @(
-      'task', 'dev', 'record', $outputPath, '--url', $fixtureUrl, '--chrome', $Chrome, '--stop-file', $stopPath
+    $record = Start-Process -FilePath (Get-Command node -ErrorAction Stop).Source -ArgumentList @(
+      '--import', 'tsx', 'src/main.ts', 'record', ('"{0}"' -f $outputPath), '--url', $fixtureUrl,
+      '--chrome', ('"{0}"' -f $Chrome), '--stop-file', ('"{0}"' -f $stopPath)
     ) -WorkingDirectory $projectRoot -NoNewWindow -PassThru
     Read-Host '操作後、ここで Enter を押して記録を終了'
     New-Item -ItemType File -Path $stopPath -Force | Out-Null
@@ -61,7 +61,7 @@ try {
     if ($record.ExitCode -ne 0) {
       throw "record exited with code $($record.ExitCode)"
     }
-    & deno task dev normalize $outputPath --url $fixtureUrl --output $scenarioPath --name fixture-recorded
+    & node --import tsx src/main.ts normalize $outputPath --url $fixtureUrl --output $scenarioPath --name fixture-recorded
     if ($LASTEXITCODE -ne 0) {
       throw "normalize exited with code $LASTEXITCODE"
     }

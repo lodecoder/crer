@@ -1,3 +1,4 @@
+- コメントやドキュメントは日本語で記載
 - commitmessageはfix:などprefixを付け、prefixを除き日本語で記載
 
 ## Git 操作

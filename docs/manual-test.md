@@ -3,10 +3,12 @@
 Windows 11 上で PowerShell を開き、リポジトリのルートへ移動して実行する。
 
 ```powershell
-cd C:\Users\a5\devai\crer
+cd D:\devaid\crer
+node --version # v24.x を使用する
+npm ci
 $env:CRER_CHROME = 'C:\path\to\chrome.exe'
 .\scripts\build-native.ps1
-deno task dev doctor
+npm run dev -- doctor
 ```
 
 `build-native.ps1` は Visual Studio 2026 の `vswhere.exe` をそのビルド処理だけ PATH に追加する。
@@ -33,7 +35,7 @@ Git Bash 経由でも同じテストを実行できる。Windows の表示設定
 
 ```powershell
 $env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/display_scale_integration_test.ts
+node --import tsx --test --test-concurrency=1 tests/display_scale_integration_test.ts
 Remove-Item Env:CRER_TEST_CHROME
 ```
 
@@ -43,7 +45,7 @@ submit を確認する。パスワード内の空白入力と、旧記録の Uni
 
 ```powershell
 $env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/login_keyboard_integration_test.ts
+node --import tsx --test --test-concurrency=1 tests/login_keyboard_integration_test.ts
 Remove-Item Env:CRER_TEST_CHROME
 ```
 
@@ -53,7 +55,7 @@ profile ごとの並列 session 再利用は次で検証する。a1 → a2 と b
 
 ```powershell
 $env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/plan_sessions_integration_test.ts
+node --import tsx --test --test-concurrency=1 tests/plan_sessions_integration_test.ts
 Remove-Item Env:CRER_TEST_CHROME
 ```
 
@@ -64,7 +66,7 @@ URL ブロックの実機テストは、導入済み CfT を明示して次で�
 
 ```powershell
 $env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno test -A tests/url_blocker_integration_test.ts
+node --import tsx --test --test-concurrency=1 tests/url_blocker_integration_test.ts
 Remove-Item Env:CRER_TEST_CHROME
 ```
 
@@ -84,8 +86,8 @@ CfT が上へ移動しないことと、最前面属性自体が保持される�
 .\scripts\build-native.ps1
 $env:CRER_TEST_WINDOWS = '1'
 $env:CRER_TEST_CHROME = $env:CRER_CHROME
-deno task test:native
-deno test -A tests/topmost_integration_test.ts
+npm run test:native
+node --import tsx --test --test-concurrency=1 tests/topmost_integration_test.ts
 Remove-Item Env:CRER_TEST_WINDOWS, Env:CRER_TEST_CHROME
 ```
 
@@ -178,7 +180,7 @@ metadata が作成され、bounds 警告がなければ再生する。記録時�
 自動保存され、通常の再生ではその間隔を再現する。
 
 ```powershell
-deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts
+npm run dev -- play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts
 ```
 
 Tab で Submit にフォーカスして Enter で実行するキー再生は、次の fixture で確認できる。
@@ -196,7 +198,7 @@ Tab で Submit にフォーカスして Enter で実行するキー再生は、�
 目視確認でさらに待機したい場合は、記録済みの `sleep` に 1 秒を追加する。
 
 ```powershell
-deno task dev play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts --step-delay-ms 1000
+npm run dev -- play .crer\fixture.recorded.crer.yaml --chrome $env:CRER_CHROME --keep-artifacts --step-delay-ms 1000
 ```
 
 ## 5. standalone 配布物

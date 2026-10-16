@@ -10,22 +10,21 @@ $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
   $OutputDirectory = "dist\\$Runtime"
 }
-$outputPath = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $OutputDirectory))
+$outputPath = [System.IO.Path]::GetFullPath($OutputDirectory, $repoRoot)
 $nativeDll = Join-Path $repoRoot "native\\bin\\Release\\net10.0\\$Runtime\\publish\\crer-win-input.dll"
-$denoTarget = switch ($Runtime) {
-  'win-x64' { 'x86_64-pc-windows-msvc' }
-  'win-arm64' { 'aarch64-pc-windows-msvc' }
-}
 
 Push-Location $repoRoot
 try {
+  & node -e "if (process.platform !== 'win32' || process.versions.node.split('.')[0] !== '24' || process.arch !== process.argv[1]) { console.error('対象アーキテクチャと一致する Windows 版 Node.js 24 が必要です。'); process.exit(1); }" ($Runtime -replace '^win-', '')
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
   & (Join-Path $PSScriptRoot 'build-native.ps1') -Runtime $Runtime
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
-  $exePath = Join-Path $outputPath 'crer.exe'
-  deno compile --target $denoTarget --allow-env --allow-ffi --allow-net --allow-read --allow-run --allow-write `
-    --output $exePath src\main.ts
+  & npm ci
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  & node scripts/build-node.mjs --runtime $Runtime --output $outputPath
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   Copy-Item -LiteralPath $nativeDll -Destination (Join-Path $outputPath 'crer-win-input.dll') -Force

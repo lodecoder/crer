@@ -36,11 +36,11 @@ export function createScenarioLogger(name: string, color?: LogColor): ScenarioLo
   return {
     log: (message) =>
       console.log(
-        formatScenarioLog(name, message, color, !Deno.noColor && Deno.stdout.isTerminal()),
+        formatScenarioLog(name, message, color, !process.env.NO_COLOR && !!process.stdout.isTTY),
       ),
     warn: (message) =>
       console.warn(
-        formatScenarioLog(name, message, color, !Deno.noColor && Deno.stderr.isTerminal()),
+        formatScenarioLog(name, message, color, !process.env.NO_COLOR && !!process.stderr.isTTY),
       ),
   };
 }

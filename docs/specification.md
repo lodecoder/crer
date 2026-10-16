@@ -32,31 +32,35 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 
 | 層          | 採用                                | 理由                                                                                                                        |
 | ----------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| CLI・実行系 | Deno 2.8+ + TypeScript              | 単一バイナリ配布、組み込み Web API、権限の明示、YAML／並行制御の実装性がよい。                                              |
+| CLI・実行系 | Node.js 24 LTS + TypeScript         | 既存 TypeScript の再利用、安定した LTS、組み込み Web API、SEA による実行ファイル配布を利用する。                            |
 | ブラウザ    | 固定バージョンの Chrome for Testing | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                                                                |
 | 再生入力    | CDP の `Input` ドメイン             | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                                                                     |
 | ウィンドウ  | CDP `Browser.setWindowBounds`       | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                                                                   |
 | 記録入力    | Windows Raw Input + Low Level Hook  | 物理入力を取得する。Chrome が Raw Input を消費する場合は Hook を使う。CDP は注入はできるが物理入力を記録する API ではない。 |
 | シナリオ    | YAML + JSON Schema                  | 人間編集、バリデーション、将来の自動補完を両立する。                                                                        |
 
-Deno 側は組み込みの `WebSocket`、`jsr:@std/yaml`、`jsr:@zod/zod`（または JSON Schema validator）、
-`jsr:@std/cli` を用いる。いずれも Deno で利用でき、Node.js 互換レイヤーを前提にしない。
+Node.js 側は組み込みの `WebSocket`、npm 版の `@std/yaml`、Node.js 標準のファイル・子プロセス・
+引数解析 API を用いる。開発実行には `tsx`、型検査には TypeScript、単体テストには
+`node:test` を用いる。
 Raw Input と HWND 操作は C ABI を公開するC# .NET 10 Native AOT DLL `crer-win-input.dll` とし、
-`Deno.dlopen()` でロードする。実行バイナリには同梱した信頼済み DLL のパスだけに
-`--allow-ffi` を許可する。PowerShell や AutoHotkey をランタイム依存にはしない。
+Koffi で既存の C ABI をロードする。配布物は Node.js SEA の `crer.exe`、同梱 DLL、
+`node_modules/koffi`、対象アーキテクチャの `node_modules/@koromix/koffi-win32-x64`
+（ARM64 では末尾が `arm64`）を含むディレクトリ全体とする。
+PowerShell や AutoHotkey をランタイム依存にはしない。
 
 ### 3.1.1 ネイティブ DLL 境界
 
-`crer-win-input.dll` は .NET Native AOT で各 Deno 配布バイナリと同じアーキテクチャ（`win-x86_64` または
-`win-aarch64`）で同梱する。DLL は `crer_input_abi_version`、`crer_input_start`、
+`crer-win-input.dll` は .NET Native AOT で各 Node.js 配布バイナリと同じアーキテクチャ（`win-x64` または
+`win-arm64`）で同梱する。SEA は対象と同じアーキテクチャの Windows 版 Node.js 24 でビルドする。
+DLL は `crer_input_abi_version`、`crer_input_start`、
 `crer_input_stop`、`crer_input_read`、`crer_input_is_running`、`crer_input_last_error`、前景 HWND の取得・復元用 API、
 `crer_input_foreground_process_window`、フォーカスを変更せず topmost だけを設定する
 `crer_input_set_process_topmost_only` を C ABI で export する。
-現行ABIはversion 2とし、mouse eventとcontent HWND矩形を物理pixel座標で返す。Deno側と
+現行ABIはversion 2とし、mouse eventとcontent HWND矩形を物理pixel座標で返す。Node.js側と
 `crer_input_abi_version` が一致しないDLLは記録に使用しない。
-イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Deno と DLL
-の間で共有しない。Deno から DLL への callback は使わず、Deno の非同期ループが
-`crer_input_read` を短い間隔で poll する。これにより DLL のスレッドから V8/Deno runtime を
+イベントは固定長・ポインタを含まない POD 構造体とし、文字列やメモリ所有権を Node.js と DLL
+の間で共有しない。Node.js から DLL への callback は使わず、Node.js の非同期ループが
+`crer_input_read` を短い間隔で poll する。これにより DLL のスレッドから V8/Node.js runtime を
 呼び出さない。
 
 DLL は専用 native thread 上の message-only window で Raw Input を受信し、時刻は
@@ -612,7 +616,7 @@ assert の失敗、`5` 中断とする。
 
 ## 11. 段階的実装
 
-1. **基盤**: Deno TypeScript CLI、CfT のダウンロード／固定、専用起動、CDP client、`doctor`、YAML schema。
+1. **基盤**: Node.js TypeScript CLI、CfT のダウンロード／固定、専用起動、CDP client、`doctor`、YAML schema。
 2. **再生 MVP**: navigate/wait/click/scroll/text/key、window bounds、DPR・viewport 検証、artifacts。
 3. **記録**: Windows Raw Input ネイティブブリッジ、座標正規化、イベント圧縮、YAML 出力、locator hint。
 4. **合成**: plan scheduler、並列 worker、キャンセル、統合レポート。

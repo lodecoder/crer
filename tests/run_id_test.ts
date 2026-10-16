@@ -1,7 +1,8 @@
 import { assertEquals, assertMatch } from "@std/assert";
+import { test } from "node:test";
 import { createRunId } from "../src/run_id.ts";
 
-Deno.test("creates a Windows-safe UTC-prefixed run ID", () => {
+test("creates a Windows-safe UTC-prefixed run ID", () => {
   const id = createRunId(
     "daily-check",
     new Date("2026-09-13T04:15:23.123Z"),
@@ -11,14 +12,14 @@ Deno.test("creates a Windows-safe UTC-prefixed run ID", () => {
   assertMatch(id, /^[\p{L}\p{N}_-]+$/u);
 });
 
-Deno.test("run IDs sort by UTC timestamp", () => {
+test("run IDs sort by UTC timestamp", () => {
   const uuid = "550e8400-e29b-41d4-a716-446655440000";
   const later = createRunId("work", new Date("2026-09-13T04:15:23.124Z"), uuid);
   const earlier = createRunId("work", new Date("2026-09-13T04:15:23.123Z"), uuid);
   assertEquals([later, earlier].sort(), [earlier, later]);
 });
 
-Deno.test("sanitizes scenario names for Windows paths and preserves Japanese names", () => {
+test("sanitizes scenario names for Windows paths and preserves Japanese names", () => {
   const uuid = "550e8400-e29b-41d4-a716-446655440000";
   assertEquals(
     createRunId("日次/レポート:確認", new Date("2026-09-13T04:15:23.123Z"), uuid),

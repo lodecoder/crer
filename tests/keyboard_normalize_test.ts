@@ -1,11 +1,14 @@
 import { assertEquals } from "@std/assert";
+import { rm, writeFile } from "node:fs/promises";
+import { test } from "node:test";
 import { normalizeRaw } from "../src/normalize.ts";
+import { temporaryFile } from "./helpers.ts";
 
-Deno.test("recorded Unicode and virtual-key spaces preserve key activation and delays", async () => {
-  const path = await Deno.makeTempFile();
+test("recorded Unicode and virtual-key spaces preserve key activation and delays", async () => {
+  const path = await temporaryFile();
   try {
     for (const kind of [9, 7]) {
-      await Deno.writeTextFile(
+      await writeFile(
         path,
         [
           { kind: 9, data: 97 },
@@ -35,6 +38,6 @@ Deno.test("recorded Unicode and virtual-key spaces preserve key activation and d
       ]);
     }
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });

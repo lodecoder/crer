@@ -1,8 +1,10 @@
+import { readdir, readFile, stat as fsStat } from "node:fs/promises";
+
 type Json = Record<string, unknown>;
 
 async function readJson(path: string): Promise<Json | undefined> {
   try {
-    const value = JSON.parse(await Deno.readTextFile(path));
+    const value = JSON.parse(await readFile(path, "utf8"));
     return value && typeof value === "object" && !Array.isArray(value) ? value as Json : undefined;
   } catch {
     return undefined;
@@ -11,7 +13,7 @@ async function readJson(path: string): Promise<Json | undefined> {
 
 async function stepSummary(path: string) {
   try {
-    const entries = (await Deno.readTextFile(path)).trim().split("\n").filter(Boolean).map((line) =>
+    const entries = (await readFile(path, "utf8")).trim().split("\n").filter(Boolean).map((line) =>
       JSON.parse(line) as Json
     );
     return {
@@ -24,12 +26,12 @@ async function stepSummary(path: string) {
 }
 
 export async function inspectRun(runDir: string) {
-  const stat = await Deno.stat(runDir);
-  if (!stat.isDirectory) throw new Error(`artifact directory is not a directory: ${runDir}`);
+  const stat = await fsStat(runDir);
+  if (!stat.isDirectory()) throw new Error(`artifact directory is not a directory: ${runDir}`);
   const files: Array<{ name: string; bytes: number }> = [];
-  for await (const entry of Deno.readDir(runDir)) {
-    if (!entry.isFile) continue;
-    const info = await Deno.stat(`${runDir}/${entry.name}`);
+  for (const entry of await readdir(runDir, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const info = await fsStat(`${runDir}/${entry.name}`);
     files.push({ name: entry.name, bytes: info.size });
   }
   files.sort((a, b) => a.name.localeCompare(b.name));

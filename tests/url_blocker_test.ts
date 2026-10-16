@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { test } from "node:test";
 import type { CdpEvent } from "../src/cdp.ts";
 import { EnvironmentError } from "../src/errors.ts";
 import { UrlBlocker } from "../src/url_blocker.ts";
@@ -28,7 +29,7 @@ class FakeCdp {
   }
 }
 
-Deno.test("blocks matching URLs using regex alternation, anchors, query strings and repeated matches", async () => {
+test("blocks matching URLs using regex alternation, anchors, query strings and repeated matches", async () => {
   const cdp = new FakeCdp();
   const blocker = new UrlBlocker(cdp, "page");
   await blocker.configure([
@@ -65,7 +66,7 @@ Deno.test("blocks matching URLs using regex alternation, anchors, query strings 
   assertEquals(cdp.calls.length, count);
 });
 
-Deno.test("reused sessions replace patterns and restore cache/service workers when disabled", async () => {
+test("reused sessions replace patterns and restore cache/service workers when disabled", async () => {
   const cdp = new FakeCdp();
   const blocker = new UrlBlocker(cdp, "page");
   await blocker.configure();
@@ -91,7 +92,7 @@ Deno.test("reused sessions replace patterns and restore cache/service workers wh
     { method: "Network.setCacheDisabled", params: { cacheDisabled: false }, sessionId: "page" },
     { method: "Fetch.disable", params: {}, sessionId: "page" },
   ]);
-  // A queued event after disable must still be released.
+  // 無効化後にキューに残ったイベントも解放する。
   cdp.request("https://example/new");
   assertEquals(cdp.calls.at(-1)?.method, "Fetch.continueRequest");
   await blocker.configure(["again"]);
@@ -99,7 +100,7 @@ Deno.test("reused sessions replace patterns and restore cache/service workers wh
   assertEquals(cdp.calls.at(-1)?.method, "Fetch.disable");
 });
 
-Deno.test("interception errors close the connection and surface as environment failures", async () => {
+test("interception errors close the connection and surface as environment failures", async () => {
   for (const method of ["Fetch.failRequest", "Fetch.continueRequest"]) {
     const cdp = new FakeCdp();
     const blocker = new UrlBlocker(cdp, "page");
@@ -115,7 +116,7 @@ Deno.test("interception errors close the connection and surface as environment f
   }
 });
 
-Deno.test("interception setup errors propagate", async () => {
+test("interception setup errors propagate", async () => {
   const cdp = new FakeCdp();
   cdp.rejectMethod = "Fetch.enable";
   await assertRejects(

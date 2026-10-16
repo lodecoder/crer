@@ -1,11 +1,12 @@
 import { parse, stringify } from "@std/yaml";
+import { readFile, writeFile } from "node:fs/promises";
 import { validateLogColor } from "./scenario_logger.ts";
 import type { Plan, Scenario } from "./types.ts";
 import { compileBlockUrls } from "./url_blocker.ts";
 import { opacityAlpha } from "./window_opacity.ts";
 
 export async function loadYaml(path: string): Promise<unknown> {
-  return parse(await Deno.readTextFile(path));
+  return parse(await readFile(path, "utf8"));
 }
 
 export async function saveYaml(path: string, value: unknown): Promise<void> {
@@ -14,11 +15,11 @@ export async function saveYaml(path: string, value: unknown): Promise<void> {
     if (Array.isArray(record.steps)) {
       const { steps, ...header } = record;
       const stepLines = steps.map((step) => `  - ${flowYaml(step)}`);
-      await Deno.writeTextFile(path, `${stringify(header)}steps:\n${stepLines.join("\n")}\n`);
+      await writeFile(path, `${stringify(header)}steps:\n${stepLines.join("\n")}\n`, "utf8");
       return;
     }
   }
-  await Deno.writeTextFile(path, stringify(value));
+  await writeFile(path, stringify(value), "utf8");
 }
 
 function flowYaml(value: unknown): string {

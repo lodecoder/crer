@@ -7,5 +7,5 @@ export function fileDirectory(file: string): string {
 
 /** Resolves a path against a known directory while preserving absolute inputs. */
 export function resolveFromDirectory(directory: string | undefined, path: string): string {
-  return isAbsolute(path) ? resolve(path) : resolve(directory ?? Deno.cwd(), path);
+  return isAbsolute(path) ? resolve(path) : resolve(directory ?? process.cwd(), path);
 }

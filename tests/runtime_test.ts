@@ -1,8 +1,9 @@
 import { assertRejects } from "@std/assert";
+import { test } from "node:test";
 import { EnvironmentError } from "../src/errors.ts";
 import { awaitChromeEndpoint } from "../src/runtime.ts";
 
-Deno.test("classifies Chrome exit before its endpoint as an environment failure", async () => {
+test("classifies Chrome exit before its endpoint as an environment failure", async () => {
   await assertRejects(
     () =>
       awaitChromeEndpoint(

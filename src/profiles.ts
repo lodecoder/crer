@@ -1,8 +1,14 @@
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+
+function isNotFound(error: unknown): boolean {
+  return !!error && typeof error === "object" && "code" in error && error.code === "ENOENT";
+}
+
 /** Resolves a reusable profile while preventing access to normal Chrome profiles. */
 export async function persistentProfileDirectory(configured: string): Promise<string> {
-  const root = `${Deno.cwd()}\\.crer\\profiles`;
-  await Deno.mkdir(root, { recursive: true });
-  const resolvedRoot = await Deno.realPath(root);
+  const root = `${process.cwd()}\\.crer\\profiles`;
+  await mkdir(root, { recursive: true });
+  const resolvedRoot = await realpath(root);
   const raw = configured.trim();
   if (!raw) throw new Error("--profile-dir requires a directory");
   const value = raw.replaceAll("/", "\\");
@@ -13,7 +19,7 @@ export async function persistentProfileDirectory(configured: string): Promise<st
   if (!absolute && !/^(?:\.\\)?\.crer\\profiles(?:\\|$)/i.test(value)) {
     throw new Error("--profile-dir must be under .crer\\profiles");
   }
-  const candidate = absolute ? value : `${Deno.cwd()}\\${value}`;
+  const candidate = absolute ? value : `${process.cwd()}\\${value}`;
   const inside = (path: string, parent: string) => {
     const normalizedPath = path.replaceAll("/", "\\").toLowerCase();
     const normalizedParent = parent.replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
@@ -23,8 +29,8 @@ export async function persistentProfileDirectory(configured: string): Promise<st
   if (!inside(candidate, resolvedRoot)) {
     throw new Error("--profile-dir must be under .crer\\profiles");
   }
-  await Deno.mkdir(candidate, { recursive: true });
-  const resolved = await Deno.realPath(candidate);
+  await mkdir(candidate, { recursive: true });
+  const resolved = await realpath(candidate);
   if (!inside(resolved, resolvedRoot)) {
     throw new Error("--profile-dir resolves outside .crer\\profiles");
   }
@@ -33,16 +39,16 @@ export async function persistentProfileDirectory(configured: string): Promise<st
 
 /** Applies CRER's browser-UI privacy defaults without discarding persistent profile data. */
 export async function prepareChromeProfile(directory: string): Promise<void> {
-  await Deno.mkdir(`${directory}/Default`, { recursive: true });
+  await mkdir(`${directory}/Default`, { recursive: true });
   const path = `${directory}/Default/Preferences`;
   let preferences: Record<string, unknown> = {};
   try {
-    const parsed = JSON.parse(await Deno.readTextFile(path));
+    const parsed = JSON.parse(await readFile(path, "utf8"));
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       preferences = parsed as Record<string, unknown>;
     }
   } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) throw error;
+    if (!isNotFound(error)) throw error;
   }
   const profile = preferences.profile && typeof preferences.profile === "object"
       && !Array.isArray(preferences.profile)
@@ -59,5 +65,5 @@ export async function prepareChromeProfile(directory: string): Promise<void> {
     password_manager_enabled: false,
     password_manager_leak_detection: false,
   };
-  await Deno.writeTextFile(path, JSON.stringify(preferences));
+  await writeFile(path, JSON.stringify(preferences), "utf8");
 }

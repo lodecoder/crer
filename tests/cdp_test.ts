@@ -1,4 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
+import { test } from "node:test";
 import { Cdp, CdpConnectionError, type CdpSocket } from "../src/cdp.ts";
 
 class FakeSocket implements CdpSocket {
@@ -16,7 +17,7 @@ class FakeSocket implements CdpSocket {
   }
 }
 
-Deno.test("rejects pending and future CDP calls when the socket closes", async () => {
+test("rejects pending and future CDP calls when the socket closes", async () => {
   const socket = new FakeSocket();
   const cdp = new Cdp("ws://test", () => socket);
   const opening = cdp.open();
@@ -31,7 +32,7 @@ Deno.test("rejects pending and future CDP calls when the socket closes", async (
   await assertRejects(() => cdp.call("Page.enable"), CdpConnectionError, "not open");
 });
 
-Deno.test("resolves CDP replies and rejects protocol errors", async () => {
+test("resolves CDP replies and rejects protocol errors", async () => {
   const socket = new FakeSocket();
   const cdp = new Cdp("ws://test", () => socket);
   const opening = cdp.open();
@@ -46,7 +47,7 @@ Deno.test("resolves CDP replies and rejects protocol errors", async () => {
   cdp.close();
 });
 
-Deno.test("rejects and detaches listeners when closed while connecting", async () => {
+test("rejects and detaches listeners when closed while connecting", async () => {
   const socket = new FakeSocket();
   const cdp = new Cdp("ws://test", () => socket);
   const opening = cdp.open();

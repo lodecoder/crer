@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { resolveFromDirectory } from "./paths.ts";
 import type { Point } from "./types.ts";
 
@@ -80,7 +81,7 @@ export async function matchTemplate(
 ): Promise<{ match: TemplateMatch; screenshot: string }> {
   const [screenshot, template] = await Promise.all([
     cdpCall<{ data: string }>("Page.captureScreenshot", { format: "png" }),
-    Deno.readFile(templatePath(base, options.path)),
+    readFile(templatePath(base, options.path)),
   ]);
   const templateUrl = `data:image/png;base64,${toBase64(template)}`;
   const result = await cdpCall<Evaluation<TemplateMatch>>("Runtime.evaluate", {
@@ -139,7 +140,7 @@ export async function matchTemplates(
 ): Promise<{ matches: TemplateMatch[]; screenshot: string }> {
   const [screenshot, template] = await Promise.all([
     cdpCall<{ data: string }>("Page.captureScreenshot", { format: "png" }),
-    Deno.readFile(templatePath(base, options.path)),
+    readFile(templatePath(base, options.path)),
   ]);
   const templateUrl = `data:image/png;base64,${toBase64(template)}`;
   const result = await cdpCall<Evaluation<TemplateMatch[]>>("Runtime.evaluate", {

@@ -1,4 +1,9 @@
+import { readFile } from "node:fs/promises";
 import type { Point, Scenario, Step } from "./types.ts";
+
+function isNotFound(error: unknown): boolean {
+  return !!error && typeof error === "object" && "code" in error && error.code === "ENOENT";
+}
 
 type RawEvent = {
   qpc: string;
@@ -77,21 +82,21 @@ export async function transformFromSidecar(
 ): Promise<CoordinateTransform | undefined> {
   try {
     return transformFromRecordingMetadata(
-      JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata,
+      JSON.parse(await readFile(`${rawFile}.meta.json`, "utf8")) as RecordingMetadata,
     );
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (isNotFound(error)) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);
   }
 }
 
 export async function qpcFrequencyFromSidecar(rawFile: string): Promise<bigint | undefined> {
   try {
-    const value = (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
+    const value = (JSON.parse(await readFile(`${rawFile}.meta.json`, "utf8")) as RecordingMetadata)
       .qpc_frequency_hz;
     return value && /^\d+$/.test(value) && BigInt(value) > 0n ? BigInt(value) : undefined;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (isNotFound(error)) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);
   }
 }
@@ -100,14 +105,13 @@ export async function windowBoundsFromSidecar(
   rawFile: string,
 ): Promise<{ left: number; top: number } | undefined> {
   try {
-    const bounds =
-      (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
-        .window_bounds;
+    const bounds = (JSON.parse(await readFile(`${rawFile}.meta.json`, "utf8")) as RecordingMetadata)
+      .window_bounds;
     return bounds && Number.isFinite(bounds.left) && Number.isFinite(bounds.top)
       ? bounds
       : undefined;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (isNotFound(error)) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);
   }
 }
@@ -117,14 +121,14 @@ export async function requestedContentFromSidecar(
 ): Promise<{ width: number; height: number } | undefined> {
   try {
     const content =
-      (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
+      (JSON.parse(await readFile(`${rawFile}.meta.json`, "utf8")) as RecordingMetadata)
         .requested_content;
     return content && Number.isFinite(content.width) && Number.isFinite(content.height)
         && content.width > 0 && content.height > 0
       ? content
       : undefined;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (isNotFound(error)) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);
   }
 }
@@ -132,11 +136,11 @@ export async function requestedContentFromSidecar(
 export async function profileDirFromSidecar(rawFile: string): Promise<string | undefined> {
   try {
     const directory =
-      (JSON.parse(await Deno.readTextFile(`${rawFile}.meta.json`)) as RecordingMetadata)
+      (JSON.parse(await readFile(`${rawFile}.meta.json`, "utf8")) as RecordingMetadata)
         .profile_dir;
     return typeof directory === "string" && directory.trim() ? directory : undefined;
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (isNotFound(error)) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);
   }
 }
@@ -144,14 +148,14 @@ export async function profileDirFromSidecar(rawFile: string): Promise<string | u
 export async function recordingWarningFromSidecar(rawFile: string): Promise<string | undefined> {
   try {
     const metadata = JSON.parse(
-      await Deno.readTextFile(`${rawFile}.meta.json`),
+      await readFile(`${rawFile}.meta.json`, "utf8"),
     ) as RecordingMetadata;
     if (!metadata.incomplete) return undefined;
     return metadata.recording_error
       ? `recording is incomplete: ${metadata.recording_error}`
       : "recording is marked incomplete";
   } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return undefined;
+    if (isNotFound(error)) return undefined;
     throw new Error(`could not read recording metadata: ${error}`);
   }
 }
@@ -206,7 +210,7 @@ export async function normalizeRawWithWarnings(
   requestedContent?: { width: number; height: number },
   profileDir?: string,
 ): Promise<NormalizedRecording> {
-  const raw = (await Deno.readTextFile(path)).split(/\r?\n/).filter(Boolean).map((line) =>
+  const raw = (await readFile(path, "utf8")).split(/\r?\n/).filter(Boolean).map((line) =>
     JSON.parse(line) as RawEvent
   );
   const steps: Step[] = [];

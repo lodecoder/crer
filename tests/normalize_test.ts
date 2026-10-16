@@ -1,26 +1,33 @@
 import { assertEquals } from "@std/assert";
+import { rm, writeFile } from "node:fs/promises";
+import { test } from "node:test";
 import {
   normalizeRaw,
   normalizeRawWithWarnings,
-  screenToCss,
-  transformFromRecordingMetadata,
-  requestedContentFromSidecar,
   profileDirFromSidecar,
   recordingWarningFromSidecar,
+  requestedContentFromSidecar,
+  screenToCss,
+  transformFromRecordingMetadata,
   windowBoundsFromSidecar,
 } from "../src/normalize.ts";
+import { temporaryFile } from "./helpers.ts";
 
-Deno.test("converts physical screen coordinates into CSS viewport coordinates", () => {
+test("converts physical screen coordinates into CSS viewport coordinates", () => {
   assertEquals(
     screenToCss(
       { x: 1100, y: 700 },
-      { clientOrigin: { x: 100, y: 100 }, clientSize: { x: 2000, y: 1200 }, viewport: { x: 1000, y: 600 } },
+      {
+        clientOrigin: { x: 100, y: 100 },
+        clientSize: { x: 2000, y: 1200 },
+        viewport: { x: 1000, y: 600 },
+      },
     ),
     { x: 500, y: 300 },
   );
 });
 
-Deno.test("uses complete recording metadata as a coordinate transform", () => {
+test("uses complete recording metadata as a coordinate transform", () => {
   assertEquals(
     transformFromRecordingMetadata({
       content_rect_screen_px: { x: 100, y: 200, width: 2000, height: 1200 },
@@ -42,7 +49,7 @@ Deno.test("uses complete recording metadata as a coordinate transform", () => {
   );
 });
 
-Deno.test("calibrates the page origin from the recording marker", () => {
+test("calibrates the page origin from the recording marker", () => {
   assertEquals(
     transformFromRecordingMetadata({
       content_rect_screen_px: { x: 0, y: 16, width: 442, height: 331 },
@@ -60,7 +67,7 @@ Deno.test("calibrates the page origin from the recording marker", () => {
   );
 });
 
-Deno.test("uses physical screen pixels without scaling across scrollbar dimensions", () => {
+test("uses physical screen pixels without scaling across scrollbar dimensions", () => {
   const transform = transformFromRecordingMetadata({
     content_rect_screen_px: { x: 18, y: 42, width: 1330, height: 1200 },
     css_viewport: { x: 1315, y: 1200 },
@@ -79,7 +86,7 @@ Deno.test("uses physical screen pixels without scaling across scrollbar dimensio
   assertEquals(screenToCss({ x: 1018, y: 642 }, transform!), { x: 1000, y: 600 });
 });
 
-Deno.test("infers the correct DPI scale for older metadata with a scrollbar", () => {
+test("infers the correct DPI scale for older metadata with a scrollbar", () => {
   const transform = transformFromRecordingMetadata({
     content_rect_screen_px: { x: 9, y: 21, width: 665, height: 600 },
     requested_content: { width: 1330, height: 1200 },
@@ -93,46 +100,49 @@ Deno.test("infers the correct DPI scale for older metadata with a scrollbar", ()
   assertEquals(screenToCss({ x: 509, y: 321 }, transform!), { x: 1000, y: 600 });
 });
 
-Deno.test("reads the recorded window position from a sidecar", async () => {
-  const path = await Deno.makeTempFile();
+test("reads the recorded window position from a sidecar", async () => {
+  const path = await temporaryFile();
   try {
-    await Deno.writeTextFile(`${path}.meta.json`, JSON.stringify({ window_bounds: { left: -800, top: 40 } }));
+    await writeFile(
+      `${path}.meta.json`,
+      JSON.stringify({ window_bounds: { left: -800, top: 40 } }),
+    );
     assertEquals(await windowBoundsFromSidecar(path), { left: -800, top: 40 });
   } finally {
-    await Deno.remove(path).catch(() => {});
-    await Deno.remove(`${path}.meta.json`).catch(() => {});
+    await rm(path).catch(() => {});
+    await rm(`${path}.meta.json`).catch(() => {});
   }
 });
 
-Deno.test("reads the requested content size from a sidecar", async () => {
-  const path = await Deno.makeTempFile();
+test("reads the requested content size from a sidecar", async () => {
+  const path = await temporaryFile();
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       `${path}.meta.json`,
       JSON.stringify({ requested_content: { width: 780, height: 1250 } }),
     );
     assertEquals(await requestedContentFromSidecar(path), { width: 780, height: 1250 });
   } finally {
-    await Deno.remove(path).catch(() => {});
-    await Deno.remove(`${path}.meta.json`).catch(() => {});
+    await rm(path).catch(() => {});
+    await rm(`${path}.meta.json`).catch(() => {});
   }
 });
 
-Deno.test("reads the persistent profile directory from a sidecar", async () => {
-  const path = await Deno.makeTempFile();
+test("reads the persistent profile directory from a sidecar", async () => {
+  const path = await temporaryFile();
   try {
-    await Deno.writeTextFile(`${path}.meta.json`, JSON.stringify({ profile_dir: ".crer/profiles/demo" }));
+    await writeFile(`${path}.meta.json`, JSON.stringify({ profile_dir: ".crer/profiles/demo" }));
     assertEquals(await profileDirFromSidecar(path), ".crer/profiles/demo");
   } finally {
-    await Deno.remove(path).catch(() => {});
-    await Deno.remove(`${path}.meta.json`).catch(() => {});
+    await rm(path).catch(() => {});
+    await rm(`${path}.meta.json`).catch(() => {});
   }
 });
 
-Deno.test("warns when recorder metadata marks raw input incomplete", async () => {
-  const path = await Deno.makeTempFile();
+test("warns when recorder metadata marks raw input incomplete", async () => {
+  const path = await temporaryFile();
   try {
-    await Deno.writeTextFile(
+    await writeFile(
       `${path}.meta.json`,
       JSON.stringify({ incomplete: true, recording_error: "Raw Input recorder failed: 111" }),
     );
@@ -141,14 +151,14 @@ Deno.test("warns when recorder metadata marks raw input incomplete", async () =>
       "recording is incomplete: Raw Input recorder failed: 111",
     );
   } finally {
-    await Deno.remove(path).catch(() => {});
-    await Deno.remove(`${path}.meta.json`).catch(() => {});
+    await rm(path).catch(() => {});
+    await rm(`${path}.meta.json`).catch(() => {});
   }
 });
 
-Deno.test("normalizes mouse, wheel, and key events into steps", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(
+test("normalizes mouse, wheel, and key events into steps", async () => {
+  const path = await temporaryFile();
+  await writeFile(
     path,
     [
       { qpc: "1", x: 100, y: 200, kind: 2, data: 0 },
@@ -170,32 +180,41 @@ Deno.test("normalizes mouse, wheel, and key events into steps", async () => {
       { do: "key", key: "Enter" },
     ]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("preserves recorded pauses between logical actions", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(path, [
-    { qpc: "1000000", x: 10, y: 20, kind: 2, data: 0 },
-    { qpc: "1000100", x: 10, y: 20, kind: 3, data: 0 },
-    { qpc: "6000100", x: 30, y: 40, kind: 2, data: 0 },
-    { qpc: "6000200", x: 30, y: 40, kind: 3, data: 0 },
-  ].map((event) => JSON.stringify(event)).join("\n"));
+test("preserves recorded pauses between logical actions", async () => {
+  const path = await temporaryFile();
+  await writeFile(
+    path,
+    [
+      { qpc: "1000000", x: 10, y: 20, kind: 2, data: 0 },
+      { qpc: "1000100", x: 10, y: 20, kind: 3, data: 0 },
+      { qpc: "6000100", x: 30, y: 40, kind: 2, data: 0 },
+      { qpc: "6000200", x: 30, y: 40, kind: 3, data: 0 },
+    ].map((event) => JSON.stringify(event)).join("\n"),
+  );
   try {
-    const scenario = await normalizeRaw(path, "https://example.test", "sample", undefined, 1_000_000n);
+    const scenario = await normalizeRaw(
+      path,
+      "https://example.test",
+      "sample",
+      undefined,
+      1_000_000n,
+    );
     assertEquals(scenario.steps, [
       { do: "click", at: { x: 10, y: 20 }, delay_ms: 5000 },
       { do: "click", at: { x: 30, y: 40 } },
     ]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("applies a coordinate transform while normalizing", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(
+test("applies a coordinate transform while normalizing", async () => {
+  const path = await temporaryFile();
+  await writeFile(
     path,
     [
       { qpc: "1", x: 1100, y: 700, kind: 2, data: 0 },
@@ -211,13 +230,13 @@ Deno.test("applies a coordinate transform while normalizing", async () => {
     assertEquals(scenario.steps, [{ do: "click", at: { x: 500, y: 300 } }]);
     assertEquals(scenario.browser.window?.content, { width: 1000, height: 600 });
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("uses the event viewport after a recorded navigation", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(
+test("uses the event viewport after a recorded navigation", async () => {
+  const path = await temporaryFile();
+  await writeFile(
     path,
     JSON.stringify({
       qpc: "1",
@@ -243,100 +262,121 @@ Deno.test("uses the event viewport after a recorded navigation", async () => {
     });
     assertEquals(scenario.steps, [{ do: "click", at: { x: 80, y: 80 } }]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("warns and omits an incomplete mouse click", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(path, JSON.stringify({ qpc: "1", x: 100, y: 200, kind: 2, data: 0 }));
+test("warns and omits an incomplete mouse click", async () => {
+  const path = await temporaryFile();
+  await writeFile(path, JSON.stringify({ qpc: "1", x: 100, y: 200, kind: 2, data: 0 }));
   try {
     const normalized = await normalizeRawWithWarnings(path, "https://example.test", "sample");
     assertEquals(normalized.scenario.steps, []);
     assertEquals(normalized.warnings, ["ignored incomplete left mouse down at end of recording"]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("warns when a mouse down overlaps an unfinished click", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(path, [
-    { qpc: "1", x: 10, y: 20, kind: 2, data: 0 },
-    { qpc: "2", x: 30, y: 40, kind: 2, data: 0 },
-    { qpc: "3", x: 30, y: 40, kind: 3, data: 0 },
-  ].map((event) => JSON.stringify(event)).join("\n"));
+test("warns when a mouse down overlaps an unfinished click", async () => {
+  const path = await temporaryFile();
+  await writeFile(
+    path,
+    [
+      { qpc: "1", x: 10, y: 20, kind: 2, data: 0 },
+      { qpc: "2", x: 30, y: 40, kind: 2, data: 0 },
+      { qpc: "3", x: 30, y: 40, kind: 3, data: 0 },
+    ].map((event) => JSON.stringify(event)).join("\n"),
+  );
   try {
     const normalized = await normalizeRawWithWarnings(path, "https://example.test", "sample");
     assertEquals(normalized.scenario.steps, [{ do: "click", at: { x: 30, y: 40 } }]);
-    assertEquals(normalized.warnings, ["ignored incomplete left mouse down before next mouse down"]);
+    assertEquals(normalized.warnings, [
+      "ignored incomplete left mouse down before next mouse down",
+    ]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("normalizes movement while pressed as a drag", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(path, [
-    { qpc: "1", x: 100, y: 200, kind: 2, data: 0 },
-    { qpc: "2", x: 150, y: 230, kind: 1, data: 0 },
-    { qpc: "3", x: 150, y: 230, kind: 3, data: 0 },
-  ].map((event) => JSON.stringify(event)).join("\n"));
+test("normalizes movement while pressed as a drag", async () => {
+  const path = await temporaryFile();
+  await writeFile(
+    path,
+    [
+      { qpc: "1", x: 100, y: 200, kind: 2, data: 0 },
+      { qpc: "2", x: 150, y: 230, kind: 1, data: 0 },
+      { qpc: "3", x: 150, y: 230, kind: 3, data: 0 },
+    ].map((event) => JSON.stringify(event)).join("\n"),
+  );
   try {
     const scenario = await normalizeRaw(path, "https://example.test", "sample");
-    assertEquals(scenario.steps, [{ do: "drag", from: { x: 100, y: 200 }, to: { x: 150, y: 230 } }]);
+    assertEquals(scenario.steps, [{
+      do: "drag",
+      from: { x: 100, y: 200 },
+      to: { x: 150, y: 230 },
+    }]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("preserves Shift for recorded text", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(path, [
-    { qpc: "1", x: 0, y: 0, kind: 7, data: 160 << 16 },
-    { qpc: "2", x: 0, y: 0, kind: 7, data: 65 << 16 },
-    { qpc: "3", x: 0, y: 0, kind: 8, data: 160 << 16 },
-    { qpc: "4", x: 0, y: 0, kind: 7, data: 66 << 16 },
-  ].map((event) => JSON.stringify(event)).join("\n"));
+test("preserves Shift for recorded text", async () => {
+  const path = await temporaryFile();
+  await writeFile(
+    path,
+    [
+      { qpc: "1", x: 0, y: 0, kind: 7, data: 160 << 16 },
+      { qpc: "2", x: 0, y: 0, kind: 7, data: 65 << 16 },
+      { qpc: "3", x: 0, y: 0, kind: 8, data: 160 << 16 },
+      { qpc: "4", x: 0, y: 0, kind: 7, data: 66 << 16 },
+    ].map((event) => JSON.stringify(event)).join("\n"),
+  );
   try {
     const scenario = await normalizeRaw(path, "https://example.test", "sample");
     assertEquals(scenario.steps, [{ do: "text", value: "Ab" }]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("preserves punctuation translated by the Windows keyboard layout", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(path, [
-    { qpc: "1", x: 0, y: 0, kind: 9, data: "C".codePointAt(0) },
-    { qpc: "2", x: 0, y: 0, kind: 9, data: "r".codePointAt(0) },
-    { qpc: "3", x: 0, y: 0, kind: 9, data: "e".codePointAt(0) },
-    { qpc: "4", x: 0, y: 0, kind: 9, data: "r".codePointAt(0) },
-    { qpc: "5", x: 0, y: 0, kind: 9, data: "@".codePointAt(0) },
-    { qpc: "6", x: 0, y: 0, kind: 9, data: ".".codePointAt(0) },
-    { qpc: "7", x: 0, y: 0, kind: 9, data: "4".codePointAt(0) },
-    { qpc: "8", x: 0, y: 0, kind: 9, data: "2".codePointAt(0) },
-  ].map((event) => JSON.stringify(event)).join("\n"));
+test("preserves punctuation translated by the Windows keyboard layout", async () => {
+  const path = await temporaryFile();
+  await writeFile(
+    path,
+    [
+      { qpc: "1", x: 0, y: 0, kind: 9, data: "C".codePointAt(0) },
+      { qpc: "2", x: 0, y: 0, kind: 9, data: "r".codePointAt(0) },
+      { qpc: "3", x: 0, y: 0, kind: 9, data: "e".codePointAt(0) },
+      { qpc: "4", x: 0, y: 0, kind: 9, data: "r".codePointAt(0) },
+      { qpc: "5", x: 0, y: 0, kind: 9, data: "@".codePointAt(0) },
+      { qpc: "6", x: 0, y: 0, kind: 9, data: ".".codePointAt(0) },
+      { qpc: "7", x: 0, y: 0, kind: 9, data: "4".codePointAt(0) },
+      { qpc: "8", x: 0, y: 0, kind: 9, data: "2".codePointAt(0) },
+    ].map((event) => JSON.stringify(event)).join("\n"),
+  );
   try {
     const scenario = await normalizeRaw(path, "https://example.test", "sample");
     assertEquals(scenario.steps, [{ do: "text", value: "Crer@.42" }]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("normalizes Ctrl shortcuts as key chords", async () => {
-  const path = await Deno.makeTempFile();
-  await Deno.writeTextFile(path, [
-    { qpc: "1", x: 0, y: 0, kind: 7, data: 17 << 16 },
-    { qpc: "2", x: 0, y: 0, kind: 7, data: 65 << 16 },
-    { qpc: "3", x: 0, y: 0, kind: 8, data: 17 << 16 },
-  ].map((event) => JSON.stringify(event)).join("\n"));
+test("normalizes Ctrl shortcuts as key chords", async () => {
+  const path = await temporaryFile();
+  await writeFile(
+    path,
+    [
+      { qpc: "1", x: 0, y: 0, kind: 7, data: 17 << 16 },
+      { qpc: "2", x: 0, y: 0, kind: 7, data: 65 << 16 },
+      { qpc: "3", x: 0, y: 0, kind: 8, data: 17 << 16 },
+    ].map((event) => JSON.stringify(event)).join("\n"),
+  );
   try {
     const scenario = await normalizeRaw(path, "https://example.test", "sample");
     assertEquals(scenario.steps, [{ do: "key_chord", keys: ["Control", "a"] }]);
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });

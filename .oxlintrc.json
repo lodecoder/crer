@@ -1,0 +1,11 @@
+{
+  "rules": {
+    "unicorn/no-thenable": "off",
+    "unicorn/no-new-array": "off",
+    "unicorn/no-useless-fallback-in-spread": "off",
+    "eslint/no-unused-expressions": "off"
+  },
+  "overrides": [
+    { "files": ["tests/normalize_test.ts"], "rules": { "eslint/no-loss-of-precision": "off" } }
+  ]
+}

@@ -1,8 +1,8 @@
 {
   "markdown": { "lineWidth": 100 },
   "typescript": { "lineWidth": 100, "quoteStyle": "alwaysDouble" },
-  "includes": ["src/**/*.ts", "*.json", "docs/**/*.md"],
-  "excludes": ["native/**/bin/**", "native/**/obj/**"],
+  "includes": ["src/**/*.ts", "tests/*.ts", "scripts/*.mjs", "*.json", "README.md", "TODO.md", "docs/**/*.md"],
+  "excludes": ["**/bin/**", "**/obj/**", "node_modules/**", "dist/**", ".crer/**"],
   "plugins": [
     "https://plugins.dprint.dev/typescript-0.96.1.wasm",
     "https://plugins.dprint.dev/json-0.23.0.wasm",

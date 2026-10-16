@@ -1,7 +1,8 @@
 import { assertEquals, assertRejects } from "@std/assert";
+import { test } from "node:test";
 import { KeyedLock, mapWithCancellation, mapWithConcurrency, Semaphore } from "../src/scheduler.ts";
 
-Deno.test("limits concurrent work while preserving result order", async () => {
+test("limits concurrent work while preserving result order", async () => {
   let active = 0;
   let peak = 0;
   const result = await mapWithConcurrency([1, 2, 3, 4], 2, async (value) => {
@@ -15,7 +16,7 @@ Deno.test("limits concurrent work while preserving result order", async () => {
   assertEquals(result, [10, 20, 30, 40]);
 });
 
-Deno.test("shares one concurrency limit across nested work", async () => {
+test("shares one concurrency limit across nested work", async () => {
   const gate = new Semaphore(2);
   let active = 0;
   let peak = 0;
@@ -33,7 +34,7 @@ Deno.test("shares one concurrency limit across nested work", async () => {
   assertEquals(peak, 2);
 });
 
-Deno.test("does not start queued work after cancellation", async () => {
+test("does not start queued work after cancellation", async () => {
   const gate = new Semaphore(1);
   const controller = new AbortController();
   let secondStarted = false;
@@ -49,7 +50,7 @@ Deno.test("does not start queued work after cancellation", async () => {
   assertEquals(secondStarted, false);
 });
 
-Deno.test("stops scheduling after a fail-fast result", async () => {
+test("stops scheduling after a fail-fast result", async () => {
   const started: number[] = [];
   const result = await mapWithConcurrency([1, 2, 3], 1, (value) => {
     started.push(value);
@@ -59,7 +60,7 @@ Deno.test("stops scheduling after a fail-fast result", async () => {
   assertEquals(result, [1]);
 });
 
-Deno.test("fail-fast aborts running work and does not start queued work", async () => {
+test("fail-fast aborts running work and does not start queued work", async () => {
   const started: number[] = [];
   let runningAborted = false;
   await mapWithCancellation(
@@ -82,7 +83,7 @@ Deno.test("fail-fast aborts running work and does not start queued work", async 
   assertEquals(runningAborted, true);
 });
 
-Deno.test("serializes identical persistent profile keys only", async () => {
+test("serializes identical persistent profile keys only", async () => {
   const locks = new KeyedLock();
   let sameKeyActive = 0;
   let sameKeyPeak = 0;
@@ -96,7 +97,7 @@ Deno.test("serializes identical persistent profile keys only", async () => {
   assertEquals(sameKeyPeak, 1);
 });
 
-Deno.test("worker exceptions abort and drain siblings before session cleanup", async () => {
+test("worker exceptions abort and drain siblings before session cleanup", async () => {
   const started: number[] = [];
   let drained = false;
   await assertRejects(

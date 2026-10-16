@@ -1,4 +1,7 @@
 import { assertEquals, assertRejects } from "@std/assert";
+import { rm, writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { test } from "node:test";
 import {
   matchTemplate,
   matchTemplates,
@@ -6,19 +9,19 @@ import {
   TemplateMatchError,
   templatePath,
 } from "../src/template.ts";
-import { resolve } from "node:path";
+import { temporaryFile } from "./helpers.ts";
 
-Deno.test("selects a deterministic point within a template match", () => {
+test("selects a deterministic point within a template match", () => {
   assertEquals(
     randomPointInMatch({ x: 10, y: 20, width: 40, height: 30, similarity: 1 }, 2, () => 0.5),
     { x: 30, y: 35 },
   );
 });
 
-Deno.test("retains the in-memory screenshot when template evaluation fails", async () => {
-  const path = await Deno.makeTempFile();
+test("retains the in-memory screenshot when template evaluation fails", async () => {
+  const path = await temporaryFile();
   try {
-    await Deno.writeFile(path, new Uint8Array([0]));
+    await writeFile(path, new Uint8Array([0]));
     const error = await assertRejects(
       () =>
         matchTemplate(
@@ -39,21 +42,21 @@ Deno.test("retains the in-memory screenshot when template evaluation fails", asy
     );
     assertEquals((error as TemplateMatchError).screenshot, btoa("failure"));
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });
 
-Deno.test("resolves a relative template against the scenario directory", () => {
+test("resolves a relative template against the scenario directory", () => {
   assertEquals(
     templatePath("fixtures/playback", "templates/button.png"),
     resolve("fixtures/playback", "templates/button.png"),
   );
 });
 
-Deno.test("returns all template matches supplied by the browser evaluation", async () => {
-  const path = await Deno.makeTempFile();
+test("returns all template matches supplied by the browser evaluation", async () => {
+  const path = await temporaryFile();
   try {
-    await Deno.writeFile(path, new Uint8Array([0]));
+    await writeFile(path, new Uint8Array([0]));
     const matches = [
       { x: 10, y: 20, width: 30, height: 40, similarity: 0.99 },
       { x: 50, y: 60, width: 30, height: 40, similarity: 0.98 },
@@ -73,6 +76,6 @@ Deno.test("returns all template matches supplied by the browser evaluation", asy
     assertEquals(result.matches, matches);
     assertEquals(result.screenshot, btoa("screen"));
   } finally {
-    await Deno.remove(path);
+    await rm(path);
   }
 });

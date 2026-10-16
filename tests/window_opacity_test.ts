@@ -1,9 +1,10 @@
 import { assertEquals, assertThrows } from "@std/assert";
+import { test } from "node:test";
 import { EnvironmentError } from "../src/errors.ts";
 import { opacityAlpha, WindowOpacity } from "../src/window_opacity.ts";
 import { scenarioFrom } from "../src/yaml.ts";
 
-Deno.test("window opacity validates YAML values and converts to native alpha", () => {
+test("window opacity validates YAML values and converts to native alpha", () => {
   const scenario = (opacity: unknown) =>
     scenarioFrom({
       version: 1,
@@ -24,7 +25,7 @@ Deno.test("window opacity validates YAML values and converts to native alpha", (
   }
 });
 
-Deno.test("default opacity needs no native DLL but transparency does", () => {
+test("default opacity needs no native DLL but transparency does", () => {
   const opacity = new WindowOpacity(1);
   try {
     opacity.configure();

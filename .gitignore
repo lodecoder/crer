@@ -9,3 +9,5 @@ native/bin/
 native/obj/
 native/**/bin/
 native/**/obj/
+**/bin/
+**/obj/

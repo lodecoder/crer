@@ -1,0 +1,35 @@
+{
+  "name": "crer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "dev": "node --import tsx src/main.ts",
+    "check": "tsc --noEmit",
+    "lint": "oxlint src tests",
+    "fmt": "dprint fmt --incremental=false",
+    "fmt:check": "dprint check --incremental=false",
+    "test": "node --import tsx --test --test-concurrency=1 tests/*_test.ts",
+    "test:native": "dotnet run --project native/tests/Crer.WinInput.NativeTests.csproj",
+    "test:record": "node scripts/test-node-recording.mjs",
+    "build": "node scripts/build-node.mjs",
+    "verify": "npm run check && npm run lint && npm run fmt:check && npm test"
+  },
+  "dependencies": {
+    "@std/yaml": "npm:@jsr/std__yaml@1.2.0",
+    "koffi": "3.3.2"
+  },
+  "devDependencies": {
+    "@std/assert": "npm:@jsr/std__assert@1.0.19",
+    "@types/node": "^24.0.0",
+    "dprint": "^0.50.0",
+    "esbuild": "0.28.2",
+    "oxlint": "^1.0.0",
+    "postject": "1.0.0-alpha.6",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

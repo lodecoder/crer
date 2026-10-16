@@ -1,3 +1,4 @@
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { executeAtomicAction } from "./actions.ts";
 import { RunArtifactSink } from "./artifacts.ts";
 import { Cdp } from "./cdp.ts";
@@ -10,7 +11,9 @@ import {
 } from "./errors.ts";
 import { ExecutionContext, StepExecutor } from "./executor.ts";
 import { cleanupErrors } from "./input_guard.ts";
+import { loadNativeLibrary } from "./native.ts";
 import { jitter, Random, randomSeed } from "./prng.ts";
+import { type LaunchedProcess, launchProcess, reserveLocalPort } from "./process.ts";
 import { persistentProfileDirectory, prepareChromeProfile } from "./profiles.ts";
 import { createRunId } from "./run_id.ts";
 import { createScenarioLogger, type ScenarioLogger } from "./scenario_logger.ts";
@@ -114,7 +117,7 @@ type ForegroundGuard = {
 };
 const windowHandleText = (handle: bigint) => `0x${handle.toString(16)}`;
 function captureForeground(dllPath: string): ForegroundGuard {
-  const lib = Deno.dlopen(dllPath, {
+  const lib = loadNativeLibrary(dllPath, {
     crer_input_get_foreground_window: { parameters: [], result: "usize" },
     crer_input_set_process_topmost_only: { parameters: ["u32", "i32"], result: "i32" },
     crer_input_foreground_process_window: { parameters: ["u32"], result: "i32" },
@@ -135,7 +138,7 @@ type BrowserSession = {
   sessionId: string;
   pageDebuggerUrl: string;
   windowId: number;
-  process: Deno.ChildProcess;
+  process: LaunchedProcess;
   stderr: Promise<string>;
   runDir: string;
   viewport: { x: number; y: number };
@@ -336,14 +339,21 @@ export async function awaitChromeEndpoint<T>(
   return outcome.value;
 }
 
-async function waitForProcessExit(process: Deno.ChildProcess, timeoutMs: number) {
-  return await Promise.race([
-    process.status.then((status) => status),
-    sleep(timeoutMs).then(() => undefined),
-  ]);
+async function waitForProcessExit(process: LaunchedProcess, timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      process.status,
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
-async function terminateProcess(process: Deno.ChildProcess) {
+async function terminateProcess(process: LaunchedProcess) {
   const exited = await waitForProcessExit(process, 5_000);
   if (exited) return exited;
   try {
@@ -351,26 +361,43 @@ async function terminateProcess(process: Deno.ChildProcess) {
   } catch {
     // The child may have already exited.
   }
-  return await waitForProcessExit(process, 2_000);
+  const terminated = await waitForProcessExit(process, 2_000);
+  if (terminated) return terminated;
+  try {
+    process.kill("SIGKILL");
+  } catch {
+    // 終了通知と強制終了が競合した場合は、状態をもう一度確認する。
+  }
+  return await waitForProcessExit(process, 5_000);
 }
 
 async function closeBrowser(browser: BrowserSession) {
   browser.windowOpacity.close();
-  const graceful = await Promise.race([
-    browser.cdp.call("Browser.close").then(() => true, () => false),
-    sleep(5_000).then(() => false),
-  ]);
+  let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let graceful: boolean;
+  try {
+    graceful = await Promise.race([
+      browser.cdp.call("Browser.close").then(() => true, () => false),
+      new Promise<false>((resolve) => {
+        closeTimer = setTimeout(() => resolve(false), 5_000);
+      }),
+    ]);
+  } finally {
+    if (closeTimer !== undefined) clearTimeout(closeTimer);
+  }
   browser.cdp.close();
-  const status = await terminateProcess(browser.process);
+  let status = await terminateProcess(browser.process);
   const stderr = await browser.stderr.catch((error) => `could not read Chrome stderr: ${error}`);
-  await Deno.writeTextFile(
+  // パイプの終了待ち中にもプロセスの状態は変わるため、古いタイムアウト結果を残さない。
+  status ??= await waitForProcessExit(browser.process, 1_000);
+  await writeFile(
     `${browser.runDir}/shutdown.json`,
     JSON.stringify(
       {
         graceful,
         exited: status !== undefined,
         ...(stderr ? { stderr } : {}),
-        ...(status ? { code: status.code, success: status.success, signal: status.signal } : {}),
+        ...(status ? { code: status.code, success: status.code === 0, signal: status.signal } : {}),
       },
       null,
       2,
@@ -424,7 +451,7 @@ function startTopmostMonitor(shared: SharedBrowserSession) {
 }
 
 async function writeSharedForeground(shared: SharedBrowserSession, runDir: string) {
-  await Deno.writeTextFile(
+  await writeFile(
     `${runDir}/foreground.json`,
     JSON.stringify(
       {
@@ -454,7 +481,7 @@ export async function closeSharedBrowserSession(shared: SharedBrowserSession): P
   if (browser) await closeBrowser(browser);
   const restoreStatus = shared.focusedOnce ? foreground?.restore() : undefined;
   if (browser) {
-    await Deno.writeTextFile(
+    await writeFile(
       `${browser.runDir}/foreground.json`,
       JSON.stringify(
         {
@@ -493,7 +520,7 @@ async function validateDisplay(
   const logger = createScenarioLogger(s.name, s.playback?.log_color);
   const actual = await readViewport(cdp, sessionId);
   const expectedViewport = s.browser.window?.viewport ?? s.browser.window?.content;
-  await Deno.writeTextFile(
+  await writeFile(
     `${runDir}/display.json`,
     JSON.stringify(
       { actual: actual ?? {}, expectedViewport, display: display ?? {}, ignoreViewportMismatch },
@@ -540,12 +567,10 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
   const configuredProfile = options.profileDir ?? scenarioProfileDirectory(s);
   const profile = configuredProfile
     ? await persistentProfileDirectory(configuredProfile)
-    : `${await Deno.realPath(runDir)}/profile`;
+    : `${await realpath(runDir)}/profile`;
   await prepareChromeProfile(profile);
-  const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (reservation.addr as Deno.NetAddr).port;
-  reservation.close();
-  const p = new Deno.Command(options.chromePath, {
+  const port = await reserveLocalPort();
+  const p = await launchProcess(options.chromePath, {
     env: chromeEnvironment(),
     args: [
       `--remote-debugging-port=${port}`,
@@ -561,19 +586,19 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
       // A translation bubble is browser UI, not page content, and can obscure coordinate replay.
       "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding",
       ...(options.muteAudio ? ["--mute-audio"] : []),
-      // about:blank is not accepted by Chrome's --app URL filter and opens a tabbed window.
-      // An empty data document keeps app mode without fetching the site before interception.
-      `--app=${s.browser.block_urls?.length ? "data:text/html," : s.browser.initial_url}`,
+      // 起動中の about:blank を読み込み完了と誤認しないよう、接続後に明示的に遷移する。
+      // 空の data 文書でアプリモードを維持し、URL 遮断の設定前には通信しない。
+      "--app=data:text/html,",
     ],
     stdout: "null",
     stderr: "piped",
-  }).spawn();
+  });
   const stderr = collectText(p.stderr);
   const windowOpacity = new WindowOpacity(p.pid, options.inputDllPath);
   let cdp: Cdp | undefined;
   let stage = "chrome_started";
   const writeLaunchDiagnostic = async (error?: unknown, chromeStderr?: string) => {
-    await Deno.writeTextFile(
+    await writeFile(
       `${runDir}/launch.json`,
       JSON.stringify(
         {
@@ -639,7 +664,7 @@ async function launch(s: Scenario, options: PlayOptions, runDir: string): Promis
     if (s.browser.window?.content) {
       await setContentSize(cdp, attached.sessionId, window.windowId, s.browser.window.content);
     }
-    if (s.browser.block_urls?.length) {
+    {
       const navigation = await cdp.call<{ errorText?: string }>(
         "Page.navigate",
         { url: s.browser.initial_url },
@@ -703,7 +728,7 @@ async function prepareReusedBrowser(
     browser.logger.warn,
   );
   browser.network.reset();
-  await Deno.writeTextFile(
+  await writeFile(
     `${runDir}/launch.json`,
     JSON.stringify({ stage: "reusing_browser_session", profile: options.profileDir }, null, 2)
       + "\n",
@@ -747,7 +772,7 @@ async function prepareReusedBrowser(
     runDir,
     options.ignoreViewportMismatch ?? false,
   );
-  await Deno.writeTextFile(
+  await writeFile(
     `${runDir}/launch.json`,
     JSON.stringify({ stage: "ready", reused: true, profile: options.profileDir }, null, 2) + "\n",
   );
@@ -776,7 +801,7 @@ async function acquireSharedBrowser(
     try {
       shared.foreground = captureForeground(options.inputDllPath);
     } catch (error) {
-      await Deno.writeTextFile(
+      await writeFile(
         `${runDir}/foreground.json`,
         JSON.stringify({ captureError: String(error), sharedSession: true }, null, 2) + "\n",
       );
@@ -813,7 +838,7 @@ async function capture(b: BrowserSession, name: string, required = false) {
       await pageCdp.call("Page.enable");
       await sleep(250);
       const r = await pageCdp.call<{ data: string }>("Page.captureScreenshot", { format: "png" });
-      await Deno.writeFile(
+      await writeFile(
         `${b.runDir}/${name}.png`,
         Uint8Array.from(atob(r.data), (x) => x.charCodeAt(0)),
       );
@@ -829,7 +854,7 @@ async function capture(b: BrowserSession, name: string, required = false) {
 }
 
 async function writeBase64Png(path: string, base64: string) {
-  await Deno.writeFile(path, Uint8Array.from(atob(base64), (x) => x.charCodeAt(0)));
+  await writeFile(path, Uint8Array.from(atob(base64), (x) => x.charCodeAt(0)));
 }
 function failureFor(step: Step, error: unknown): FailureKind {
   const e = String(error);
@@ -961,12 +986,12 @@ async function currentUrl(b: BrowserSession): Promise<string | undefined> {
 export async function playScenario(s: Scenario, options: PlayOptions): Promise<RunResult> {
   const logger = createScenarioLogger(s.name, s.playback?.log_color);
   const runDir = `.crer/runs/${createRunId(s.name)}`;
-  await Deno.mkdir(runDir, { recursive: true });
+  await mkdir(runDir, { recursive: true });
   const seed = options.seed ?? s.playback?.seed ?? randomSeed();
   const templateScreenshots = options.templateScreenshots
     ?? s.playback?.artifacts?.template_screenshots
     ?? "all";
-  await Deno.writeTextFile(
+  await writeFile(
     `${runDir}/run.json`,
     JSON.stringify(
       {
@@ -1014,7 +1039,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       );
       b = acquired.browser;
       foreground = options.sharedSession.foreground;
-      await Deno.writeTextFile(
+      await writeFile(
         `${runDir}/run.json`,
         JSON.stringify(
           {
@@ -1041,12 +1066,12 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       if (options.inputDllPath) {
         try {
           foreground = captureForeground(options.inputDllPath);
-          await Deno.writeTextFile(
+          await writeFile(
             `${runDir}/foreground.json`,
             JSON.stringify({ before: windowHandleText(foreground.original) }, null, 2) + "\n",
           );
         } catch (error) {
-          await Deno.writeTextFile(
+          await writeFile(
             `${runDir}/foreground.json`,
             JSON.stringify({ captureError: String(error) }, null, 2) + "\n",
           );
@@ -1092,7 +1117,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
           lastWarnedTopmostStatus = topmostStatus;
         }, 250);
       }
-      await Deno.writeTextFile(
+      await writeFile(
         `${runDir}/foreground.json`,
         JSON.stringify(
           {
@@ -1120,7 +1145,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       }
     } else if (foreground) {
       const restoreStatus = foreground.restore();
-      await Deno.writeTextFile(
+      await writeFile(
         `${runDir}/foreground.json`,
         JSON.stringify({ before: windowHandleText(foreground.original), restoreStatus }, null, 2)
           + "\n",
@@ -1768,7 +1793,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       if (b) await closeBrowser(b);
       if (foreground && requireForeground) {
         const restoreStatus = foreground.restore();
-        await Deno.writeTextFile(
+        await writeFile(
           `${runDir}/foreground.json`,
           JSON.stringify(
             {
@@ -1792,7 +1817,7 @@ export async function playScenario(s: Scenario, options: PlayOptions): Promise<R
       !options.keepArtifacts && !options.profileDir && !scenarioProfileDirectory(s)
     ) {
       /* run metadata and diagnostics stay; only browser profile is disposable */ try {
-        await Deno.remove(`${runDir}/profile`, { recursive: true });
+        await rm(`${runDir}/profile`, { recursive: true });
       } catch { /* ignored */ }
     }
   }

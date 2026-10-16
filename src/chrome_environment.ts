@@ -1,6 +1,6 @@
 /** Keep the CfT manifest's DPI awareness even when launched from a compatibility-mode shell. */
 export function chromeEnvironment(
-  compatibilityLayer = Deno.env.get("__COMPAT_LAYER"),
+  compatibilityLayer = process.env.__COMPAT_LAYER,
 ): Record<string, string> {
   if (compatibilityLayer === undefined) return {};
   // DPIUNAWARE makes Windows bitmap-scale the entire window while CDP still reports DPR 1.

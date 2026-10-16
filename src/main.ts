@@ -1,3 +1,9 @@
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { isSea } from "node:sea";
+import { type LaunchedProcess, launchProcess, reserveLocalPort, runProcess } from "./process.ts";
+
+const isNotFound = (error: unknown) =>
+  error instanceof Error && "code" in error && error.code === "ENOENT";
 import { BrowserSessions } from "./browser_sessions.ts";
 import { Cdp } from "./cdp.ts";
 import { chromeEnvironment } from "./chrome_environment.ts";
@@ -40,7 +46,7 @@ import type {
   WindowBounds,
 } from "./types.ts";
 import { loadYaml, planFrom, saveYaml, scenarioFrom } from "./yaml.ts";
-const [command, ...commandArgs] = Deno.args;
+const [command, ...commandArgs] = process.argv.slice(2);
 const file = commandTakesFile(command) && !commandArgs[0]?.startsWith("--")
   ? commandArgs.shift()
   : undefined;
@@ -49,7 +55,7 @@ const option = (name: string) => {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const configuredChromePath = () => option("--chrome") ?? Deno.env.get("CRER_CHROME");
+const configuredChromePath = () => option("--chrome") ?? process.env.CRER_CHROME;
 const chromePath = () => {
   const path = configuredChromePath();
   if (!path) {
@@ -58,20 +64,20 @@ const chromePath = () => {
   return path;
 };
 const inputDllPath = () => {
-  const configured = option("--dll") ?? Deno.env.get("CRER_INPUT_DLL");
+  const configured = option("--dll") ?? process.env.CRER_INPUT_DLL;
   if (configured) return configured;
-  if (Deno.build.standalone) {
-    const directory = Deno.execPath().replace(/[\\/][^\\/]+$/, "");
+  if (isSea()) {
+    const directory = process.execPath.replace(/[\\/][^\\/]+$/, "");
     return `${directory}\\crer-win-input.dll`;
   }
-  return "native/bin/Release/net10.0/win-x64/publish/crer-win-input.dll";
+  return `native/bin/Release/net10.0/win-${process.arch}/publish/crer-win-input.dll`;
 };
 const parentDirectory = (path: string) => path.replace(/[\\/][^\\/]+$/, "");
 async function chromeDiagnostic(configured: string | undefined) {
   if (!configured) return { path: "not configured", exists: false };
   let resolved: string;
   try {
-    resolved = await Deno.realPath(configured);
+    resolved = await realpath(configured);
   } catch {
     return { path: configured, exists: false };
   }
@@ -80,7 +86,7 @@ async function chromeDiagnostic(configured: string | undefined) {
   try {
     const escapedPath = resolved.replaceAll("'", "''");
     const output = await within(
-      new Deno.Command("pwsh.exe", {
+      runProcess("pwsh.exe", {
         args: [
           "-NoProfile",
           "-NonInteractive",
@@ -91,7 +97,7 @@ async function chromeDiagnostic(configured: string | undefined) {
         ],
         stdout: "piped",
         stderr: "piped",
-      }).output(),
+      }),
       15_000,
     );
     if (output.code === 0) {
@@ -116,9 +122,9 @@ async function chromeDiagnostic(configured: string | undefined) {
     }
     | undefined;
   const candidates: string[] = [];
-  const configuredManifest = Deno.env.get("CRER_CHROME_MANIFEST");
+  const configuredManifest = process.env.CRER_CHROME_MANIFEST;
   if (configuredManifest) candidates.push(configuredManifest);
-  candidates.push(`${Deno.cwd()}\\.crer\\browsers\\crer-chrome.json`);
+  candidates.push(`${process.cwd()}\\.crer\\browsers\\crer-chrome.json`);
   let directory = parentDirectory(resolved);
   for (let i = 0; i < 8 && directory; i++) {
     candidates.push(`${directory}\\crer-chrome.json`);
@@ -126,7 +132,7 @@ async function chromeDiagnostic(configured: string | undefined) {
   }
   for (const candidate of candidates) {
     try {
-      const raw = JSON.parse(await Deno.readTextFile(candidate)) as {
+      const raw = JSON.parse(await readFile(candidate, "utf8")) as {
         requested?: unknown;
         installed?: unknown;
         chrome?: unknown;
@@ -166,22 +172,15 @@ async function chromeDiagnostic(configured: string | undefined) {
 }
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 function stopOnTerminalEnter(controller: AbortController): () => void {
-  const reader = Deno.stdin.readable.getReader();
+  const stop = () => controller.abort();
   const cancel = () => {
-    void reader.cancel().catch(() => {});
+    process.stdin.off("data", stop);
+    process.stdin.pause();
+    controller.signal.removeEventListener("abort", cancel);
   };
+  process.stdin.once("data", stop);
   controller.signal.addEventListener("abort", cancel, { once: true });
-  void (async () => {
-    try {
-      const result = await reader.read();
-      if (!result.done) controller.abort();
-    } catch {
-      // Ctrl+C and teardown can cancel the terminal read; the normal stop path handles it.
-    } finally {
-      controller.signal.removeEventListener("abort", cancel);
-      reader.releaseLock();
-    }
-  })();
+  process.stdin.resume();
   return cancel;
 }
 async function within<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
@@ -207,12 +206,14 @@ type RecordingPage = {
 async function recordingPage(
   port: number,
   contentSize: Point,
+  url: string,
   position?: Point,
 ): Promise<RecordingPage | undefined> {
   const deadline = Date.now() + 10_000;
   const cdpWaitMs = 2_000;
   let lastError: unknown;
   while (Date.now() < deadline) {
+    let connection: Cdp | undefined;
     try {
       const version = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json() as {
         webSocketDebuggerUrl: string;
@@ -223,7 +224,7 @@ async function recordingPage(
       }>;
       const target = targets.find((candidate) => candidate.type === "page");
       if (!target) throw new Error("no page target");
-      const cdp = new Cdp(version.webSocketDebuggerUrl);
+      const cdp = connection = new Cdp(version.webSocketDebuggerUrl);
       await cdp.open(cdpWaitMs);
       const attached = await within(
         cdp.call<{ sessionId: string }>("Target.attachToTarget", {
@@ -275,6 +276,14 @@ async function recordingPage(
         cdpWaitMs,
       );
       await within(cdp.call("Page.enable", {}, attached.sessionId), cdpWaitMs);
+      // 計測や較正マーカーの挿入は、目的ページへの遷移を開始してから行う。
+      const navigation = await within(
+        cdp.call<{ errorText?: string }>("Page.navigate", { url }, attached.sessionId),
+        cdpWaitMs,
+      );
+      if (navigation.errorText) {
+        throw new Error(`Initial navigation failed: ${navigation.errorText}`);
+      }
       const readyDeadline = Date.now() + 10_000;
       while (true) {
         const ready = await within(
@@ -417,6 +426,7 @@ async function recordingPage(
         close: () => cdp.close(),
       };
     } catch (error) {
+      connection?.close();
       lastError = error;
       await sleep(50);
     }
@@ -424,7 +434,7 @@ async function recordingPage(
   if (lastError) console.error(`Warning: recording page setup failed: ${lastError}`);
   return undefined;
 }
-async function closeRecordingBrowser(port: number, chrome: Deno.ChildProcess): Promise<void> {
+async function closeRecordingBrowser(port: number, chrome: LaunchedProcess): Promise<void> {
   let cdp: Cdp | undefined;
   try {
     const version = await within(
@@ -627,11 +637,14 @@ async function main() {
     console.log(
       JSON.stringify(
         {
-          deno: Deno.version.deno,
-          os: Deno.build,
+          node: process.versions.node,
+          os: {
+            os: process.platform === "win32" ? "windows" : process.platform,
+            arch: process.arch,
+          },
           chrome,
           ffi,
-          ffiExists: await Deno.stat(ffi).then((info) => info.isFile).catch(() => false),
+          ffiExists: await stat(ffi).then((info) => info.isFile()).catch(() => false),
         },
         null,
         2,
@@ -675,7 +688,7 @@ async function main() {
     const configuredPosition = positionOption();
     const controller = new AbortController();
     const onInterrupt = () => controller.abort(new InterruptedError("interrupted by user"));
-    Deno.addSignalListener("SIGINT", onInterrupt);
+    process.on("SIGINT", onInterrupt);
     let r: RunResult;
     try {
       r = await playScenario(await loadScenarioFile(file), {
@@ -695,10 +708,10 @@ async function main() {
         signal: controller.signal,
       });
     } finally {
-      Deno.removeSignalListener("SIGINT", onInterrupt);
+      process.off("SIGINT", onInterrupt);
     }
     console.log(JSON.stringify(r, null, 2));
-    Deno.exitCode = r.code;
+    process.exitCode = r.code;
     return;
   }
   if (command === "run") {
@@ -713,7 +726,7 @@ async function main() {
       : undefined;
     const controller = new AbortController();
     const onInterrupt = () => controller.abort(new InterruptedError("interrupted by user"));
-    Deno.addSignalListener("SIGINT", onInterrupt);
+    process.on("SIGINT", onInterrupt);
     let results: RunResult[];
     try {
       results = await runNode(
@@ -734,31 +747,34 @@ async function main() {
         opacityOverride,
       );
     } finally {
-      Deno.removeSignalListener("SIGINT", onInterrupt);
+      process.off("SIGINT", onInterrupt);
       await browserSessions?.close();
     }
     const code = controller.signal.reason instanceof InterruptedError
       ? 5
       : aggregatePlanExitCode(results);
     console.log(JSON.stringify(results, null, 2));
-    Deno.exitCode = code;
+    process.exitCode = code;
     return;
   }
   if (command === "record") {
+    const duration = option("--duration-ms");
+    const durationMs = duration === undefined ? undefined : Number(duration);
+    if (durationMs !== undefined && (!Number.isFinite(durationMs) || durationMs < 0)) {
+      throw new ValidationError("--duration-ms must be a non-negative number");
+    }
     const runDir = `.crer/runs/${createRunId(option("--name") ?? "record")}`;
-    await Deno.mkdir(runDir, { recursive: true });
+    await mkdir(runDir, { recursive: true });
     const configuredProfile = profileDirOption();
     const profile = configuredProfile
       ? await persistentProfileDirectory(configuredProfile)
-      : `${await Deno.realPath(runDir)}/profile`;
+      : `${await realpath(runDir)}/profile`;
     const url = option("--url") ?? "about:blank";
     const contentSize = contentSizeOption();
     const position = positionOption();
-    const reservation = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-    const port = (reservation.addr as Deno.NetAddr).port;
-    reservation.close();
+    const port = await reserveLocalPort();
     await prepareChromeProfile(profile);
-    const chrome = new Deno.Command(chromePath(), {
+    const chrome = await launchProcess(chromePath(), {
       env: chromeEnvironment(),
       args: [
         `--remote-debugging-port=${port}`,
@@ -771,28 +787,25 @@ async function main() {
         "--disable-save-password-bubble",
         "--force-device-scale-factor=1",
         "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding",
-        `--app=${url}`,
+        "--app=data:text/html,",
       ],
       stdout: "null",
       stderr: "null",
-    }).spawn();
+    });
     const controller = new AbortController();
     const onInterrupt = () => controller.abort();
-    Deno.addSignalListener("SIGINT", onInterrupt);
-    const duration = option("--duration-ms");
-    const durationMs = duration === undefined ? undefined : Number(duration);
-    if (durationMs !== undefined && (!Number.isFinite(durationMs) || durationMs < 0)) {
-      throw new ValidationError("--duration-ms must be a non-negative number");
-    }
-    const timer = durationMs ? setTimeout(() => controller.abort(), durationMs) : undefined;
+    process.on("SIGINT", onInterrupt);
+    const timer = durationMs === undefined
+      ? undefined
+      : setTimeout(() => controller.abort(), durationMs);
     const stopFile = option("--stop-file");
     const stopFileTimer = stopFile
       ? setInterval(async () => {
         try {
-          await Deno.stat(stopFile);
+          await stat(stopFile);
           controller.abort();
         } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) {
+          if (!isNotFound(error)) {
             console.error(`Warning: could not check stop file: ${error}`);
           }
         }
@@ -800,13 +813,13 @@ async function main() {
       : undefined;
     // The fixture script owns its terminal and uses --stop-file. A direct interactive invocation
     // can instead finish naturally with Enter, without requiring a second shell or Ctrl+C.
-    const cancelTerminalEnter = !stopFile && duration === undefined && Deno.stdin.isTerminal()
+    const cancelTerminalEnter = !stopFile && duration === undefined && Boolean(process.stdin.isTTY)
       ? stopOnTerminalEnter(controller)
       : undefined;
     if (cancelTerminalEnter) console.error("Recording. Press Enter or Ctrl+C to stop.");
     let page: RecordingPage | undefined;
     try {
-      page = await recordingPage(port, contentSize, position);
+      page = await recordingPage(port, contentSize, url, position);
       const useMarkerCalibration = duration === undefined;
       if (useMarkerCalibration && !page) {
         throw new Error("could not inject the recording calibration marker into the CfT page");
@@ -824,7 +837,7 @@ async function main() {
         configuredProfile ? profile : undefined,
       );
     } finally {
-      Deno.removeSignalListener("SIGINT", onInterrupt);
+      process.off("SIGINT", onInterrupt);
       if (timer) clearTimeout(timer);
       if (stopFileTimer) clearInterval(stopFileTimer);
       cancelTerminalEnter?.();
@@ -883,13 +896,11 @@ async function main() {
   }
   throw new Error(`unknown command: ${command}`);
 }
-try {
-  await main();
-} catch (error) {
+void main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`crer: ${message}`);
-  if (Deno.env.get("CRER_DEBUG") === "1" && error instanceof Error && error.stack) {
+  if (process.env.CRER_DEBUG === "1" && error instanceof Error && error.stack) {
     console.error(error.stack);
   }
-  Deno.exitCode = exitCodeFor(error);
-}
+  process.exitCode = exitCodeFor(error);
+});

@@ -1,8 +1,9 @@
 import { assertEquals, assertThrows } from "@std/assert";
+import { test } from "node:test";
 import { formatScenarioLog } from "../src/scenario_logger.ts";
 import { scenarioFrom } from "../src/yaml.ts";
 
-Deno.test("scenario log colors reset per line and remain plain when color is disabled", () => {
+test("scenario log colors reset per line and remain plain when color is disabled", () => {
   assertEquals(
     formatScenarioLog("login-a", "ready", "cyan", true),
     "\x1b[36m[login-a] ready\x1b[39m",
@@ -20,7 +21,7 @@ Deno.test("scenario log colors reset per line and remain plain when color is dis
   assertEquals(formatScenarioLog("login-a", "ready"), "[login-a] ready");
 });
 
-Deno.test("YAML validates playback log colors", () => {
+test("YAML validates playback log colors", () => {
   const scenario = (log_color: unknown) =>
     scenarioFrom({
       version: 1,

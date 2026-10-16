@@ -5,10 +5,13 @@
 
 ## 現在の到達点
 
-- Deno CLI、YAML の基本検証、CfT の隔離起動、CDP 再生の骨格を実装済み。
+- Node.js 24 CLI、YAML の基本検証、CfT の隔離起動、CDP 再生の骨格を実装済み。
 - click / double-click / move / drag / scroll / text / key / key_chord / navigate / wait / assert / screenshot / sleep を実装済み。
 - seed・jitter・artifacts の基本実装と、C# .NET 10 Native AOT の Raw Input DLL を追加済み。
 - Native AOT DLL は `win-x64` で公開ビルド済み。実 CfT fixture の再生結合テストも成功済み。
+- 2026-10-16: 指定コミットから Node.js 24 LTS へ移行し、既存 C# DLL を維持した配布物を作成。
+  実 CfT の結合テスト 6 件、配布版の録画検証 7 件、失敗後の継続・session 再利用を確認済み。
+  検証範囲と未検証項目は [移行記録](docs/nodejs-migration.md) を参照する。
 
 ## P0 — 実ブラウザ再生の結合テスト
 
@@ -60,14 +63,16 @@
 
 ## P2 — 配布と堅牢化
 
-- [x] `deno compile` と Native AOT DLL をパッケージ化する。
-  - `build-release.ps1`、standalone exe の DLL 自動検出、`test-release.ps1` を実装。2026-08-26 に
-    win-x64 配布物の headful CfT fixture 再生、artifact、物理カーソル不変を確認済み。
+- [x] Node.js SEA と既存の Native AOT DLL、Koffi をパッケージ化する。
+  - `build-release.ps1`、standalone exe の DLL 自動検出、`test-release.ps1` を実装。
+    2026-10-16 の Node.js 版 win-x64 配布物で headful CfT の再生・artifact・plan 継続・session 再利用を確認。
+    失敗 fixture では物理カーソル不変を確認。成功 fixture は再生前にも外部操作による移動があり判定不能。
 - [x] CfT の固定バージョン導入、`doctor` の診断、サンプル scenario を整える。
   - `doctor` に CfT 実行ファイル・バージョン・導入 manifest の診断を追加。2026-08-26 に既存の
     CfT 152.0.7977.42 を manifest 登録し、`isChromeForTesting: true` と `matchesChrome: true` を確認済み。
 - [ ] Windows x64 / ARM64 のビルドと回帰テストを整備する。
-  - `build-native.ps1 -Runtime` と `build-release.ps1 -Runtime` で x64 / ARM64 を選択可能にする。ARM64 実機での
+  - `build-native.ps1 -Runtime` と `build-release.ps1 -Runtime` で x64 / ARM64 を選択できる。SEA のビルドは
+    同じアーキテクチャの Node.js 24 を使う Windows ホストで行う。ARM64 実機での
     `test-release.ps1` 実行が残る（ARM64 環境がないため保留）。
 
 ## P3 — 運用性

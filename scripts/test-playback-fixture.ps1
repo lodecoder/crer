@@ -16,8 +16,8 @@ if (-not [string]::IsNullOrWhiteSpace($CrerExe) -and -not (Test-Path -LiteralPat
   throw "CRER executable was not found: $CrerExe"
 }
 Add-Type -AssemblyName System.Windows.Forms
-$server = Start-Process -FilePath (Get-Command pwsh -ErrorAction Stop).Source -ArgumentList @(
-  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'serve-playback-fixture.ps1'), '-Port', $Port
+$server = Start-Process -FilePath (Get-Command node -ErrorAction Stop).Source -ArgumentList @(
+  ('"{0}"' -f (Join-Path $PSScriptRoot 'serve-playback-fixture.mjs')), $Port
 ) -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
 try {
   $url = "http://127.0.0.1:$Port/index.html"
@@ -32,7 +32,7 @@ try {
   Push-Location $projectRoot
   try {
     if ([string]::IsNullOrWhiteSpace($CrerExe)) {
-      & deno task dev play $Scenario --chrome $Chrome --keep-artifacts
+      & node --import tsx src/main.ts play $Scenario --chrome $Chrome --keep-artifacts
     } else {
       & $CrerExe play $Scenario --chrome $Chrome --keep-artifacts
     }
