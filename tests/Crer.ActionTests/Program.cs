@@ -5,6 +5,7 @@ using Crer;
 var passed = 0;
 var failed = 0;
 var maximumCoordinateDifference = 0d;
+var comparedJitterCoordinates = 0;
 async Task Test(string name, Func<Task> action)
 {
     try { await action().WaitAsync(TimeSpan.FromSeconds(10)); passed++; Console.WriteLine($"PASS {name}"); }
@@ -31,13 +32,16 @@ await Test("fixed baseline xoshiro vectors include zero, high-bit and uint64 max
     }
     return Task.CompletedTask;
 });
-await Test("uniform and normal coordinates and consumption match fixed legacy vectors", () =>
+await Test("uniform coordinates and consumption match fixed legacy vectors", () =>
 {
     foreach (var vector in vectors["jitters"]!.AsArray())
     {
+        // 旧 normal の偏りと半径超過は互換対象にせず、分布の性質を下の回帰テストで保証する。
+        if (vector!["config"]?["distribution"]?.GetValue<string>() == "normal") continue;
         var random = new DeterministicRandom(ulong.Parse(vector!["seed"]!.GetValue<string>(), CultureInfo.InvariantCulture));
         foreach (var expected in vector["points"]!.AsArray())
         {
+            comparedJitterCoordinates++;
             var actual = Prng.Jitter(ActionPoint.From(vector["point"]!), JitterConfig.From(vector["config"]), random, ActionPoint.From(vector["size"]!));
             if (expected == null) Check(actual == null, "expected jitter bounds failure");
             else
@@ -50,6 +54,30 @@ await Test("uniform and normal coordinates and consumption match fixed legacy ve
         }
         Check(random.Next() == vector["next"]!.GetValue<double>(), "jitter consumed a different count of random numbers");
     }
+    return Task.CompletedTask;
+});
+await Test("normal jitter は最大半径を守り、左右上下に対称な分布を生成する", () =>
+{
+    var origin = new ActionPoint(500, 500);
+    var viewport = new ActionPoint(1000, 1000);
+    var config = new JitterConfig(true, "normal", 30, 0, "fail");
+    var quadrants = new int[4];
+    double sumX = 0, sumY = 0, squareX = 0, squareY = 0;
+    const int samples = 4096;
+    for (ulong seed = 0; seed < samples; seed++)
+    {
+        var first = new DeterministicRandom(seed); var replay = new DeterministicRandom(seed);
+        var point = Prng.Jitter(origin, config, first, viewport);
+        Check(point != null && point == Prng.Jitter(origin, config, replay, viewport), "同じ seed の再生結果が一致しない");
+        Check(first.Next() == replay.Next(), "同じ seed の乱数消費が一致しない");
+        var x = point!.Value.X - origin.X; var y = point.Value.Y - origin.Y;
+        Check(x * x + y * y <= 30 * 30 + 1e-10, $"seed {seed}: 最大半径を超過した");
+        quadrants[(x < 0 ? 1 : 0) + (y < 0 ? 2 : 0)]++;
+        sumX += x; sumY += y; squareX += x * x; squareY += y * y;
+    }
+    Check(quadrants.All(count => count > 800), "いずれかの方向に分布が偏っている");
+    Check(Math.Abs(sumX / samples) < .75 && Math.Abs(sumY / samples) < .75, "分布の中心が原点からずれている");
+    Check(squareX / samples is > 80 and < 110 && squareY / samples is > 80 and < 110, "標準偏差 radius/3 の切断正規分布から外れている");
     return Task.CompletedTask;
 });
 await Test("disabled and none jitter preserve outside points and consume no random values", () =>
@@ -89,6 +117,17 @@ await Test("navigation routes through CDP adapter", async () =>
     var fixture = new Adapter(); await Execute(fixture, new() { ["do"] = "navigate", ["url"] = "https://example.com" });
     Check(fixture.Events.Single().Method == "Page.navigate", "wrong method");
     Equal(fixture.Events[0].Parameters, new JsonObject { ["url"] = "https://example.com" }, "navigation parameters");
+});
+await Test("navigate は CDP の通常応答に含まれる遷移エラーを失敗として返す", async () =>
+{
+    foreach (var error in new[] { "net::ERR_CONNECTION_REFUSED", "net::ERR_NAME_NOT_RESOLVED", "net::ERR_BLOCKED_BY_CLIENT" })
+    {
+        var fixture = new Adapter(response: (_, _) => new() { ["frameId"] = "page", ["errorText"] = error });
+        await Reject(() => Execute(fixture, new() { ["do"] = "navigate", ["url"] = "https://example.test" }), error);
+        Check(fixture.Events.Count == 1, "失敗後に余分な CDP 操作が行われた");
+    }
+    var success = new Adapter(response: (_, _) => new() { ["frameId"] = "page", ["errorText"] = "" });
+    await Execute(success, new() { ["do"] = "navigate", ["url"] = "https://example.test" });
 });
 await Test("click mouse events are paired without checking disabled jitter bounds", async () =>
 {
@@ -278,7 +317,7 @@ await Test("single-character VK uppercase conversion matches legacy Unicode mapp
         Check(fixture.Events[0].Parameters["windowsVirtualKeyCode"]!.GetValue<int>() == trace["upper"]!.GetValue<int>(), $"Unicode VK differs for U+{(int)character:X4}");
     }
 });
-Console.WriteLine($"PRNG exact values: 60; jitter coordinates: 82; maximum coordinate difference: {maximumCoordinateDifference:R}");
+Console.WriteLine($"PRNG exact values: 60; jitter coordinates: {comparedJitterCoordinates}; maximum coordinate difference: {maximumCoordinateDifference:R}");
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
 
@@ -297,7 +336,7 @@ sealed class Adapter
     public int Assertions { get; private set; }
     public double WaitTimeout { get; private set; }
 
-    public Adapter(Func<string, JsonObject, Exception?>? failure = null)
+    public Adapter(Func<string, JsonObject, Exception?>? failure = null, Func<string, JsonObject, JsonObject>? response = null)
     {
         Value = new()
         {
@@ -306,7 +345,7 @@ sealed class Adapter
             {
                 Events.Add(new(method, parameters.DeepClone().AsObject()));
                 var error = failure?.Invoke(method, parameters);
-                return error == null ? Task.FromResult(new JsonObject()) : Task.FromException<JsonObject>(error);
+                return error == null ? Task.FromResult(response?.Invoke(method, parameters) ?? new JsonObject()) : Task.FromException<JsonObject>(error);
             },
             Sleep = ms => { Sleeps.Add(ms); return Task.CompletedTask; },
             WaitFor = (_, timeout) => { WaitTimeout = timeout; return Task.CompletedTask; },

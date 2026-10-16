@@ -18,7 +18,7 @@ public static class PlanPolicy
         var list = results.ToArray();
         if (!list.Any(result => Json.Number(result["code"]) != 0)) return null;
         if (list.Any(result => Json.Number(result["code"]) == 3)) return "environment";
-        return list.Any(result => result["failures"] is JsonArray failures && failures.Any(failure => Json.Text(failure).Contains(":timeout:", StringComparison.Ordinal)))
+        return list.Any(result => result["failures"] is JsonArray failures && failures.Any(failure => Json.Text(failure) == "plan:timeout:worker_ms"))
             ? "timeout" : "scenario_failure";
     }
     public static bool ShouldAbort(IEnumerable<JsonObject> results, JsonObject? policy = null)

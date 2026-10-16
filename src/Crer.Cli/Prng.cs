@@ -81,9 +81,9 @@ public static class Prng
             var theta = 2 * Math.PI * random.Next();
             var radius = config.Distribution == "uniform"
                 ? Math.Sqrt(random.Next()) * config.RadiusPx
-                : Math.Min(config.RadiusPx,
-                    Math.Sqrt(-2 * Math.Log(Math.Max(random.Next(), double.Epsilon))) * Math.Cos(theta)
-                    * config.RadiusPx / 3);
+                : Math.Sqrt(-2 * Math.Log(Math.Max(random.Next(), double.Epsilon))) * config.RadiusPx / 3;
+            // 正規分布の角度と距離を独立に生成し、指定半径の外側は再抽選する。
+            if (radius > config.RadiusPx) continue;
             var result = new ActionPoint(point.X + Math.Cos(theta) * radius, point.Y + Math.Sin(theta) * radius);
             if (result.X >= config.MinDistanceFromEdgePx && result.Y >= config.MinDistanceFromEdgePx
                 && result.X <= size.X - config.MinDistanceFromEdgePx

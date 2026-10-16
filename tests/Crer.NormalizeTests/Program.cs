@@ -144,6 +144,31 @@ Test("normalizes Ctrl shortcuts as key chords", () =>
     JsonEqual(Steps(Raw(Events((7, 17 << 16, 0, 0), (7, 65 << 16, 0, 0), (8, 17 << 16, 0, 0)))), """
         [{"do":"key_chord","keys":["Control","a"]}]
         """));
+foreach (var (key, modifier) in new[] { (17, "Control"), (162, "Control"), (163, "Control"), (18, "Alt"), (164, "Alt"), (165, "Alt") })
+    Test($"左右および汎用の修飾キーを保持する ({key})", () =>
+        JsonEqual(Steps(Raw(Events((7, key << 16, 0, 0), (7, 65 << 16, 0, 0), (8, key << 16, 0, 0)))),
+            "[{\"do\":\"key_chord\",\"keys\":[\"" + modifier + "\",\"a\"]}]"));
+Test("Shift付きのTabとショートカットを保持する", () =>
+    JsonEqual(Steps(Raw(Events((7, 160 << 16, 0, 0), (7, 9 << 16, 0, 0), (7, 162 << 16, 0, 0),
+        (7, 65 << 16, 0, 0), (8, 160 << 16, 0, 0), (7, 65 << 16, 0, 0)))), """
+        [{"do":"key_chord","keys":["Shift","Tab"]}, {"do":"key_chord","keys":["Shift","Control","A"]},
+         {"do":"key_chord","keys":["Control","a"]}]
+        """));
+foreach (var (left, right, modifier) in new[] { (160, 161, "Shift"), (162, 163, "Control"), (164, 165, "Alt"), (91, 92, "Meta") })
+    Test($"片側の修飾キーを離しても反対側の押下を保持する ({modifier})", () =>
+        JsonEqual(Steps(Raw(Events((7, left << 16, 0, 0), (7, right << 16, 0, 0), (7, left << 16, 0, 0),
+            (8, left << 16, 0, 0), (7, 9 << 16, 0, 0), (8, right << 16, 0, 0), (7, 9 << 16, 0, 0)))),
+            "[{\"do\":\"key_chord\",\"keys\":[\"" + modifier + "\",\"Tab\"]},{\"do\":\"key\",\"key\":\"Tab\"}]"));
+Test("Unicode文字もControlやAltの押下中は文字挿入せずショートカットにする", () =>
+    JsonEqual(Steps(Raw(Events((9, 'x', 0, 0), (7, 162 << 16, 0, 0), (9, 'a', 0, 0), (8, 162 << 16, 0, 0),
+        (7, 164 << 16, 0, 0), (9, 'b', 0, 0), (9, 32, 0, 0), (8, 164 << 16, 0, 0), (9, 'y', 0, 0)))), """
+        [{"do":"text","value":"x"}, {"do":"key_chord","keys":["Control","a"]},
+         {"do":"key_chord","keys":["Alt","b"]}, {"do":"key_chord","keys":["Alt","Space"]}, {"do":"text","value":"y"}]
+        """));
+Test("Shift付きUnicode文字は変換済みの文字列を保ち空白はキー操作にする", () =>
+    JsonEqual(Steps(Raw(Events((7, 160 << 16, 0, 0), (9, 'A', 0, 0), (9, 32, 0, 0), (8, 160 << 16, 0, 0), (9, 'b', 0, 0)))), """
+        [{"do":"text","value":"A"}, {"do":"key_chord","keys":["Shift","Space"]}, {"do":"text","value":"b"}]
+        """));
 
 // tests/keyboard_normalize_test.ts verifies both event encodings of Space.
 foreach (var kind in new[] { 9, 7 })
@@ -221,10 +246,10 @@ Test("layout Unicode supplements, control characters and old keyup flushing", ()
     JsonEqual(Steps(Raw(Events((9, 0x1f600, 0, 0), (9, 0x3042, 0, 0), (9, 0x0a, 0, 0), (9, 0x7f, 0, 0), (8, 65 << 16, 0, 0)))), """
         [{"do":"text","value":"😀あ"}]
         """));
-Test("modifiers retain insertion order, Shift casing and release order", () =>
+Test("修飾キーの押下順とShiftの押下状態を保持する", () =>
     JsonEqual(Steps(Raw(Events((7, 18 << 16, 0, 0), (7, 17 << 16, 0, 0), (7, 18 << 16, 0, 0), (7, 161 << 16, 0, 0),
         (7, 65 << 16, 0, 0), (8, 18 << 16, 0, 0), (7, 13 << 16, 0, 0)))), """
-        [{"do":"key_chord","keys":["Alt","Control","A"]}, {"do":"key_chord","keys":["Control","Enter"]}]
+        [{"do":"key_chord","keys":["Alt","Control","Shift","A"]}, {"do":"key_chord","keys":["Control","Shift","Enter"]}]
         """));
 Test("QPC uses big integers and floors submillisecond intervals", () =>
     JsonEqual(Steps(Raw("""

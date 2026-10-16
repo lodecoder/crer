@@ -91,6 +91,32 @@ Reject("function identifier", prefix + "functions: { 'not valid': [] }\nsteps: [
 const string fn = "functions: { search: { params: [query], steps: [{ do: text, value: '${query}' }] } }";
 GoodStep("validates function call arguments", "{ do: call, function: search, args: { query: crer } }", fn);
 BadStep("function args exact match", "{ do: call, function: search, args: {} }", "args must provide exactly the function parameters", fn);
+const string urlFunction = "functions: { go: { params: [url], steps: [{ do: navigate, url: '${url}' }] } }";
+GoodStep("関数のURL引数を展開して検証する", "{ do: call, function: go, args: { url: 'https://example.test/next' } }", urlFunction);
+GoodStep("未使用の関数のURL引数を宣言できる", "{ do: log, message: ok }", urlFunction);
+foreach (var url in new[] { "file:///secret.txt", "javascript:alert(1)", "not-a-url", "" })
+    BadStep("展開後の不正URLをブラウザー起動前に拒否する " + url,
+        "{ do: call, function: go, args: { url: '" + url + "' } }", url.StartsWith("file:") || url.StartsWith("javascript:") ? "must use http or https" : "must be a", urlFunction);
+BadStep("数値のURL引数を拒否する", "{ do: call, function: go, args: { url: 42 } }", "must be a URL string", urlFunction);
+Reject("未宣言のURL引数を未使用関数でも拒否する", prefix
+    + "functions: { go: { params: [url], steps: [{ do: navigate, url: '${missing}' }] } }\nsteps: []", "undefined parameter: missing");
+Reject("埋め込みURL内の未宣言引数を拒否する", prefix
+    + "functions: { go: { params: [url], steps: [{ do: navigate, url: 'https://example.test/${missing}' }] } }\nsteps: []", "undefined parameter: missing");
+GoodStep("入れ子の関数へURL引数を引き渡せる", "{ do: call, function: forward, args: { target: 'https://example.test/next' } }",
+    "functions: { go: { params: [url], steps: [{ do: navigate, url: '${url}' }] }, forward: { params: [target], steps: [{ do: call, function: go, args: { url: '${target}' } }] } }");
+BadStep("入れ子の関数へ渡す不正URLも事前拒否する", "{ do: call, function: forward, args: { target: 'file:///secret.txt' } }", "must use http or https",
+    "functions: { go: { params: [url], steps: [{ do: navigate, url: '${url}' }] }, forward: { params: [target], steps: [{ do: call, function: go, args: { url: '${target}' } }] } }");
+GoodStep("待機とassertのURL引数とワイルドカードを展開できる", "{ do: call, function: check, args: { url: 'https://example.test/orders*' } }",
+    "functions: { check: { params: [url], steps: [{ do: wait_for, url: '${url}' }, { do: assert, url: '${url}' }] } }");
+const string screenshotFunction = "functions: { shot: { params: [name], steps: [{ do: screenshot, name: '${name}' }] } }";
+GoodStep("スクリーンショット名を引数から展開できる", "{ do: call, function: shot, args: { name: result-1 } }", screenshotFunction);
+BadStep("展開後の危険なスクリーンショット名を事前拒否する", "{ do: call, function: shot, args: { name: '../outside' } }", "safe artifact filename", screenshotFunction);
+BadStep("展開後の空スクリーンショット名を拒否する", "{ do: call, function: shot, args: { name: '' } }", "safe artifact filename", screenshotFunction);
+Reject("未宣言のスクリーンショット名引数を拒否する", prefix
+    + "functions: { shot: { params: [name], steps: [{ do: screenshot, name: '${missing}' }] } }\nsteps: []", "undefined parameter: missing");
+GoodStep("画像列挙の実行時引数をURLとファイル名の文字列へ埋め込める",
+    "{ do: for_each_template, template: { path: x.png }, max_matches: 1, steps: [{ do: call, function: go, args: { url: 'https://example.test/${match_center_x}' } }, { do: screenshot, name: 'match-${match_center_x}' }] }", urlFunction);
+GoodStep("循環関数の検出は実行時の契約を維持する", "{ do: call, function: recurse }", "functions: { recurse: [{ do: call, function: recurse }] }");
 Reject("function params unique", prefix + "functions: { search: { params: [query, query], steps: [] } }\nsteps: []", "params must be unique identifiers");
 GoodStep("function numeric parameters", "{ do: call, function: retry, args: { count: 3, attempts: 3 } }", "functions: { retry: { params: [count, attempts], steps: [{ do: repeat, count: '${count}', steps: [] }, { do: repeat_until, template: { path: x.png }, state: visible, max_attempts: '${attempts}', on_limit: continue, steps: [] }] } }");
 GoodStep("function all numeric parameter positions", "{ do: call, function: all, args: { value: 3 } }", "functions: { all: { params: [value], steps: [{ do: click, at: { x: '${value}', y: '${value}' }, count: '${value}', hold_ms: '${value}', delay_ms: '${value}', jitter: { enabled: true, distribution: uniform, radius_px: '${value}', min_distance_from_edge_px: '${value}', out_of_bounds: fail } }, { do: sleep, ms: '${value}' }, { do: for_each_template, template: { path: x.png, min_similarity: '${value}', random_inset_px: '${value}' }, max_matches: '${value}', steps: [] }] } }");
@@ -224,6 +250,33 @@ try
     Console.WriteLine("PASS argument expansion retains numeric type, formats strings, clones and leaves unknown references");
 }
 catch (Exception error) { failed++; Console.Error.WriteLine("FAIL argument expansion: " + error.Message); }
+foreach (var (name, source, arguments, accepted, diagnostic) in new[]
+{
+    ("展開済みの有効URL", """{"do":"navigate","url":"${url}"}""", """{"url":"https://example.test/next"}""", true, ""),
+    ("展開済みのfile URL", """{"do":"navigate","url":"${url}"}""", """{"url":"file:///secret.txt"}""", false, "must use http or https"),
+    ("展開済みの数値URL", """{"do":"navigate","url":"${url}"}""", """{"url":42}""", false, "must be a URL string"),
+    ("展開済みのwait URL", """{"do":"wait_for","url":"${url}"}""", """{"url":"javascript:alert(1)"}""", false, "must use http or https"),
+    ("展開済みのassert URL", """{"do":"assert","url":"${url}"}""", """{"url":"not-a-url"}""", false, "valid http or https"),
+    ("展開後も未定義のURL引数", """{"do":"navigate","url":"${missing}"}""", "{}", false, "undefined parameter: missing"),
+    ("展開済みの安全な画像名", """{"do":"screenshot","name":"shot-${match_center_x}"}""", """{"match_center_x":42}""", true, ""),
+    ("展開済みの危険な画像名", """{"do":"screenshot","name":"${name}"}""", """{"name":"../outside"}""", false, "safe artifact filename"),
+    ("展開済みの空の画像名", """{"do":"screenshot","name":"${name}"}""", """{"name":""}""", false, "safe artifact filename"),
+})
+{
+    try
+    {
+        var expanded = Scenario.ExpandArguments(JsonNode.Parse(source), JsonNode.Parse(arguments)!.AsObject())!.AsObject();
+        CrerException? failure = null;
+        try { Scenario.ValidateExpandedStep(expanded); }
+        catch (CrerException error) { failure = error; }
+        if (accepted && failure is not null) throw failure;
+        if (!accepted && (failure is null || failure.Code != 2 || !failure.Message.Contains(diagnostic, StringComparison.Ordinal)))
+            throw new Exception($"expected validation rejection '{diagnostic}', got '{failure?.Message}'");
+        passed++;
+        Console.WriteLine("PASS " + name);
+    }
+    catch (Exception error) { failed++; Console.Error.WriteLine("FAIL " + name + ": " + error.Message); }
+}
 Console.WriteLine($"schema: {passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
 

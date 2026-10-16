@@ -25,6 +25,9 @@ Windows 操作は `src/Crer.Windows` を通常の C# 参照で組み込み、`cr
 
 ## 完全移行で明示した修正
 
+- `normal` jitter は仕様どおり標準偏差 `radius_px / 3` の二次元正規分布を半径内へ制限する。
+  旧実装の右方向への偏りと最大半径の超過を修正したため、`normal` の座標と乱数消費は旧 CLI と一致しない。
+  修正後の同じ seed と設定では同じ結果を再現できる。PRNG 自体と `uniform` の互換性は維持する。
 - 旧 writer の空 `steps` が null になる保存バグは `steps: []` として修正する。
 - 仕様にある `log.message` の成功 artifact 保存を追加する。入力 text の値は追加記録しない。
 - 中断・CDP 喪失時の失敗 step 診断と、解放に失敗した入力の環境エラーを追加する。

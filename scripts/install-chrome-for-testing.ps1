@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
 Installs a Chrome for Testing build for crer and stores its executable path.
 
@@ -46,8 +46,10 @@ if ([string]::IsNullOrWhiteSpace($ChromePath)) {
     Assert-CrerInstallChildPath -Path $staging -Root $root
     try {
       Write-Host "Downloading Chrome for Testing $($download.version) (win64)"
-      Invoke-WebRequest -Uri $download.url -OutFile $archive -TimeoutSec 600
+      Invoke-WebRequest -Uri $download.url -OutFile $archive -TimeoutSec 600 -UseBasicParsing
       New-Item -ItemType Directory -Path $staging | Out-Null
+      # Windows PowerShell 5.1 の新規セッションでは ZipFile のアセンブリが未読込の場合がある。
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
       $zip = [IO.Compression.ZipFile]::OpenRead($archive)
       try {
         foreach ($entry in $zip.Entries) {

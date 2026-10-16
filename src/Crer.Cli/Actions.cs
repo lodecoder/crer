@@ -62,7 +62,13 @@ public static class Actions
         var call = adapter.Call;
         switch (action)
         {
-            case "navigate": await call("Page.navigate", new() { ["url"] = step["url"]?.DeepClone() }); return;
+            case "navigate":
+            {
+                var result = await call("Page.navigate", new() { ["url"] = step["url"]?.DeepClone() });
+                if (result["errorText"] is JsonValue error && error.TryGetValue<string>(out var message) && message.Length > 0)
+                    throw new InvalidOperationException($"navigation failed: {message}");
+                return;
+            }
             case "wait_for": await adapter.WaitFor(step, timeout); return;
             case "assert": await adapter.AssertState(step); return;
             case "click":

@@ -61,6 +61,9 @@ try {
     Reject { Assert-CrerInstallChildPath -Path $testRoot -Root $testRoot } 'escapes its InstallRoot'
     Reject { Assert-CrerInstallChildPath -Path (Join-Path $testRoot '../outside') -Root $testRoot } 'escapes its InstallRoot'
   }
+  Test 'fresh PowerShell 7 and Windows PowerShell 5.1 expand offline ZIPs' {
+    & (Join-Path $PSScriptRoot 'test-chrome-installer-offline.ps1')
+  }
   Test 'ChromePath registration preserves user environment with NoPersist and records the requested selector' {
     Check (-not [string]::IsNullOrWhiteSpace($ChromePath)) 'Specify an already-installed CfT ChromePath for registration validation.'
     $registration = Join-Path $testRoot 'registration'

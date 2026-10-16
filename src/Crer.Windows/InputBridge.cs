@@ -16,6 +16,8 @@ internal static class InputBridge
     private static readonly object WindowGate = new();
     private static readonly AutoResetEvent Stopped = new(false);
     private static readonly byte[] KeyboardState = new byte[256];
+    private static bool _leftButtonAccepted;
+    private static Rect? _contentRelativeRect;
     private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static volatile int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
     private static volatile int _testHookFailure, _testStopTimeout;
     private static uint _foregroundPid; private static IntPtr _foregroundTarget; private static int _lastForegroundStatus;
@@ -37,12 +39,21 @@ internal static class InputBridge
     [StructLayout(LayoutKind.Sequential)] private struct Msg { public IntPtr Hwnd; public uint Message; public UIntPtr WParam; public IntPtr LParam; public uint Time; public Point Pt; }
     [StructLayout(LayoutKind.Sequential)] private struct LowLevelMouse { public Point Point; public uint MouseData, Flags, Time; public IntPtr Extra; }
     [StructLayout(LayoutKind.Sequential)] private struct LowLevelKeyboard { public uint VKey, ScanCode, Flags, Time; public IntPtr Extra; }
+    [StructLayout(LayoutKind.Sequential)] private struct GuiThreadInfo {
+        public uint Size, Flags;
+        public IntPtr Active, Focus, Capture, MenuOwner, MoveSize, Caret;
+        public Rect CaretRect;
+    }
     [DllImport("user32.dll", SetLastError=true)] private static extern bool RegisterRawInputDevices(RawInputDevice[] d, uint n, uint cb);
     [DllImport("user32.dll")] private static extern int GetRawInputData(IntPtr h, uint command, IntPtr data, ref uint size, uint headerSize);
     [DllImport("user32.dll")] private static extern bool GetPhysicalCursorPos(out Point p);
     [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int ToUnicodeEx(uint key, uint scan, byte[] state, [Out] char[] text, int textLength, uint flags, IntPtr keyboardLayout);
     [DllImport("user32.dll")] private static extern IntPtr GetKeyboardLayout(uint threadId);
+    [DllImport("user32.dll")] private static extern short GetKeyState(int key);
+    [DllImport("user32.dll")] private static extern short GetAsyncKeyState(int key);
+    [DllImport("user32.dll")] private static extern bool GetGUIThreadInfo(uint thread, ref GuiThreadInfo info);
+    [DllImport("user32.dll")] private static extern bool IsChild(IntPtr parent, IntPtr child);
     [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(Point p);
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetForegroundWindow(IntPtr h);
@@ -52,6 +63,7 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint command);
     [DllImport("user32.dll")] private static extern IntPtr GetWindowLongPtrW(IntPtr h, int index);
     [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr SetWindowLongPtrW(IntPtr h, int index, IntPtr value);
@@ -91,6 +103,7 @@ internal static class InputBridge
     {
         GetWindowThreadProcessId(h, out var p);
         if (p != _pid) return true;
+        if (!IsWindowVisible(h) || GetWindow(h, 4) != IntPtr.Zero) return true;
         var name = new char[256];
         if (GetClassNameW(h, name, name.Length) == 0 ||
             !new string(name).StartsWith("Chrome_WidgetWin_", StringComparison.Ordinal)) return true;
@@ -115,7 +128,11 @@ internal static class InputBridge
         var name = new char[256];
         if (GetClassNameW(h, name, name.Length) > 0 && new string(name).StartsWith("Chrome_RenderWidgetHostHWND", StringComparison.Ordinal))
         {
-            if (!GetWindowRect(h, out var rect) || rect.Right - rect.Left < 32 || rect.Bottom - rect.Top < 32) return true;
+            if (!IsWindowVisible(h) || !PhysicalWindowRect(h, out var rect) || rect.Right - rect.Left < 32 || rect.Bottom - rect.Top < 32) return true;
+            // ページの再生成中に残った DevTools を代わりに選ばない。
+            if (_contentRelativeRect is { } expected && (!PhysicalWindowRect(_target, out var browser)
+                || rect.Left - browser.Left != expected.Left || rect.Top - browser.Top != expected.Top
+                || rect.Right - browser.Left != expected.Right || rect.Bottom - browser.Top != expected.Bottom)) return true;
             Marshal.WriteIntPtr(output, h);
             return false;
         }
@@ -129,6 +146,17 @@ internal static class InputBridge
         return className.StartsWith("Chrome_RenderWidgetHostHWND", StringComparison.Ordinal) ||
             className.StartsWith("Intermediate D3D Window", StringComparison.Ordinal);
     }
+    private static bool IsPageSurface(IntPtr window)
+    {
+        if (!IsContentSurface(window)) return false;
+        var root = GetAncestor(window, 2); // GA_ROOT
+        if (root == _target) return true;
+        var name = new char[256];
+        // D3D だけは独立した root を使う。別ウィンドウの DevTools は矩形が重なっても除く。
+        return GetClassNameW(root, name, name.Length) > 0
+            && new string(name).StartsWith("Intermediate D3D Window", StringComparison.Ordinal)
+            && GetAncestor(window, 3) == _target;
+    }
     private static bool PhysicalWindowRect(IntPtr window, out Rect rect)
     {
         var previous = SetThreadDpiAwarenessContext(new IntPtr(-4)); // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
@@ -137,17 +165,68 @@ internal static class InputBridge
     }
     private static bool Active(bool mouse, Point? eventPoint = null)
     {
-        IntPtr h = mouse ? WindowFromPoint(eventPoint ?? GetPoint()) : GetForegroundWindow();
-        // A Chromium Direct3D intermediate window can be a root window but be owned by
-        // Chrome_WidgetWin_*. Include the owner chain to retain the actual browser window.
-        var root = GetAncestor(h, 3); // GA_ROOTOWNER
+        lock (WindowGate)
+        {
+            var previous = SetThreadDpiAwarenessContext(new IntPtr(-4));
+            try
+            {
+                var point = eventPoint ?? GetPoint();
+                var window = mouse ? WindowFromPoint(point) : GetForegroundWindow();
+                return ActiveWindow(mouse, window, point);
+            }
+            finally { if (previous != IntPtr.Zero) SetThreadDpiAwarenessContext(previous); }
+        }
+    }
+    private static bool ActiveWindow(bool mouse, IntPtr window, Point point)
+    {
+        // D3D の中間ウィンドウは独立した root でも、owner をたどると対象ブラウザーになる。
+        var root = GetAncestor(window, 3); // GA_ROOTOWNER
         if (root == IntPtr.Zero) return false;
-        GetWindowThreadProcessId(root, out var p);
-        if (p != _pid) return false;
-        _target = root;
-        if (mouse && IsContentSurface(h) && PhysicalWindowRect(h, out var rect) &&
-            rect.Right - rect.Left >= 32 && rect.Bottom - rect.Top >= 32) _content = h;
-        return true;
+        GetWindowThreadProcessId(root, out var pid);
+        if (pid != _pid || !TryContentRect(out var content) || root != _target) return false;
+        if (mouse)
+            return Contains(content, point) && (window == _content || IsChild(_content, window) || IsPageSurface(window));
+
+        var info = new GuiThreadInfo { Size = (uint)Marshal.SizeOf<GuiThreadInfo>() };
+        var thread = GetWindowThreadProcessId(window, out _);
+        if (thread == 0 || !GetGUIThreadInfo(thread, ref info) || info.Focus == IntPtr.Zero) return false;
+        if (info.Focus == _content || IsChild(_content, info.Focus)) return true;
+        // iframe や D3D の別 HWND はページの矩形内だけを許可し、隣接する DevTools は除く。
+        return IsPageSurface(info.Focus) && PhysicalWindowRect(info.Focus, out var focus)
+            && focus.Left >= content.Left && focus.Top >= content.Top && focus.Right <= content.Right && focus.Bottom <= content.Bottom;
+    }
+    private static bool Contains(Rect rect, Point point) => point.X >= rect.Left && point.X < rect.Right && point.Y >= rect.Top && point.Y < rect.Bottom;
+    private static bool TryContentRect(out Rect rect)
+    {
+        if (_target != IntPtr.Zero && !IsWindow(_target)) _target = _content = IntPtr.Zero;
+        if (_content != IntPtr.Zero && IsWindowVisible(_content) && PhysicalWindowRect(_content, out rect)
+            && rect.Right - rect.Left >= 32 && rect.Bottom - rect.Top >= 32)
+        {
+            RememberContentRect(rect);
+            return true;
+        }
+        _content = IntPtr.Zero;
+        if (_target == IntPtr.Zero) EnumWindows(Find, IntPtr.Zero);
+        if (_target != IntPtr.Zero)
+        {
+            var handle = Marshal.AllocHGlobal(IntPtr.Size);
+            try
+            {
+                Marshal.WriteIntPtr(handle, IntPtr.Zero);
+                EnumChildWindows(_target, FindContent, handle);
+                _content = Marshal.ReadIntPtr(handle);
+            }
+            finally { Marshal.FreeHGlobal(handle); }
+            if (_content != IntPtr.Zero && PhysicalWindowRect(_content, out rect)) { RememberContentRect(rect); return true; }
+        }
+        rect = default;
+        return false;
+    }
+    private static void RememberContentRect(Rect rect)
+    {
+        if (PhysicalWindowRect(_target, out var browser))
+            _contentRelativeRect = new Rect { Left = rect.Left - browser.Left, Top = rect.Top - browser.Top,
+                Right = rect.Right - browser.Left, Bottom = rect.Bottom - browser.Top };
     }
     private static Point GetPoint(){ GetPhysicalCursorPos(out var p); return p; }
     private static void Fail(int error)
@@ -173,20 +252,22 @@ internal static class InputBridge
     }
     private static IntPtr KeyboardHook(int code, UIntPtr w, IntPtr l)
     {
-        if (code >= 0 && Active(false)) {
-            var input = Marshal.PtrToStructure<LowLevelKeyboard>(l);
-            var message = (uint)w;
-            if (message is 0x0100 or 0x0104) {
-                UpdateKeyboardState(input.VKey, true);
-                if (TryCharacter(input, out var character)) Push(9, character);
-                else Push(7, (input.VKey << 16) | input.ScanCode);
-            }
-            else if (message is 0x0101 or 0x0105) {
-                UpdateKeyboardState(input.VKey, false);
-                Push(8, (input.VKey << 16) | input.ScanCode);
-            }
-        }
+        if (code >= 0) RecordKeyboard(Marshal.PtrToStructure<LowLevelKeyboard>(l), (uint)w);
         return CallNextHookEx(_keyboardHook, code, w, l);
+    }
+    private static void RecordKeyboard(LowLevelKeyboard input, uint message, IntPtr? foreground = null)
+    {
+        var down = message is 0x0100 or 0x0104;
+        if (!down && message is not (0x0101 or 0x0105)) return;
+        // 別アプリでの Caps Lock 切替や修飾キーの解放も追跡し、対象へ戻った際の状態を保つ。
+        UpdateKeyboardState(input.VKey, down);
+        bool active;
+        if (foreground is { } window) { lock (WindowGate) active = ActiveWindow(false, window, default); }
+        else active = Active(false);
+        if (!active) return;
+        if (!down) Push(8, (input.VKey << 16) | input.ScanCode);
+        else if (TryCharacter(input, out var character)) Push(9, character);
+        else Push(7, (input.VKey << 16) | input.ScanCode);
     }
     private static bool TryCharacter(LowLevelKeyboard input, out uint character)
     {
@@ -200,7 +281,10 @@ internal static class InputBridge
     private static void UpdateKeyboardState(uint key, bool down)
     {
         if (key >= KeyboardState.Length) return;
-        KeyboardState[key] = down ? (byte)0x80 : (byte)0;
+        var previous = KeyboardState[key];
+        var toggled = previous & 1;
+        if (key == 0x14 && down && (previous & 0x80) == 0) toggled ^= 1;
+        KeyboardState[key] = (byte)(toggled | (down ? 0x80 : 0));
         if (key is 0xA0 or 0xA1) {
             KeyboardState[0x10] = (KeyboardState[0xA0] & 0x80) != 0 || (KeyboardState[0xA1] & 0x80) != 0
                 ? (byte)0x80 : (byte)0;
@@ -214,12 +298,28 @@ internal static class InputBridge
                 ? (byte)0x80 : (byte)0;
         }
     }
+    private static void InitializeKeyboardState(short capsState, short capsAsyncState)
+    {
+        Array.Clear(KeyboardState);
+        KeyboardState[0x14] = (byte)((capsState & 1) | (capsAsyncState < 0 ? 0x80 : 0));
+        foreach (var key in new[] { 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 })
+            KeyboardState[key] = (byte)(GetAsyncKeyState(key) < 0 ? 0x80 : 0);
+    }
     private static void RecordMouse(RawMouse mouse, Point point)
     {
         if (mouse.LastX != 0 || mouse.LastY != 0) Push(1, 0, point);
         if ((mouse.ButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN) != 0) Push(2, 0, point);
         if ((mouse.ButtonFlags & RI_MOUSE_LEFT_BUTTON_UP) != 0) Push(3, 0, point);
         if ((mouse.ButtonFlags & RI_MOUSE_WHEEL) != 0) Push(6, mouse.ButtonData, point);
+    }
+    private static void RecordTargetMouse(RawMouse mouse, Point point)
+    {
+        var active = Active(true, point);
+        if ((mouse.ButtonFlags & RI_MOUSE_LEFT_BUTTON_DOWN) != 0) _leftButtonAccepted = active;
+        var flags = mouse.ButtonFlags;
+        if (!_leftButtonAccepted) mouse.ButtonFlags &= unchecked((ushort)~RI_MOUSE_LEFT_BUTTON_UP);
+        if (active) RecordMouse(mouse, point);
+        if ((flags & RI_MOUSE_LEFT_BUTTON_UP) != 0) _leftButtonAccepted = false;
     }
     private static IntPtr Proc(IntPtr h, uint m, UIntPtr w, IntPtr l)
     {
@@ -237,8 +337,7 @@ internal static class InputBridge
                     Marshal.PtrToStructure<RawInputHeader>(mem).Type == RIM_TYPEMOUSE)
                 {
                     var point = GetPoint();
-                    if (Active(true, point))
-                        RecordMouse(Marshal.PtrToStructure<RawMouse>(IntPtr.Add(mem, (int)headerSize)), point);
+                    RecordTargetMouse(Marshal.PtrToStructure<RawMouse>(IntPtr.Add(mem, (int)headerSize)), point);
                 }
             }
             catch { Fail(31); }
@@ -428,9 +527,15 @@ internal static class InputBridge
         _pid = pid;
         _error = 0;
         _threadId = 0;
-        _target = _content = IntPtr.Zero;
+        lock (WindowGate)
+        {
+            _target = _content = IntPtr.Zero;
+            _contentRelativeRect = null;
+            _ = TryContentRect(out _);
+        }
         _mouseHook = _keyboardHook = IntPtr.Zero;
-        Array.Clear(KeyboardState);
+        InitializeKeyboardState(GetKeyState(0x14), GetAsyncKeyState(0x14));
+        _leftButtonAccepted = false;
         _running = true;
         _thread = new Thread(Loop) { IsBackground = true };
         _thread.Start();
@@ -461,22 +566,11 @@ internal static class InputBridge
     }
     internal static ContentBounds GetContentRect()
     {
-        if (_content != IntPtr.Zero && PhysicalWindowRect(_content, out var captured))
+        lock (WindowGate)
         {
-            return new(0, new ContentRect { X = captured.Left, Y = captured.Top, Width = captured.Right - captured.Left, Height = captured.Bottom - captured.Top });
-        }
-        if (_target == IntPtr.Zero) EnumWindows(Find, IntPtr.Zero);
-        if (_target == IntPtr.Zero) return new(1168, default); // ERROR_NOT_FOUND: browser top-level window not found.
-        var handle = Marshal.AllocHGlobal(IntPtr.Size);
-        try
-        {
-            Marshal.WriteIntPtr(handle, IntPtr.Zero);
-            EnumChildWindows(_target, FindContent, handle);
-            var content = Marshal.ReadIntPtr(handle);
-            if (content == IntPtr.Zero || !PhysicalWindowRect(content, out var rect)) return new(1169, default); // Content HWND not found.
+            if (!TryContentRect(out var rect)) return new(_target == IntPtr.Zero ? 1168 : 1169, default);
             return new(0, new ContentRect { X = rect.Left, Y = rect.Top, Width = rect.Right - rect.Left, Height = rect.Bottom - rect.Top });
         }
-        finally { Marshal.FreeHGlobal(handle); }
     }
     internal static int LastError=>_error;
 
@@ -491,4 +585,8 @@ internal static class InputBridge
     }
     internal static void TestFailHookInitialization(int error)=>_testHookFailure=error;
     internal static void TestForceStopTimeout()=>_testStopTimeout=1;
+    internal static void TestMouseAt(ushort flags, int x, int y, int moveX = 0) => RecordTargetMouse(new RawMouse { ButtonFlags = flags, LastX = moveX }, new Point { X = x, Y = y });
+    internal static void TestKeyboardAt(uint key, uint scan, uint message, nint foreground) => RecordKeyboard(new LowLevelKeyboard { VKey = key, ScanCode = scan }, message, foreground);
+    internal static uint TestCharacter(uint key, uint scan) => TryCharacter(new LowLevelKeyboard { VKey = key, ScanCode = scan }, out var character) ? character : 0;
+    internal static void TestInitialKeyboardState(bool capsLock, bool capsPressed) => InitializeKeyboardState((short)(capsLock ? 1 : 0), (short)(capsPressed ? short.MinValue : 0));
 }

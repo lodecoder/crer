@@ -40,7 +40,13 @@ Equal(87, recorder.SetProcessOpacity((uint)Environment.ProcessId, 256), "opacity
 Equal(87, recorder.SetProcessTopmostOnly(0, true), "topmost rejects missing process");
 Equal(87, recorder.ForegroundProcessWindow(0), "foreground rejects missing process");
 Equal(87, recorder.RestoreForegroundWindow(0), "restore rejects missing window");
-if (Environment.GetEnvironmentVariable("CRER_TEST_WINDOWS") == "1") TopmostTests.Run();
+InputRegressionTests.CapsLock();
+if (Environment.GetEnvironmentVariable("CRER_TEST_WINDOWS") == "1")
+{
+    TopmostTests.Run();
+    InputRegressionTests.ContentWindows();
+}
+if (Environment.GetEnvironmentVariable("CRER_TEST_CHROME") is { Length: > 0 } chrome) await BrowserInputRegressionTests.Run(chrome);
 
 // Win32 RAWMOUSE has two padding bytes before the button union (offset 4).
 var packet = new byte[24];

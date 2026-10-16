@@ -173,9 +173,14 @@ public static class Normalize
         var text = new StringBuilder();
         var textQpc = BigInteger.Zero;
         BigInteger? lastActionQpc = null;
-        var shift = false;
-        // A JS Set has insertion order, which is significant for key_chord output.
+        // 左右の修飾キーを別々に追跡し、片方を離しても他方の押下状態を残す。
+        var pressedModifiers = new HashSet<int>();
         var modifiers = new List<string>();
+        static string? Modifier(int key) => key switch
+        {
+            16 or 160 or 161 => "Shift", 17 or 162 or 163 => "Control",
+            18 or 164 or 165 => "Alt", 91 or 92 => "Meta", _ => null,
+        };
         void AddStep(JsonObject step, BigInteger qpc)
         {
             if (options.QpcFrequencyHz is { } frequency && frequency != 0 && lastActionQpc is { } last && qpc >= last)
@@ -194,6 +199,14 @@ public static class Normalize
         {
             if (text.Length > 0) AddStep(new JsonObject { ["do"] = "text", ["value"] = text.ToString() }, textQpc);
             text.Clear();
+        }
+        void AddChord(string key, BigInteger qpc)
+        {
+            FlushText();
+            var chord = new JsonArray();
+            foreach (var item in modifiers) chord.Add((JsonNode?)JsonValue.Create(item));
+            chord.Add((JsonNode?)JsonValue.Create(key));
+            AddStep(new JsonObject { ["do"] = "key_chord", ["keys"] = chord }, qpc);
         }
 
         var lineNumber = 0;
@@ -219,7 +232,10 @@ public static class Normalize
                     if (data != Math.Truncate(data) || data is < 0 or > 0x10ffff)
                         throw new FormatException("Unicode code point is outside the valid range");
                     var codePoint = (int)data;
-                    if (codePoint == 0x20)
+                    if (codePoint >= 0x20 && codePoint != 0x7f
+                        && (modifiers.Any(modifier => modifier != "Shift") || codePoint == 0x20 && modifiers.Count > 0))
+                        AddChord(codePoint == 0x20 ? "Space" : char.ConvertFromUtf32(codePoint), qpc);
+                    else if (codePoint == 0x20)
                     {
                         FlushText();
                         AddStep(new JsonObject { ["do"] = "key", ["key"] = "Space" }, qpc);
@@ -232,24 +248,21 @@ public static class Normalize
                     continue;
                 }
                 var virtualKey = (int)(JsUint32(data) >> 16);
-                if (virtualKey is 16 or 160 or 161) { shift = kind == 7; continue; }
-                var modifier = virtualKey switch { 17 => "Control", 18 => "Alt", 91 or 92 => "Meta", _ => null };
-                if (modifier is not null)
+                var modifier = Modifier(virtualKey);
+                if (kind is 7 or 8 && modifier is not null)
                 {
-                    if (kind == 7 && !modifiers.Contains(modifier)) modifiers.Add(modifier);
-                    if (kind == 8) modifiers.Remove(modifier);
+                    if (kind == 7 && pressedModifiers.Add(virtualKey) && !modifiers.Contains(modifier)) modifiers.Add(modifier);
+                    if (kind == 8 && pressedModifiers.Remove(virtualKey)
+                        && !pressedModifiers.Any(key => Modifier(key) == modifier)) modifiers.Remove(modifier);
                     continue;
                 }
                 if (kind == 8) continue;
+                var shift = modifiers.Contains("Shift");
                 var printable = virtualKey is >= 0x30 and <= 0x39 or >= 0x41 and <= 0x5a;
-                if (kind == 7 && modifiers.Count > 0)
+                if (kind == 7 && modifiers.Count > 0 && (!printable || modifiers.Any(item => item != "Shift")))
                 {
-                    FlushText();
                     var key = printable ? Printable(virtualKey, shift) : Key(virtualKey);
-                    var chord = new JsonArray();
-                    foreach (var item in modifiers) chord.Add((JsonNode?)JsonValue.Create(item));
-                    chord.Add((JsonNode?)JsonValue.Create(key));
-                    AddStep(new JsonObject { ["do"] = "key_chord", ["keys"] = chord }, qpc);
+                    AddChord(key, qpc);
                     continue;
                 }
                 if (kind == 7 && printable)

@@ -172,6 +172,7 @@ public sealed class Scenario
             for (var i = 0; i < definition.Steps.Count; i++)
                 ValidateStep(definition.Steps[i], $"functions.{name}[{i}]", definitions, new HashSet<string>(definition.Parameters, StringComparer.Ordinal), false);
         for (var i = 0; i < steps.Count; i++) ValidateStep(steps[i], $"steps[{i}]", definitions, [], false);
+        ValidateCallStrings(steps, "steps", definitions, [], []);
         return new Scenario(root, browser, window, display, playback, steps, definitions);
     }
 
@@ -257,10 +258,10 @@ public sealed class Scenario
         if (!StepKeys.TryGetValue(action, out var allowed)) throw Invalid($"{label}.do is not supported: {action}");
         foreach (var key in new[] { "at", "from", "to", "delta" })
             if (step.ContainsKey(key)) ValidatePoint(step[key], $"{label}.{key}", parameters);
-        if (action == "navigate") HttpUrl(step["url"], $"{label}.url");
+        if (action == "navigate") StepUrl(step["url"], $"{label}.url", parameters);
         if (action is "wait_for" or "assert")
         {
-            if (step.ContainsKey("url")) HttpUrl(step["url"], $"{label}.url", true);
+            if (step.ContainsKey("url")) StepUrl(step["url"], $"{label}.url", parameters, true);
             if (!step.ContainsKey("url") && !step.ContainsKey("state") && !step.ContainsKey("locator_hint"))
                 throw Invalid($"{label} requires url, state, or locator_hint");
             var state = String(step["state"]);
@@ -275,8 +276,7 @@ public sealed class Scenario
         if (action == "scroll" && !step.ContainsKey("delta")) throw Invalid($"{label}.delta is required");
         if (action == "text" && !IsString(step["value"])) throw Invalid($"{label}.value must be a string for text");
         if (action == "key" && string.IsNullOrEmpty(String(step["key"]))) throw Invalid($"{label}.key must be a non-empty string for key");
-        if (action == "screenshot" && (String(step["name"]) is not { } name || !Regex.IsMatch(name, "^[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.CultureInvariant)))
-            throw Invalid($"{label}.name must be a safe artifact filename");
+        if (action == "screenshot") ScreenshotName(step["name"], $"{label}.name", parameters);
         if (action == "break" && !breakAllowed) throw Invalid($"{label}.break is supported only inside for_each_template.steps");
         if (action == "key_chord")
         {
@@ -382,6 +382,69 @@ public sealed class Scenario
                 throw Invalid($"{label}.steps is supported only for repeat, repeat_until, or for_each_template");
         }
         Keys(step, label, allowed);
+    }
+
+    // 画像列挙の一致値など、実行時に初めて確定する引数も入力送信前に再検証する。
+    public static void ValidateExpandedStep(JsonObject step) => ValidateStepStrings(step, "expanded step", []);
+
+    private static void ValidateStepStrings(JsonObject step, string label, HashSet<string> parameters)
+    {
+        var action = String(step["do"]);
+        if (action == "navigate") StepUrl(step["url"], $"{label}.url", parameters);
+        if (action is "wait_for" or "assert" && step.ContainsKey("url")) StepUrl(step["url"], $"{label}.url", parameters, true);
+        if (action == "screenshot") ScreenshotName(step["name"], $"{label}.name", parameters);
+    }
+
+    private static void ValidateCallStrings(JsonArray steps, string label, IReadOnlyDictionary<string, ScenarioFunction> definitions,
+        HashSet<string> parameters, HashSet<string> calls)
+    {
+        for (var index = 0; index < steps.Count; index++)
+        {
+            var step = steps[index]!.AsObject();
+            var stepLabel = $"{label}[{index}]";
+            ValidateStepStrings(step, stepLabel, parameters);
+            if (String(step["do"]) == "call")
+            {
+                var name = String(step["function"])!;
+                // 循環呼び出し自体は既存契約どおり実行時の action 失敗にする。
+                if (!calls.Add(name)) continue;
+                try
+                {
+                    var body = ExpandArguments(definitions[name].Steps, step["args"] as JsonObject ?? new())!.AsArray();
+                    ValidateCallStrings(body, $"{stepLabel}.{name}", definitions, parameters, calls);
+                }
+                finally { calls.Remove(name); }
+            }
+            var childParameters = parameters;
+            if (String(step["do"]) == "for_each_template")
+            {
+                childParameters = new(parameters, StringComparer.Ordinal);
+                childParameters.UnionWith(TemplateMatchParameters);
+            }
+            foreach (var key in new[] { "then", "else", "steps" })
+                if (step[key] is JsonArray children) ValidateCallStrings(children, $"{stepLabel}.{key}", definitions, childParameters, calls);
+        }
+    }
+
+    private static bool HasStringParameters(JsonNode? value, string label, HashSet<string> parameters)
+    {
+        if (String(value) is not { } text) return false;
+        var references = Regex.Matches(text, "\\$\\{([A-Za-z_][A-Za-z0-9_-]*)\\}", RegexOptions.CultureInvariant);
+        foreach (Match reference in references)
+            if (!parameters.Contains(reference.Groups[1].Value)) throw Invalid($"{label} references undefined parameter: {reference.Groups[1].Value}");
+        return references.Count > 0;
+    }
+
+    private static void StepUrl(JsonNode? value, string label, HashSet<string> parameters, bool wildcard = false)
+    {
+        if (!HasStringParameters(value, label, parameters)) HttpUrl(value, label, wildcard);
+    }
+
+    private static void ScreenshotName(JsonNode? value, string label, HashSet<string> parameters)
+    {
+        if (HasStringParameters(value, label, parameters)) return;
+        if (String(value) is not { } name || !Regex.IsMatch(name, "^[A-Za-z0-9][A-Za-z0-9._-]*$", RegexOptions.CultureInvariant))
+            throw Invalid($"{label} must be a safe artifact filename");
     }
 
     private static void ValidateChildren(JsonNode? value, string label, string suffix,

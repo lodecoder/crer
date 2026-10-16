@@ -61,6 +61,7 @@ public sealed partial class Playback
             try
             {
                 token.ThrowIfCancellationRequested();
+                Scenario.ValidateExpandedStep(step);
                 if (beforeStep != null) await beforeStep(index);
                 switch (action)
                 {

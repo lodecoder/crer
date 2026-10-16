@@ -20,6 +20,10 @@ dotnet run --project tests/Crer.WindowsTests/Crer.WindowsTests.csproj -c Release
 Remove-Item Env:CRER_TEST_WINDOWS
 ```
 
+実際の CfT でもページのクリック・キー入力、タイトルバーの除外、ページ遷移後の追跡を確認する場合は、
+`CRER_TEST_CHROME` に既存の CfT の `chrome.exe` を指定して同じテストを実行します。
+この検証は専用プロファイルを使い、物理キーやポインター、利用者の前景ウィンドウを変更しません。
+
 ## 入力記録
 
 `WindowsInput` は `IInputRecorder` を実装し、Windows 上で動作します。
@@ -31,7 +35,11 @@ Remove-Item Env:CRER_TEST_WINDOWS
 以前のセッションが自動終了し、別のインスタンスへ所有権が移った場合も同様です。
 
 マウス入力には Windows Raw Input（`RIDEV_INPUTSINK`）、キーボード入力には低レベルフックを使います。
-マウスイベントは対象 CfT プロセスのルート所有者 HWND、キーボードイベントは前景ウィンドウで選別します。
+マウスイベントは対象ページ HWND の物理矩形と子 HWND、キーボードイベントは前景ウィンドウ内で
+実際にフォーカスを持つページ HWND で選別します。タイトルバーや DevTools の入力は除外します。
+ページ HWND の再生成時は直前のブラウザー内相対矩形に一致するページを再取得し、
+別の renderer を誤って選ぶ間は入力を採用しません。
+Caps Lock と修飾キーは開始時の状態を読み、対象外アプリにいる間の切替・解放も追跡します。
 マウスイベントの生成元を Raw Input だけに限定し、クリックの重複記録を防ぎます。
 レコーダーは入力を注入しません。
 

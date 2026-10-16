@@ -118,6 +118,17 @@ await Test("classifies and continues a plan timeout", () =>
     Check(!PlanPolicy.ShouldAbort(results, new() { ["timeout"] = "continue" }), "timeout continue was ignored");
     Check(PlanPolicy.AggregateExitCode(results) == 4, "timeout exit code changed"); return Task.CompletedTask;
 });
+await Test("シナリオ内の timeout と明示メッセージを worker timeout と混同しない", () =>
+{
+    foreach (var failure in new[] { "0:timeout:Error: wait_for timed out", "0:explicit:plan:timeout:worker_ms" })
+    {
+        var results = new[] { Result(4, failure) };
+        Check(PlanPolicy.FailureKind(results) == "scenario_failure", "シナリオ失敗が plan timeout に分類された");
+        Check(PlanPolicy.ShouldAbort(results, new() { ["scenario_failure"] = "abort", ["timeout"] = "continue" }), "scenario_failure の abort が無視された");
+        Check(!PlanPolicy.ShouldAbort(results, new() { ["scenario_failure"] = "continue", ["timeout"] = "abort" }), "timeout の abort が誤適用された");
+    }
+    return Task.CompletedTask;
+});
 await Test("environment failures respect explicit and default policies while retaining exit code three", () =>
 {
     var results = new[] { Result(3, "CDP disconnected") };
@@ -179,6 +190,22 @@ JsonObject Parallel(bool failFast, params JsonObject[] children) => new() { ["pa
 CliOptions Options() => new("run", Path.Combine(directory, "plan.crer.yaml"), "fake-chrome", false, null, null, null, false);
 try
 {
+    await Test("worker_ms が無制限ならステップ待機失敗に scenario_failure の方針を適用する", async () =>
+    {
+        foreach (var continues in new[] { false, true })
+        {
+            var started = new List<string>();
+            Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+            {
+                started.Add(scenario.Name);
+                return Task.FromResult(scenario.Name == "failure" ? Result(4, "0:timeout:Error: wait_for timed out") : Result());
+            }
+            var policy = new JsonObject { ["scenario_failure"] = continues ? "continue" : "abort", ["timeout"] = continues ? "abort" : "continue" };
+            var result = await PlanRunner.Run(ValidPlan(Serial(Leaf(failureFile), Leaf(successFile)), policy, timeout: 0), Options(), "fake", default, () => new FakePlayback(Play));
+            Same(started, continues ? ["failure", "success"] : ["failure"]);
+            Check(result.Code == 4 && result.Results.Count == (continues ? 2 : 1), "シナリオ失敗時の続行または集約が正しくない");
+        }
+    });
     await Test("serial stops by default and continues only by configured policy", async () =>
     {
         var started = new List<string>();

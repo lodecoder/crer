@@ -17,7 +17,7 @@ var exe = Path.GetFullPath(Option("--exe") ?? Environment.GetEnvironmentVariable
 var chrome = Option("--chrome") ?? Environment.GetEnvironmentVariable("CRER_TEST_CHROME");
 if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(chrome) || !File.Exists(exe) || !File.Exists(chrome))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,plan,blocking,keyboard,windows,display,profiles]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,plan,navigation,blocking,keyboard,windows,display,profiles]");
     return 2;
 }
 if (args.Contains("--probe-hidden")) return await ProbeTools.Hidden(chrome!);
@@ -411,6 +411,62 @@ await Test("plan", "public parallel fail-fast returns four and drains owned proc
     foreach (var result in value.AsArray()) { Check(Json.Number(result!["code"]) == 4, "internal cancellation was reported as user interrupt"); Cleanup(result!); }
 });
 
+await Test("navigation", "遷移失敗を終了コード4で報告し navigation の続行方針を適用する", async () =>
+{
+    foreach (var policy in new[] { "abort", "continue" })
+    {
+        var scenario = Scenario("navigation-" + policy, fixture.Base, null, new() { ["foreground"] = false },
+            new() { ["do"] = "navigate", ["url"] = fixture.Base + "/blocked-step" },
+            new() { ["do"] = "log", ["message"] = "after-navigation" });
+        scenario["browser"]!["block_urls"] = new JsonArray((JsonNode?)JsonValue.Create("/blocked-step$"));
+        scenario["playback"] = new JsonObject { ["on_failure"] = new JsonObject { ["navigation"] = policy } };
+        var path = Write("navigation-" + policy, scenario);
+        var (_, result) = await Run("navigation-" + policy, 4, "play", path);
+        var steps = File.ReadAllLines(Path.Combine(RunDirectory(result), "steps.ndjson")).Select(line => JsonNode.Parse(line)!).ToArray();
+        Check(Json.Text(steps[0]["status"]) == "failed" && Json.Text(steps[0]["kind"]) == "navigation", "遷移失敗が navigation として記録されない");
+        Check(steps.Length == (policy == "continue" ? 2 : 1), "遷移失敗後の続行方針が適用されない");
+        Check(!fixture.Requests.Contains("/blocked-step"), "ブロック対象の遷移先に通信した");
+        Cleanup(result);
+    }
+});
+
+await Test("navigation", "関数引数のURLを展開して実際に遷移する", async () =>
+{
+    var destination = fixture.Base + "/parameter-target";
+    var scenario = Scenario("navigation-argument", fixture.Base, null, new() { ["foreground"] = false },
+        new() { ["do"] = "call", ["function"] = "go", ["args"] = new JsonObject { ["url"] = destination } },
+        new() { ["do"] = "wait_for", ["url"] = destination, ["state"] = "complete" });
+    scenario["functions"] = new JsonObject
+    {
+        ["go"] = new JsonObject { ["params"] = new JsonArray((JsonNode?)JsonValue.Create("url")),
+            ["steps"] = new JsonArray((JsonNode)new JsonObject { ["do"] = "navigate", ["url"] = "${url}" }) },
+    };
+    var path = Write("navigation-argument", scenario);
+    var (_, result) = await Run("navigation-argument", 0, "play", path);
+    Check(fixture.Requests.Contains("/parameter-target"), "関数引数の遷移先に到達しない");
+    Cleanup(result);
+});
+
+await Test("plan", "無制限workerのシナリオ待機失敗に scenario_failure の方針を適用する", async () =>
+{
+    var failure = Scenario("step-timeout", fixture.Base, null, new() { ["foreground"] = false }, Wait("never-present"));
+    failure["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["action_ms"] = 150 } };
+    var failureFile = Write("step-timeout", failure);
+    var nextFile = Write("after-step-timeout", Scenario("after-step-timeout", fixture.Base, null, new() { ["foreground"] = false }));
+    foreach (var continues in new[] { false, true })
+    {
+        var plan = new JsonObject { ["version"] = 1, ["name"] = Name("step-timeout-plan"),
+            ["timeouts"] = new JsonObject { ["worker_ms"] = 0 },
+            ["on_failure"] = new JsonObject { ["scenario_failure"] = continues ? "continue" : "abort", ["timeout"] = continues ? "abort" : "continue" },
+            ["run"] = Serial(Leaf(failureFile), Leaf(nextFile)) };
+        var path = Write("step-timeout-plan-" + continues, plan);
+        var (_, result) = await Run("step-timeout-plan-" + continues, 4, "run", path);
+        Check(result.AsArray().Count == (continues ? 2 : 1), "シナリオの待機失敗に worker timeout の方針が適用された");
+        Check(result[0]!["failures"]!.AsArray().Any(item => Json.Text(item).Contains(":timeout:", StringComparison.Ordinal)), "シナリオの待機期限を再現できない");
+        foreach (var run in result.AsArray()) Cleanup(run!);
+    }
+});
+
 await Test("blocking", "public URL blocking initial navigation replacement removal and JS regex", async () =>
 {
     var profile = Profile("blocking"); var files = new List<string>();
@@ -478,6 +534,38 @@ await Test("keyboard", "public raw normalize validate replay retains Tab and bot
         foreach (var control in new[] { "password", "remember", "login" })
             Check(observed.Where(item => Json.Text(item!["id"]) == control && Json.Text(item["code"]) == "Space").Select(item => Json.Text(item!["type"]) + ":" + Json.Text(item["key"])).SequenceEqual(new[] { "keydown: ", "keyup: " }), "Space key/code/down/up changed on " + control);
     }
+});
+
+await Test("keyboard", "左右ControlとShift付きTabを正規化して実ページで再生する", async () =>
+{
+    var raw = Path.Combine(evidence, "keyboard-modifiers.ndjson");
+    var events = new List<JsonObject>();
+    void Push(int kind, int data) => events.Add(new() { ["qpc"] = (events.Count + 1).ToString(), ["kind"] = kind, ["data"] = data, ["x"] = 80, ["y"] = 15 });
+    void Key(int key) { Push(7, key << 16); Push(8, key << 16); }
+    void Text(string value) { foreach (var character in value) Push(9, character); }
+    void SelectAll(int control) { Push(7, control << 16); Key(65); Push(8, control << 16); }
+    Push(2, 0); Push(3, 0); Text("old@example.test");
+    SelectAll(162); Text("changed@example.test"); Key(9); Text("temporary");
+    Push(7, 160 << 16); Key(9); Push(8, 160 << 16);
+    SelectAll(163); Text("final@example.test"); Key(9);
+    SelectAll(163); Text("demo password"); Key(9); Key(9); Key(32); Key(9); Key(32);
+    File.WriteAllLines(raw, events.Select(value => value.ToJsonString()));
+    var yaml = Path.Combine(evidence, "keyboard-modifiers.yaml");
+    using (var normalize = new RunningCommand(exe, ["normalize", raw, "--output", yaml, "--url", fixture.Base + "/keyboard?case=modifiers", "--name", Name("keyboard-modifiers")], evidence, "normalize-modifiers"))
+    {
+        var output = await normalize.Finish(); Check(output.Code == 0, "修飾キーの正規化に失敗した: " + output.Stderr);
+    }
+    var scenario = Crer.Scenario.Load(yaml);
+    scenario.Steps.Add(Wait("submitted"));
+    File.WriteAllText(yaml, scenario.Root.ToJsonString());
+    var (_, result) = await Run("keyboard-modifiers", 0, "play", yaml);
+    Cleanup(result);
+    Check(fixture.Snapshots.TryGetValue("modifiers", out var snapshot), "修飾キーの再生でフォームが送信されない");
+    var state = JsonNode.Parse(snapshot!)!;
+    Check(Json.Text(state["submitted"]!["email"]) == "final@example.test" && Json.Text(state["submitted"]!["password"]) == "demo password"
+        && state["submitted"]!["remember"]!.GetValue<bool>(), "Control+A または Shift+Tab の再生結果が正しくない");
+    Check(state["events"]!.AsArray().Where(item => Json.Text(item!["type"]) == "focusin").Select(item => Json.Text(item!["id"]))
+        .SequenceEqual(new[] { "email", "password", "email", "password", "toggle", "remember", "login" }), "Shift+Tab が逆順のフォーカス移動にならない");
 });
 
 await Test("profiles", "public profile exclusion and parent traversal refusal", async () =>
