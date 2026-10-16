@@ -61,6 +61,13 @@ Caps Lock と修飾キーは開始時の状態を読み、対象外アプリに�
 `SetProcessTopmostOnly(pid, enabled)` は、表示中で所有者のない CfT のトップレベルウィンドウを選びます。
 非表示の補助ウィンドウや、所有者があるメニュー・ツールチップは除外します。
 `SetWindowPos(SWP_NOACTIVATE)` を使い、設定後の `WS_EX_TOPMOST` を検証します。
+`IWindowInput.SetProcessTopmostDetailed(pid, enabled)` は同じ操作の詳細を `TopmostResult` で返します。
+`FailureStage` は成功時の `none`、PID 不正の `invalid_process`、対象不在の `window_not_found`、
+OS API 失敗の `set_window_pos`、属性取得失敗の `read_style`、設定後の属性不一致の
+`style_mismatch` を区別します。対象 HWND、`SetWindowPos` の戻り値と直後の実エラー、
+取得した拡張スタイルと取得時の実エラーも保持します。属性不一致の状態コード 5 は
+アプリ側の合成値で、Windows が返したアクセス拒否を意味するとは限りません。
+詳細を取得する入口もフォーカスを変更しません。
 前景フォーカスは `ForegroundProcessWindow(pid)` で別に要求するため、監視処理は
 繰り返しフォーカスを奪わずに最前面属性を修復できます。`SetProcessTopmost` は両方の操作を行い、
 `LastForegroundStatus` はそのフォーカス取得結果を返します。

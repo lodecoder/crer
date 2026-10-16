@@ -3,7 +3,7 @@ using System;
 namespace Crer.Windows;
 
 /// <summary>Windows API を使い、物理入力の記録とブラウザーのウィンドウ操作を行う。</summary>
-public sealed class WindowsInput : IInputRecorder, IDisposable
+public sealed class WindowsInput : IInputRecorder, IWindowInput
 {
     // プロセス内では Raw Input の登録と記録用メッセージループを一つだけ共有する。
     private static readonly object RecorderGate = new();
@@ -62,6 +62,7 @@ public sealed class WindowsInput : IInputRecorder, IDisposable
     public int ForegroundProcessWindow(uint pid) { ThrowIfDisposed(); return InputBridge.ForegroundProcessWindow(pid); }
     public int SetProcessTopmost(uint pid, bool enabled) { ThrowIfDisposed(); return InputBridge.SetProcessTopmost(pid, enabled); }
     public int SetProcessTopmostOnly(uint pid, bool enabled) { ThrowIfDisposed(); return InputBridge.SetProcessTopmostOnly(pid, enabled); }
+    public TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled) { ThrowIfDisposed(); return InputBridge.SetProcessTopmostDetailed(pid, enabled); }
     public int LastForegroundStatus { get { ThrowIfDisposed(); return InputBridge.LastForegroundStatus; } }
     public int SetProcessOpacity(uint pid, uint alpha) { ThrowIfDisposed(); return InputBridge.SetProcessOpacity(pid, alpha); }
 

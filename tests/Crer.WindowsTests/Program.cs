@@ -38,6 +38,15 @@ if (input.QpcFrequencyHz == 0) throw new Exception("QPC frequency must be positi
 Equal(87, recorder.SetProcessOpacity(0, 128), "opacity rejects missing process");
 Equal(87, recorder.SetProcessOpacity((uint)Environment.ProcessId, 256), "opacity rejects invalid alpha");
 Equal(87, recorder.SetProcessTopmostOnly(0, true), "topmost rejects missing process");
+var invalidProcess = recorder.SetProcessTopmostDetailed(0, true);
+if (invalidProcess.Status != 87 || invalidProcess.FailureStage != "invalid_process" || invalidProcess.Window != 0
+    || invalidProcess.SetWindowPosSucceeded is not null || invalidProcess.ExtendedStyle is not null)
+    throw new Exception("invalid process diagnostics must not report an attempted Windows API call");
+var invalidWindow = InputBridge.ApplyTopmost(new nint(-123), true);
+if (invalidWindow.FailureStage != "set_window_pos" || invalidWindow.SetWindowPosSucceeded != false
+    || invalidWindow.SetWindowPosError == 0 || invalidWindow.Status != invalidWindow.SetWindowPosError
+    || invalidWindow.ExtendedStyle is not null || invalidWindow.StyleReadError != 0)
+    throw new Exception("invalid HWND must preserve the real SetWindowPos failure instead of reporting a style mismatch");
 Equal(87, recorder.ForegroundProcessWindow(0), "foreground rejects missing process");
 Equal(87, recorder.RestoreForegroundWindow(0), "restore rejects missing window");
 InputRegressionTests.CapsLock();

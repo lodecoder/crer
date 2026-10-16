@@ -676,6 +676,75 @@ await Test("observation", "public background CDP actions preserve cursor and for
     if (cursorChanged || foregroundChanged) throw new ObservationInconclusive("cursor or foreground changed during playback; background-observations.json preserves raw observations for attribution against external user activity");
 });
 
+if (args.Contains("--windows")) await Test("windows", "公開exeで半透明のonceウィンドウを3並列で起動し各profileを再利用する", async () =>
+{
+    var groups = new List<JsonObject>();
+    var profiles = new List<(string First, string Second)>();
+    for (var index = 0; index < 3; index++)
+    {
+        var profile = Profile("once-parallel-" + index);
+        var labels = new[] { "once-parallel-" + index + "-first", "once-parallel-" + index + "-reused" };
+        var files = labels.Select(label => Write(label, Scenario(label, fixture.Base + "/window", profile, new()
+        {
+            ["foreground"] = true, ["foreground_mode"] = "once", ["opacity"] = .5,
+            ["bounds"] = new JsonObject { ["left"] = 30, ["top"] = 30, ["width"] = 400, ["height"] = 300 },
+        }, new() { ["do"] = "wait_for", ["state"] = "complete" }, Sleep(750)))).ToArray();
+        groups.Add(Serial(files.Select(Leaf).ToArray()));
+        profiles.Add((labels[0], labels[1]));
+    }
+    var plan = Plan(Parallel(false, groups.ToArray()), maximum: 3);
+    plan["browser_session"]!["focus"] = "once";
+    var path = Write("once-parallel-plan", plan);
+    var (_, value) = await Run("once-parallel-plan", 0, "run", path);
+    var results = value.AsArray();
+    Check(results.Count == 6 && results.All(result => Json.Number(result!["code"]) == 0 && result["failures"]!.AsArray().Count == 0),
+        "3並列profileの初回・再利用の6シナリオが成功しない");
+    var processIds = new HashSet<int>();
+    var endpoints = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var pair in profiles)
+    {
+        var first = results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(pair.First))!;
+        var second = results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(pair.Second))!;
+        var firstRun = Read(RunDirectory(first), "run.json");
+        var secondRun = Read(RunDirectory(second), "run.json");
+        var processId = (int)Json.Number(firstRun["chromePid"]);
+        var endpoint = Json.Text(firstRun["cdpEndpoint"]);
+        Check(processId > 0 && Json.Number(secondRun["chromePid"]) == processId
+            && endpoint.Length > 0 && Json.Text(secondRun["cdpEndpoint"]) == endpoint,
+            "同一profileの再利用でPIDまたはCDP endpointが変わった: " + pair.First);
+        Check(processIds.Add(processId) && endpoints.Add(endpoint), "異なるprofileが同じCfTを共有した: " + pair.First);
+        Check(firstRun["browserSession"]!["reused"]!.GetValue<bool>() == false
+            && secondRun["browserSession"]!["reused"]!.GetValue<bool>(), "初回・再利用の診断が一致しない: " + pair.First);
+        var previousAttempts = 0d;
+        foreach (var (result, focusRequested) in new[] { (first, true), (second, false) })
+        {
+            var directory = RunDirectory(result);
+            var foreground = Read(directory, "foreground.json");
+            var startup = foreground["topmostStartup"]!.AsObject();
+            var attempts = startup["attempts"]!.AsArray();
+            Check(Json.Text(foreground["mode"]) == "once" && Json.Text(startup["status"]) == "succeeded" && attempts.Count > 0,
+                "onceの初期設定成功または試行記録がない: " + directory);
+            Check(startup["focusRequested"]!.GetValue<bool>() == focusRequested, "初回だけ前景化する方針に一致しない: " + directory);
+            foreach (var attempt in attempts)
+                Check(new[] { "status", "failureStage", "window", "setWindowPosSucceeded", "setWindowPosError", "extendedStyle", "styleReadError" }
+                    .All(key => attempt!.AsObject().ContainsKey(key)), "最前面属性のAPI診断キーが不足している: " + directory);
+            Check(Json.Number(attempts.Last()!["status"]) == 0 && Json.Text(attempts.Last()!["failureStage"]) == "none",
+                "初期設定の最終試行が成功していない: " + directory);
+            var totalAttempts = Json.Number(foreground["topmostAttempts"]);
+            Check(totalAttempts - previousAttempts == attempts.Count, "onceの初期設定成功後にも最前面属性を再要求した: " + directory);
+            previousAttempts = totalAttempts;
+            var opacity = Read(directory, "opacity.json");
+            Check(Json.Number(opacity["alpha"]) == 128 && opacity["applied"]!.GetValue<bool>(), "半透明の設定診断が一致しない: " + directory);
+        }
+        // 初回はセッションを保持し、再利用後はplan終了時に所有CfTとCDPをすべて閉じる。
+        var retained = Read(RunDirectory(first), "cleanup.json");
+        Check(retained["sessionRetained"]!.GetValue<bool>() && retained["chromeExited"]!.GetValue<bool>() == false
+            && Json.Number(retained["pendingCdpRequests"]) == 0 && retained["errors"]!.AsArray().Count == 0,
+            "初回シナリオ後に正常な共有セッションを保持できない: " + pair.First);
+        Cleanup(second);
+    }
+});
+
 if (args.Contains("--windows")) await Test("windows", "public standalone always once opacity position merge and restore", async () =>
 {
     foreach (var mode in new[] { "always", "once" })
@@ -698,7 +767,9 @@ if (args.Contains("--windows")) await Test("windows", "public standalone always 
         var output = await process.Finish(); Check(output.Code == 0, "standalone public playback failed: " + output.Stderr); var result = TrailingJson(output.Stdout); Cleanup(result);
         var diagnostic = Read(RunDirectory(result), "foreground.json");
         Check(Json.Text(diagnostic["mode"]) == mode && Json.Number(diagnostic["restoreStatus"], -1) == 0, "standalone foreground restoration failed");
-        Check(mode == "once" ? Json.Number(diagnostic["topmostAttempts"]) == 1 : Json.Number(diagnostic["topmostAttempts"]) > 2, "standalone maintenance attempts changed");
+        var startupAttempts = diagnostic["topmostStartup"]!["attempts"]!.AsArray().Count;
+        Check(mode == "once" ? startupAttempts > 0 && Json.Number(diagnostic["topmostAttempts"]) == startupAttempts
+            : Json.Number(diagnostic["topmostAttempts"]) > 2, "単独再生の最前面属性の初期設定・維持回数が一致しない");
     }
 });
 
@@ -757,10 +828,13 @@ if (args.Contains("--windows")) await Test("windows", "public foreground modes o
     var previousAttempts = 0d;
     for (var index = 0; index < modes.Length; index++)
     {
-        // The baseline reads its diagnostic after playback; periodic maintenance
-        // updates in-memory counters and the final diagnostic captures every tick.
+        // 再生終了後の累積回数から、このシナリオの初期試行と成功後の監視による追加要求を区別する。
         var diagnostic = Read(RunDirectory(results[index]!), "foreground.json"); var attempts = Json.Number(diagnostic["topmostAttempts"]);
-        if (modes[index].Item2 && modes[index].Item3 == "once") Check(attempts - previousAttempts == 1, "once mode requested topmost more than once");
+        if (modes[index].Item2 && modes[index].Item3 == "once")
+        {
+            var startupAttempts = diagnostic["topmostStartup"]!["attempts"]!.AsArray().Count;
+            Check(startupAttempts > 0 && attempts - previousAttempts == startupAttempts, "onceの初期設定成功後にも最前面属性を再要求した");
+        }
         if (modes[index].Item2 && modes[index].Item3 == "always") Check(attempts - previousAttempts > 2, "always watchdog did not run while sleeping");
         if (!modes[index].Item2) Check(attempts == previousAttempts, "disabled mode kept requesting topmost");
         previousAttempts = attempts;

@@ -114,6 +114,17 @@ viewport は `window.viewport ?? window.content` と実測比較する。
 occluded renderer のリサイズが遅延した場合は、読み取り専用キャプチャ後に再測定する。
 一致条件は緩和しない。foreground always / once と opacity は独立して制御する。
 
+`foreground_mode: once` の最前面属性は、起動時・scenario 再利用時の初期設定だけで適用する。
+一時的な失敗は最大2秒、50 ms 間隔で再試行し、最初の成功後は再要求しない。
+再試行中に前景フォーカスを繰り返し取得せず、監視や step 直前の再適用も行わない。
+利用者の中断、起動期限、plan の worker timeout は再試行の待機にも適用する。
+期限内に成功しなければ環境エラーとし、各試行の API 失敗と最前面属性の不一致を
+`foreground.json` の `topmostStartup.attempts` に分けて記録する。
+
+2026-10-16 の CfT 155 による3並列・各2シナリオの回帰検証では、初回に属性不一致となった
+2ウィンドウがどちらも2回目の試行で回復し、再利用を含む6シナリオすべてが成功した。
+初回だけのフォーカス要求と、再利用時にフォーカスを取り直さない動作も確認した。
+
 record は `Crer.Windows` の C# API を直接呼び、Raw Input / Low Level Hook で物理操作を観測する。
 marker の手動クリックで較正し、Enter / Ctrl+C / duration / stop-file / CfT 終了で停止する。
 古い sidecar、requested_content 由来の DPI scale、event ごとの viewport、QPC 間隔、

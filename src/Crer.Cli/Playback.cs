@@ -363,7 +363,7 @@ public sealed partial class Playback
             }
         }
         SetStartupStage("window_control");
-        await windows!.Configure(process!.Id, s.Window, options, logger, absoluteRunDir, retainSession, FocusPolicy);
+        await windows!.Configure(process!.Id, s.Window, options, logger, absoluteRunDir, retainSession, FocusPolicy, token);
         SetStartupStage("url_blocking");
         await blocker!.Configure(s.Browser["block_urls"] as JsonArray, token);
         SetStartupStage("navigation");

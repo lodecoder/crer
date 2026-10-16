@@ -111,11 +111,15 @@ HWND の再生成に追従する。終了時には watchdog を止めてから t
 前景フォーカスの取得は topmost 設定と分離し、plan の `browser_session.focus` に従う。このモードは
 フォーカスとウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
 
-`foreground_mode: once` では起動時または scenario ごとの再利用時に一度だけ topmost を適用する。
+`foreground_mode: once` では起動時または scenario ごとの再利用時の初期設定として topmost を適用する。
+ウィンドウ生成直後の一時的な API 失敗や `WS_EX_TOPMOST` の不一致は最大2秒、50 ms 間隔で再試行する。
+最初に成功した時点で再試行を終了し、前景フォーカスの要求も再試行のたびには行わない。
+利用者の中断、起動期限、plan の worker timeout は再試行の待機にも適用する。
 watchdog と各 step の直前の topmost・フォーカス再適用を行わず、他の topmost ウィンドウが上に
 重なった状態を許容する。`WS_EX_TOPMOST` 自体は維持するが、HWND の再生成や属性解除には追従しない。
-前の scenario が `always` の場合、再利用の準備前に監視を停止する。初回設定に失敗した場合は
-環境エラーで終了する。`foreground` が `false` または省略の場合は mode を無視する。
+前の scenario が `always` の場合、再利用の準備前に監視を停止する。初期設定が期限内に成功しなければ
+環境エラーで終了する。`foreground.json` の `topmostStartup.attempts` には試行ごとの API の失敗と
+属性の不一致を区別して記録する。`foreground` が `false` または省略の場合は mode を無視する。
 両モードとも終了時は topmost を解除し、`foreground.json` の `mode` に実効モードを保存する。
 
 `browser.window.opacity` は CfT 本体ウィンドウの不透明度を指定する有限数値（範囲 `0..1`、既定 `1`）。

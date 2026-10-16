@@ -65,7 +65,7 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] private static extern IntPtr GetWindow(IntPtr h, uint command);
-    [DllImport("user32.dll")] private static extern IntPtr GetWindowLongPtrW(IntPtr h, int index);
+    [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr GetWindowLongPtrW(IntPtr h, int index);
     [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr SetWindowLongPtrW(IntPtr h, int index, IntPtr value);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetLayeredWindowAttributes(IntPtr h, uint colorKey, byte alpha, uint flags);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool GetLayeredWindowAttributes(IntPtr h, out uint colorKey, out byte alpha, out uint flags);
@@ -462,7 +462,7 @@ internal static class InputBridge
         lock (WindowGate)
         {
             _lastForegroundStatus = 0;
-            var status = SetProcessTopmostCore(pid, enabled);
+            var status = SetProcessTopmostCore(pid, enabled).Status;
             if (status != 0 || !enabled) return status;
             _lastForegroundStatus = TryBringToForeground(_foregroundTarget);
             return 0;
@@ -470,23 +470,43 @@ internal static class InputBridge
     }
     internal static int SetProcessTopmostOnly(uint pid, bool enabled)
     {
+        return SetProcessTopmostDetailed(pid, enabled).Status;
+    }
+    internal static TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled)
+    {
         lock (WindowGate) return SetProcessTopmostCore(pid, enabled);
     }
-    private static int SetProcessTopmostCore(uint pid, bool enabled)
+    private static TopmostResult SetProcessTopmostCore(uint pid, bool enabled)
     {
-        if (pid == 0) return 87; // ERROR_INVALID_PARAMETER
+        if (pid == 0) return new(87, "invalid_process", 0, null, 0, null, 0);
         _foregroundPid = pid;
         _foregroundTarget = IntPtr.Zero;
         EnumWindows(FindForeground, IntPtr.Zero);
-        if (_foregroundTarget == IntPtr.Zero) return 1168; // ERROR_NOT_FOUND
+        if (_foregroundTarget == IntPtr.Zero) return new(1168, "window_not_found", 0, null, 0, null, 0);
+        return ApplyTopmost(_foregroundTarget, enabled);
+    }
+    internal static TopmostResult ApplyTopmost(nint window, bool enabled)
+    {
+        lock (WindowGate) return ApplyTopmostCore(window, enabled);
+    }
+    private static TopmostResult ApplyTopmostCore(nint window, bool enabled)
+    {
         var insertAfter = enabled ? new IntPtr(-1) : new IntPtr(-2); // HWND_TOPMOST / HWND_NOTOPMOST
-        // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE: focus is handled separately.
-        if (!SetWindowPos(_foregroundTarget, insertAfter, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010)) {
-            var error = Marshal.GetLastWin32Error();
-            return error == 0 ? 5 : error;
-        }
-        var isTopmost = (GetWindowLongPtrW(_foregroundTarget, -20).ToInt64() & 8) != 0; // GWL_EXSTYLE / WS_EX_TOPMOST
-        return isTopmost == enabled ? 0 : 5;
+        // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE。フォーカスは変更しない。
+        var succeeded = SetWindowPos(window, insertAfter, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+        var setError = Marshal.GetLastWin32Error();
+        if (!succeeded)
+            return new(setError == 0 ? 5 : setError, "set_window_pos", window, false, setError, null, 0);
+
+        var style = GetWindowLongPtrW(window, -20).ToInt64(); // GWL_EXSTYLE
+        var readError = Marshal.GetLastWin32Error();
+        // 拡張スタイル 0 は正常値にもなるため、実エラーがある場合だけ取得失敗とする。
+        if (style == 0 && readError != 0)
+            return new(readError, "read_style", window, true, setError, null, readError);
+        var isTopmost = (style & 8) != 0; // WS_EX_TOPMOST
+        if (isTopmost != enabled)
+            return new(5, "style_mismatch", window, true, setError, style, 0);
+        return new(0, "none", window, true, setError, style, 0);
     }
     internal static int LastForegroundStatus { get { lock (WindowGate) return _lastForegroundStatus; } }
     internal static int SetProcessOpacity(uint pid, uint alpha)
