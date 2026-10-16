@@ -1,3 +1,4 @@
+#requires -Version 7.2
 [CmdletBinding()]
 param([int] $Port = 8080)
 $ErrorActionPreference = 'Stop'

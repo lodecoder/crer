@@ -1,6 +1,6 @@
 # Windows の実機受入
 
-C#/.NET 10 SDK、Visual Studio Build Tools の MSVC と Windows SDK、明示した Chrome for Testing を用意する。
+C#/.NET 10 SDK、PowerShell 7.2 以降、Visual Studio Build Tools の MSVC と Windows SDK、明示した Chrome for Testing を用意する。
 配布済み `crer.exe` の実行には .NET SDK・共有 runtime は不要。今回の対象は win-x64。
 既存の通常 Chrome・profile を使わず、各 harness が所有する専用 CfT と `.crer` の検証ディレクトリを使う。
 
@@ -14,6 +14,15 @@ C#/.NET 10 SDK、Visual Studio Build Tools の MSVC と Windows SDK、明示し�
 manifest に登録する場合は `install-chrome-for-testing.ps1 -ChromePath <chrome.exe> -Version <version>` を使う。
 
 ## 再生と非干渉の観測
+
+fixture検証の `-Port` は待受けサーバーと入力内の `http://127.0.0.1:8080` / `http://localhost:8080` の両方に反映する。
+例えば `test-playback-fixture.ps1 -Port 18080`、`test-plan-fixture.ps1 -Port 18080`、
+`test-session-reuse-fixture.ps1 -Port 18080` で既定以外の空きポートを使える。
+既定の8080では元入力を読み取り、他のportでは元入力と同じ親に一意な作業コピーを作る。
+カスタムのscenario・planも同様で、planの相対参照だけをコピーへ付け替え、templateパスや関数引数は変更しない。
+このため非8080では元入力の親への一時ファイル作成権限が必要となる。権限がなければ準備時に診断して停止する。
+元ファイルを上書きせず、作成したコピーだけを終了時に削除する。コピーの内容と対応表はharness証跡の `inputs/` と `inputs.json` に残す。
+`.\scripts\test-fixture-input.ps1` は元入力の保持、相対参照、port変更、PowerShell要件を実Chromeなしで検証する。
 
 ```powershell
 .\scripts\test-playback-fixture.ps1
@@ -93,4 +102,5 @@ IME の確定文字列は元から観測対象外。mock や hook packet の成�
 Windows 操作を組み込んだ単一の `dist/win-x64/crer.exe` を Native AOT でビルドし、公開配布物で
 search/keyboard/drag/plan/session reuse を検証する。実行環境、再現コマンド、結果と証跡は
 各 harness の summary に保存する。[C# 移行対応表](csharp-migration-matrix.md) は旧 DLL 構成時点の履歴である。
-比較専用の旧実装は `scripts/compat` へ隔離する。
+比較専用の旧実装は `scripts/compat` へ隔離する。任意の旧CLI比較 `scripts/compat/Test-PlaybackParity.ps1` は、
+JSONの比較に.NET 8 APIを使うため、PowerShell 7.4 以降が必要となる。

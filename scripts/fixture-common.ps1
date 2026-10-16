@@ -1,8 +1,39 @@
-# Shared helpers for C# fixture acceptance. Dot-source from a fixture script.
+#requires -Version 7.2
+# C# fixture受入スクリプトからドットソースする共通処理。
 $script:FixtureProjectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 function Resolve-FixturePath([string] $Path) {
   if ([IO.Path]::IsPathRooted($Path)) { return [IO.Path]::GetFullPath($Path) }
   return [IO.Path]::GetFullPath((Join-Path $script:FixtureProjectRoot $Path))
+}
+function New-FixtureInput([string] $Path, [int] $Port, [string] $Evidence, [ValidateSet('play', 'run')][string] $Command = 'play') {
+  $source = Resolve-FixturePath $Path
+  if ($Port -lt 1 -or $Port -gt 65535) { throw 'fixtureのPortは1〜65535で指定してください。' }
+  if ($Port -eq 8080) { return @{ Path = $source; Files = @() } }
+  $project = Join-Path $script:FixtureProjectRoot 'scripts/fixture-input/FixtureInput.csproj'
+  $tool = Join-Path $script:FixtureProjectRoot 'scripts/fixture-input/bin/Release/net10.0/FixtureInput.dll'
+  if (-not $script:FixtureInputBuilt) {
+    & dotnet build $project -c Release --nologo -p:NuGetAudit=false --ignore-failed-sources | Out-Host
+    if ($LASTEXITCODE -ne 0) { throw "fixture入力準備ツールのビルドに失敗しました ($LASTEXITCODE)。" }
+    $script:FixtureInputBuilt = $true
+  }
+  $json = & dotnet $tool $source (Join-Path $Evidence 'inputs') $Port $Command
+  if ($LASTEXITCODE -ne 0) { throw 'fixture入力コピーの準備に失敗しました。元入力の親への一時ファイル作成権限を確認してください。' }
+  $prepared = $json | ConvertFrom-Json
+  try { $json | Set-Content -LiteralPath (Join-Path $Evidence 'inputs.json') -Encoding utf8 }
+  catch { Remove-FixtureInput $prepared; throw }
+  return $prepared
+}
+function Remove-FixtureInput($Prepared) {
+  if (-not $Prepared) { return }
+  foreach ($file in $Prepared.Files) {
+    $working = [IO.Path]::GetFullPath($file.Working)
+    $source = [IO.Path]::GetFullPath($file.Source)
+    if ([IO.Path]::GetDirectoryName($working) -ine [IO.Path]::GetDirectoryName($source) -or
+        [IO.Path]::GetFileName($working) -notmatch '^\.crer-fixture-[0-9a-f]{32}-[0-9]+\.yaml$') {
+      throw "所有していないfixture入力の削除を拒否しました: $working"
+    }
+    if (Test-Path -LiteralPath $working) { Remove-Item -LiteralPath $working -Force }
+  }
 }
 function Read-CrerResult([string] $Text) {
   $starts = [regex]::Matches($Text, '(?m)^[\{\[]')

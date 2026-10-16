@@ -1,3 +1,4 @@
+#requires -Version 7.2
 [CmdletBinding()]
 param(
   [int] $Port = 8080,
@@ -11,8 +12,10 @@ $ErrorActionPreference = 'Stop'
 if ([string]::IsNullOrWhiteSpace($Chrome) -or -not (Test-Path -LiteralPath $Chrome -PathType Leaf)) { throw 'Specify Chrome for Testing with -Chrome or CRER_CHROME.' }
 if ([string]::IsNullOrWhiteSpace($Profile)) { $Profile = '.crer/profiles/session-reuse-fixture-' + [Guid]::NewGuid().ToString('N') }
 $server = Start-OwnedFixtureServer -Port $Port
+$inputCopy = $null
 try {
-  $results = Invoke-FixtureCli -Executable $CrerExe -Arguments @('run', (Resolve-FixturePath $Plan), '--chrome', (Resolve-FixturePath $Chrome), '--profile-dir', $Profile) -ExpectedCode 0 -Evidence $server.Root -Label 'session-reuse'
+  $inputCopy = New-FixtureInput -Path $Plan -Port $Port -Evidence $server.Root -Command run
+  $results = Invoke-FixtureCli -Executable $CrerExe -Arguments @('run', $inputCopy.Path, '--chrome', (Resolve-FixturePath $Chrome), '--profile-dir', $Profile) -ExpectedCode 0 -Evidence $server.Root -Label 'session-reuse'
   if (@($results).Count -ne 2) { throw 'Reuse plan must produce exactly two scenario results.' }
   $metadata = @($results | ForEach-Object { Get-Content -Raw -LiteralPath (Join-Path (Resolve-FixturePath $_.runDir) 'run.json') | ConvertFrom-Json })
   if (@($metadata | Where-Object { $_.browserSession.reused -eq $false }).Count -ne 1 -or @($metadata | Where-Object { $_.browserSession.reused -eq $true }).Count -ne 1) { throw 'Expected one new and one reused browser session.' }
@@ -23,4 +26,4 @@ try {
   $cleanup = Get-Content -Raw -LiteralPath $shutdown | ConvertFrom-Json
   if (-not $cleanup.chromeExited -or $cleanup.pendingCdpRequests -ne 0) { throw 'Reused browser did not shut down cleanly.' }
   Write-Host "PASS one CfT process reused then closed; profile retained at $Profile; harness: $($server.Root)"
-} finally { Stop-OwnedFixtureServer $server }
+} finally { try { Remove-FixtureInput $inputCopy } finally { Stop-OwnedFixtureServer $server } }

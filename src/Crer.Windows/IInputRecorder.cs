@@ -22,8 +22,10 @@ public interface IInputRecorder
     ulong QpcFrequencyHz { get; }
     int Start(uint pid);
     bool IsRunning { get; }
+    /// <summary>入力生成を停止して未読イベントを保持する。停止後も Read と GetContentRect を呼び出せる。</summary>
     int Stop();
     int LastError { get; }
+    /// <summary>停止後も未読イベントを読み出せる。キューが空なら 0 を返し、次の Start は未読イベントを破棄する。</summary>
     int Read(Span<InputEvent> events);
     ContentBounds GetContentRect();
 }

@@ -1,3 +1,4 @@
+#requires -Version 7.2
 [CmdletBinding()]
 param(
   [string] $Chrome = $env:CRER_CHROME,

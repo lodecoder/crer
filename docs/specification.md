@@ -153,6 +153,7 @@ watchdog と各 step の直前の topmost・フォーカス再適用を行わず
 
 記録開始後の停止操作は、対話的な直接起動では `Enter` または `Ctrl+C`（1 回目は graceful stop、2 回目は強制中断）、または CfT
 ウィンドウの終了とする。graceful stop では、未確定の down/up 対を `raw-input.ndjson` に残し、
+入力生成を停止してから未読キューを最後まで回収し、既に到着したイベントも保存する。
 YAML へは不完全な操作を出力せず警告する。CfT が前景でない間のキー入力、Chrome のタブバー・
 アドレスバー・DevTools 上の入力、対象コンテンツ領域外のポインター入力は記録しない。
 較正後の左クリックは記録中の標準出力へ CSS 座標として表示し、content bounds を得られない場合は
@@ -329,6 +330,9 @@ interception の CDP 処理に失敗した場合は接続を閉じ、環境エ�
 `for_each_template`、`call`、`break`
 である。`wait_for` と `assert` は
 ページ状態を読むため CDP Runtime/DOM を使ってよいが、ページを変更してはならない。
+`wait_for` の `playback.timeouts.action_ms`（既定10000）は、条件照会のCDP応答待ちと再照会までの待機を
+含む期限である。期限後に条件が成立しても成功にはせず、`timeout` 失敗として `on_failure.timeout` に従う。
+利用者・workerからの取消しやCDP接続断は、待機期限切れと区別して扱う。
 `sleep` 以外の各操作には任意の `delay_ms`（0 以上のミリ秒）を指定できる。成功した操作の直後に
 待機してから次のステップへ進む。`normalize` は記録された操作間隔を原則として前の操作の `delay_ms`
 へ出力する。先頭または単独の待機を表す場合だけ、`{ do: sleep, ms: ... }` を用いる。`sleep` と
@@ -359,7 +363,7 @@ plan の `on_failure.scenario_failure` と `parallel.fail_fast` に従う。
 `count: 0` は正常な no-op であり、子ステップを実行しない。子ステップには通常の操作、`if`、入れ子の
 `repeat` を指定できる。子ステップで abort 対象の失敗が起きた場合は、残りの反復を実行しない。repeat 自身と
 子ステップは `steps.ndjson` に別々に記録し、子の index は親 index・反復番号・子番号をドットで結合した
-文字列とする。
+文字列とする。空の `steps: []` でも各反復で利用者・workerの取消しを確認する。
 
 `click` は任意の正の整数 `count` を指定でき、省略時は `1` とする。click は同じ解決済み座標を `count` 回
 実行する。`delay_ms` と `playback.step_delay_ms` は各クリックの後に適用する。jitter の結果または template
@@ -415,6 +419,10 @@ scenario トップレベルの `functions` は、識別子名をキー、ステ�
 探索ごとに標準出力へテンプレートパス・実測 similarity・適用した
 threshold を出力する。`on_missing` は step 直下ではなく `template` 内に置く。`on_missing: fail` 後に
 停止するかは `playback.on_failure.template`、なければ `playback.on_failure.default` の policy に従う。
+
+画像のデコードと照合は同じ専用CfT内の非表示環境で行い、対象ページのCSPやJavaScriptから分離する。
+対象ページのCSP設定は維持する。照合環境は最初の探索時に作成し、ページ遷移・同じbrowser session内の
+後続探索で再利用し、browser sessionの終了時に閉じる。撮影とクリックは対象ページのsessionで実行する。
 
 `playback.artifacts.template_screenshots` は `all` または `failure-only` とし、既定は後方互換のため `all` とする。
 `all` は各探索元を従来の `template-*.png` として保存する。`failure-only` は CDP screenshot と template を

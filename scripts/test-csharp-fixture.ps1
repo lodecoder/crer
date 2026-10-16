@@ -1,3 +1,4 @@
+#requires -Version 7.2
 [CmdletBinding()]
 param(
   [string] $CrerExe = 'dist/win-x64/crer.exe',
@@ -11,11 +12,13 @@ if ([string]::IsNullOrWhiteSpace($Chrome) -or -not (Test-Path -LiteralPath $Chro
 $scenario = Resolve-FixturePath 'fixtures/playback/click-only.crer.yaml'
 $hash = (Get-FileHash -LiteralPath $scenario -Algorithm SHA256).Hash
 $server = Start-OwnedFixtureServer -Port $Port -Executable $FixtureServerExe
+$inputCopy = $null
 try {
+  $inputCopy = New-FixtureInput -Path $scenario -Port $Port -Evidence $server.Root
   $summary = @()
   foreach ($keep in @($true, $false)) {
     $label = if ($keep) { 'flag-keep' } else { 'environment-dispose' }
-    $arguments = @('play', $scenario)
+    $arguments = @('play', $inputCopy.Path)
     if ($keep) { $arguments += @('--chrome', (Resolve-FixturePath $Chrome), '--keep-artifacts') }
     $environment = @{ CRER_CHROME = $(if ($keep) { Join-Path $server.Root 'missing.exe' } else { Resolve-FixturePath $Chrome }) }
     $result = Invoke-FixtureCli -Executable $CrerExe -Arguments $arguments -Environment $environment -ExpectedCode 0 -Evidence $server.Root -Label $label
@@ -40,4 +43,4 @@ try {
   }
   if ((Get-FileHash -LiteralPath $scenario -Algorithm SHA256).Hash -ne $hash) { throw 'Fixture YAML changed during acceptance.' }
   $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $server.Root 'summary.json')
-} finally { Stop-OwnedFixtureServer $server; Write-Host "Fixture evidence: $($server.Root)" }
+} finally { try { Remove-FixtureInput $inputCopy } finally { Stop-OwnedFixtureServer $server; Write-Host "Fixture evidence: $($server.Root)" } }

@@ -44,12 +44,12 @@ async Task Test(string name, Func<Task> body)
     catch (Exception error) { failed++; summary.Add((JsonNode)new JsonObject { ["name"] = name, ["status"] = "failed", ["error"] = error.Message }); Console.Error.WriteLine($"FAIL {name}: {error}"); }
     await File.WriteAllTextAsync(Path.Combine(root, "summary.json"), new JsonObject { ["passed"] = passed, ["failed"] = failed, ["cases"] = summary.DeepClone() }.ToJsonString());
 }
-async Task<Run> Play(string name, JsonArray steps, int expected = 0, string policy = "all", JsonObject? functions = null, JsonObject? jitter = null, bool remove = false)
+async Task<Run> Play(string name, JsonArray steps, int expected = 0, string policy = "all", JsonObject? functions = null, JsonObject? jitter = null, bool remove = false, string? url = null)
 {
     var scenario = new JsonObject
     {
         ["version"] = 1, ["name"] = "control-" + name,
-        ["browser"] = new JsonObject { ["initial_url"] = fixture.Url + (remove ? "?mode=remove" : ""),
+        ["browser"] = new JsonObject { ["initial_url"] = url ?? fixture.Url + (remove ? "?mode=remove" : ""),
             ["window"] = new JsonObject { ["foreground"] = false, ["content"] = new JsonObject { ["width"] = 800, ["height"] = 600 } },
             ["display"] = new JsonObject { ["expected_dpr"] = 1, ["browser_zoom"] = 100, ["zoom_check"] = "strict" } },
         ["playback"] = new JsonObject { ["seed"] = "42", ["timeouts"] = new JsonObject { ["action_ms"] = 3000 },
@@ -87,6 +87,19 @@ async Task<Run> Play(string name, JsonArray steps, int expected = 0, string poli
     return new(runDirectory, logs, calls, output);
 }
 
+await Test("CSPを維持したページで単一・複数テンプレート照合と遷移後の再照合が成功する", async () =>
+{
+    JsonObject CspBlocked() => new() { ["do"] = "wait_for", ["state"] = "visible", ["locator_hint"] = new JsonObject { ["role"] = "status", ["name"] = "CSP", ["text"] = "blocked" } };
+    var run = await Play("csp-template", new JsonArray(
+        TemplateClick(), CspBlocked(), Assert("status", "Count", "1"),
+        new JsonObject { ["do"] = "navigate", ["url"] = fixture.CspUrl + "?next=1" },
+        new JsonObject { ["do"] = "wait_for", ["state"] = "complete" },
+        new JsonObject { ["do"] = "for_each_template", ["template"] = T(), ["max_matches"] = 2,
+            ["steps"] = new JsonArray(new JsonObject { ["do"] = "click", ["at"] = new JsonObject { ["x"] = "${match_center_x}", ["y"] = "${match_center_y}" } }) },
+        CspBlocked(), Assert("status", "Count", "2")), url: fixture.CspUrl);
+    Check(run.Steps.Single(step => Text(step, "do") == "for_each_template")["matches"]!.GetValue<int>() == 2,
+        "CSP下で複数の画像が見つかりませんでした");
+});
 await Test("scroll sends real CDP wheel events and changes the fixture scroll position in both directions", async () =>
 {
     JsonObject WaitScroll(string text) => new() { ["do"] = "wait_for", ["state"] = "visible", ["locator_hint"] = new JsonObject { ["role"] = "status", ["name"] = "Scroll", ["text"] = text } };

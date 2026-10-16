@@ -1,3 +1,4 @@
+#requires -Version 7.2
 [CmdletBinding()]
 param(
   [string] $CrerExe = 'dist/win-x64/crer.exe',

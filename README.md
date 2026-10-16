@@ -197,6 +197,7 @@ worker 独自の通信、WebSocket、`data:` / `blob:` URL は保証対象外で
 
 CfT のコンテンツ領域で操作を記録し、直接起動時は PowerShell で `Enter` または `Ctrl+C` を押して停止します。
 `--stop-file` を使う自動化では、指定した stop file の作成で停止します。
+停止時は入力生成を止めて未読イベントを保存するため、停止直前に到着したクリックのupも記録に含まれます。
 較正完了後のクリックは標準出力へ CSS 座標（例: `[crer] click: { x: 493, y: 132 }`）を表示します。
 content bounds を取得できない場合だけ、代わりに物理画面座標を `screen_px` として表示します。
 
@@ -361,6 +362,7 @@ steps:
 `0.8`、`random_inset_px` の既定値は `0` です。`on_missing` は既定の `fail` なら `template` 種別の
 失敗、`skip` ならクリックを行わず正常に次のステップへ進みます。クリック位置は再生 seed で決まるため、
 同じ seed なら同じ位置が選ばれます。テンプレートはクリック可能な領域だけを切り出してください。
+照合は専用CfT内の非表示環境で行うため、対象ページの画像用CSPに影響されません。ページのCSP設定は維持します。
 
 `playback.artifacts.template_screenshots` は探索画像の保存方針です。`all`（既定）は従来どおり探索ごとに
 `template-*.png` を保存します。`failure-only` は照合をインメモリで行い、成功、条件不一致、
@@ -495,6 +497,7 @@ playback:
 
 `do: repeat` の `steps` を `count` 回（0 以上の整数）繰り返します。`count: 0` は子ステップを実行しない
 正常な no-op です。操作の間隔は、各子ステップの `delay_ms` で指定できます。
+空の `steps: []` でも各反復でCtrl+Cやworker timeoutを確認します。
 
 同じ場所を続けてクリックするだけなら、`click.count` に 1 以上の整数を指定できます。省略時は `1` です。
 指定回数のクリックごとに `delay_ms` と全体の `step_delay_ms` を適用するため、次は同じ click を 3 ステップ

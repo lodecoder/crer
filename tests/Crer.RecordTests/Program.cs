@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Crer;
 using Crer.Windows;
@@ -62,6 +63,137 @@ await Test("pre-cancelled recording writes a valid empty raw file and metadata t
     Equal(Metadata(path)["incomplete"], null);
     Equal(fake.StopCalls, 1);
 }));
+await Test("停止要求の直前に届いた mouseup を停止後に保存しクリックを復元する", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    var fake = new FakeRecorder(stop, [Event(2, qpc: 10)], [Event(3, qpc: 11)])
+    {
+        AfterRead = call => { if (call == 1) stop.Cancel(); },
+    };
+    await Recorder.RecordRaw(fake, 42, path, Options() with { Viewport = new(800, 600) }, stop.Token);
+    Equal(Events(path).Count, 2);
+    Equal(Events(path)[1]!["kind"]!.GetValue<uint>(), 3u);
+    Equal(fake.StopCalls, 1);
+    Equal(fake.Calls.IndexOf("stop") < fake.Calls.LastIndexOf("read"), true);
+    Equal(fake.Calls.IndexOf("stop") < fake.Calls.IndexOf("bounds"), true);
+    Equal(Metadata(path)["incomplete"], null);
+    var normalized = Normalize.FromFile(path, new() { Url = "http://127.0.0.1/", Name = "stopped click" });
+    Equal(normalized.Warnings.Count, 0);
+    Equal(normalized.Scenario["steps"]!.AsArray().Count, 1);
+    Equal(Json.Text(normalized.Scenario["steps"]![0]!["do"]), "click");
+}));
+await Test("ブラウザー終了時も複数バッチの未読イベントを全て回収する", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    var fake = new FakeRecorder(stop,
+        Enumerable.Range(0, 256).Select(index => Event(9, 'a', qpc: (ulong)index)).ToArray(),
+        Enumerable.Range(256, 256).Select(index => Event(9, 'b', qpc: (ulong)index)).ToArray(),
+        [Event(9, 'c', qpc: 512)]);
+    await Recorder.RecordRaw(fake, 42, path, Options() with { IsTargetAlive = () => false }, stop.Token);
+    Equal(Events(path).Count, 513);
+    Equal(Events(path)[512]!["data"]!.GetValue<uint>(), (uint)'c');
+    Equal(fake.Calls.IndexOf("stop") < fake.Calls.IndexOf("read"), true);
+    Equal(Metadata(path)["incomplete"], null);
+}));
+await Test("停止後の回収でも較正クリックを除外し後続クリックを保存する", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    var fake = new FakeRecorder(stop, [Event(2), Event(3), Event(2, x: 300), Event(3, x: 300)]);
+    await Recorder.RecordRaw(fake, 42, path, Options() with
+    {
+        Viewport = new(800, 600),
+        ReadViewport = token => { stop.Cancel(); token.ThrowIfCancellationRequested(); return Task.FromResult(new NormalizePoint(800, 600)); },
+        MarkerClick = token =>
+        {
+            Equal(fake.StopCalls, 1);
+            Equal(token.IsCancellationRequested, false);
+            return Task.FromResult<NormalizePoint?>(new(4, 8));
+        },
+    }, stop.Token);
+    Equal(Events(path).Count, 2);
+    Equal(Events(path)[0]!["x"]!.GetValue<int>(), 300);
+    Equal(Metadata(path)["marker_calibration"]!["screenClick"]!["x"]!.GetValue<int>(), 100);
+    Equal(Metadata(path)["incomplete"], null);
+}));
+await Test("停止後の末尾イベントにも直前のviewportを保持し追加照会を行わない", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    var viewportReads = 0;
+    var fake = new FakeRecorder(stop, [Event(9, 'a')], [Event(9, 'b')])
+    {
+        AfterRead = call => { if (call == 1) stop.Cancel(); },
+    };
+    await Recorder.RecordRaw(fake, 42, path, Options() with
+    {
+        Viewport = new(800, 600),
+        ReadViewport = _ => { viewportReads++; return Task.FromResult(new NormalizePoint(780, 590)); },
+    }, stop.Token);
+    Equal(Events(path).Count, 2);
+    Equal(Events(path)[1]!["css_viewport"]!["x"]!.GetValue<double>(), 780d);
+    Equal(viewportReads, 1);
+    Equal(Metadata(path)["css_viewport"]!["x"]!.GetValue<double>(), 800d);
+}));
+await Test("停止後の較正照会が無応答でも共通期限で打ち切り全バッチを回収する", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    var markerCalls = 0;
+    var markerCancelled = false;
+    var fake = new FakeRecorder(stop,
+        Enumerable.Range(0, 256).Select(index => Event(3, qpc: (ulong)index)).ToArray(),
+        [Event(3, qpc: 256)]);
+    var watch = Stopwatch.StartNew();
+    await Reject(() => Recorder.RecordRaw(fake, 42, path, Options() with
+    {
+        IsTargetAlive = () => false,
+        Viewport = new(800, 600),
+        MarkerClick = async token =>
+        {
+            markerCalls++;
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            catch (OperationCanceledException) { markerCancelled = true; throw; }
+            return null;
+        },
+    }, stop.Token).WaitAsync(TimeSpan.FromSeconds(4)), "recording calibration marker was not clicked");
+    Equal(markerCalls, 1);
+    Equal(markerCancelled, true);
+    Equal(fake.ReadCalls, 3);
+    Equal(fake.StopCalls, 1);
+    Equal(watch.Elapsed < TimeSpan.FromSeconds(4), true);
+    Equal(Events(path).Count, 0);
+    Equal(Metadata(path)["incomplete"]!.GetValue<bool>(), true);
+}));
+await Test("停止に失敗し入力生成が続いても回収量を制限しincompleteで終了する", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    stop.Cancel();
+    var fake = new FakeRecorder(stop) { StopStatus = 1460, RepeatAfterStop = true };
+    await Reject(() => Recorder.RecordRaw(fake, 42, path, Options(), stop.Token), "Raw Input stop failed: 1460");
+    Equal(fake.ReadCalls, 32);
+    Equal(Events(path).Count, 8192);
+    Equal(fake.StopCalls, 1);
+    Equal(Metadata(path)["incomplete"]!.GetValue<bool>(), true);
+}));
+await Test("停止APIの例外よりも先に起きた録画エラーを保持し残キューも保存する", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    var fake = new FakeRecorder(stop, [Event(9, 'a')]) { StopError = new IOException("injected stop failure") };
+    await Reject(() => Recorder.RecordRaw(fake, 42, path, Options() with
+    {
+        ReadViewport = _ => throw new CrerException(3, "injected viewport failure"),
+    }, stop.Token), "injected viewport failure");
+    Equal(Events(path).Count, 1);
+    Equal(Metadata(path)["recording_error"]!.GetValue<string>(), "injected viewport failure");
+    Equal(fake.StopCalls, 1);
+}));
+await Test("録画エラーの後にmetadata保存が失敗しても一次例外を保持する", () => Temp(async path =>
+{
+    Directory.CreateDirectory(path + ".meta.json");
+    using var stop = new CancellationTokenSource();
+    var fake = new FakeRecorder(stop, [Event(9, 'a')]) { Running = false, LastError = 111 };
+    await Reject(() => Recorder.RecordRaw(fake, 42, path, Options(), stop.Token), "Raw Input recorder failed: 111");
+    Equal(Events(path).Count, 1);
+    Equal(fake.StopCalls, 1);
+}));
 await Test("recording preserves append behavior without overwriting earlier packets", () => Temp(async path =>
 {
     const string first = "{\"qpc\":\"0\",\"x\":0,\"y\":0,\"kind\":1,\"data\":0}\n";
@@ -105,6 +237,7 @@ await Test("unclicked marker fails and stops the hook", () => Temp(async path =>
         Viewport = new(800, 600), MarkerClick = _ => Task.FromResult<NormalizePoint?>(null),
     }, stop.Token), "recording calibration marker was not clicked");
     Equal(Events(path).Count, 0);
+    Equal(Metadata(path)["incomplete"]!.GetValue<bool>(), true);
     Equal(fake.StopCalls, 1);
 }));
 await Test("CDP marker read failure preserves calibration error and hook cleanup", () => Temp(async path =>
@@ -143,11 +276,12 @@ await Test("click without calibration reports screen coordinates", () => Temp(as
 await Test("overflow writes incomplete sidecar and retains primary failure when Stop also fails", () => Temp(async path =>
 {
     using var stop = new CancellationTokenSource();
-    var fake = new FakeRecorder(stop) { Running = false, LastError = 111, StopStatus = 111 };
+    var fake = new FakeRecorder(stop, [Event(9, 'a')]) { Running = false, LastError = 111, StopStatus = 111 };
     await Reject(() => Recorder.RecordRaw(fake, 42, path, Options(), stop.Token), "Raw Input recorder failed: 111");
     Equal(Metadata(path)["incomplete"]!.GetValue<bool>(), true);
     Equal(Metadata(path)["recording_error"]!.GetValue<string>(), "Raw Input recorder failed: 111");
     Equal(fake.StopCalls, 1);
+    Equal(Events(path).Count, 1);
 }));
 await Test("unexpected zero-status hook termination is a failure", () => Temp(async path =>
 {
@@ -277,17 +411,37 @@ sealed class FakeRecorder(CancellationTokenSource stop, params InputEvent[][] ba
     public bool IsRunning => Running;
     public int LastError { get; init; }
     public int StopStatus { get; init; }
+    public Exception? StopError { get; init; }
+    public bool RepeatAfterStop { get; init; }
+    public Action<int>? AfterRead { get; init; }
+    public List<string> Calls { get; } = [];
+    public int ReadCalls { get; private set; }
     public int StartCalls { get; private set; }
     public uint StartPid { get; private set; }
     public int StopCalls { get; private set; }
     public ContentBounds Bounds { get; init; } = new(0, new() { X = 0, Y = 0, Width = 800, Height = 600 });
     public int Start(uint pid) { StartCalls++; StartPid = pid; return StartStatus; }
-    public int Stop() { StopCalls++; return StopStatus; }
+    public int Stop()
+    {
+        Calls.Add("stop"); StopCalls++;
+        if (StopError is not null) throw StopError;
+        return StopStatus;
+    }
     public int Read(Span<InputEvent> target)
     {
-        if (queue.TryDequeue(out var events)) { events.CopyTo(target); return events.Length; }
+        Calls.Add("read"); ReadCalls++;
+        if (ReadCalls > 64) throw new Exception("停止後の回収が完了しません");
+        if (queue.TryDequeue(out var events))
+        {
+            events.CopyTo(target); AfterRead?.Invoke(ReadCalls); return events.Length;
+        }
+        if (RepeatAfterStop && StopCalls > 0)
+        {
+            target.Fill(new() { Kind = 1, Qpc = (ulong)ReadCalls });
+            return target.Length;
+        }
         stop.Cancel();
         return 0;
     }
-    public ContentBounds GetContentRect() => Bounds;
+    public ContentBounds GetContentRect() { Calls.Add("bounds"); return Bounds; }
 }

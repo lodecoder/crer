@@ -34,6 +34,7 @@ public sealed partial class Playback
     private string targetId = "";
     private string endpoint = "";
     private UrlBlocker? blocker;
+    private TemplateMatcher? templates;
     private WindowController? windows;
     private readonly Stopwatch startupWatch = new();
     private JsonObject startupDiagnostic = new();
@@ -522,6 +523,11 @@ public sealed partial class Playback
             {
                 try { await blocker.DisposeAsync(); } catch (Exception e) { cleanupErrors.Add($"URL blocker cleanup failed: {e.Message}"); }
                 blocker = null;
+            }
+            if (templates != null)
+            {
+                try { await templates.DisposeAsync(); } catch (Exception e) { cleanupErrors.Add($"template matcher cleanup failed: {e.Message}"); }
+                templates = null;
             }
             if (cdp != null)
             {

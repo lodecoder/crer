@@ -30,8 +30,17 @@ public static partial class Recorder
     public static async Task RecordRaw(IInputRecorder native, uint pid, string output, RecordRawOptions options, CancellationToken token = default)
     {
         var started = false;
+        var stopAttempted = false;
+        var stopReturned = false;
         Exception? primary = null;
         var stopStatus = 0;
+        void StopCapture()
+        {
+            if (!started || stopAttempted) return;
+            stopAttempted = true;
+            stopStatus = native.Stop();
+            stopReturned = true;
+        }
         try
         {
             var frequency = native.QpcFrequencyHz.ToString(CultureInfo.InvariantCulture);
@@ -84,86 +93,126 @@ public static partial class Recorder
                 return bounds;
             }
 
+            async Task SaveEvents(StreamWriter writer, InputEvent[] events, int count, CancellationToken eventToken)
+            {
+                for (var index = 0; index < count; index++)
+                {
+                    var input = events[index];
+                    var item = new JsonObject
+                    {
+                        ["qpc"] = input.Qpc.ToString(CultureInfo.InvariantCulture), ["x"] = input.X, ["y"] = input.Y,
+                        ["kind"] = input.Kind, ["data"] = input.Data,
+                    };
+                    if (activeViewport is not null && options.Viewport is not null && activeViewport != options.Viewport)
+                        item["css_viewport"] = Point(activeViewport);
+                    if (calibration is null && options.MarkerClick is not null && options.Viewport is not null)
+                    {
+                        if (eventToken.IsCancellationRequested) continue;
+                        try
+                        {
+                            if (input.Kind == 3)
+                            {
+                                await Task.Delay(20, eventToken);
+                                if (await options.MarkerClick(eventToken) is { } css)
+                                {
+                                    calibration = new JsonObject { ["screenClick"] = new JsonObject { ["x"] = input.X, ["y"] = input.Y }, ["cssPoint"] = Point(css) };
+                                    options.Error.WriteLine("Calibration complete. Recording browser interactions now.");
+                                }
+                            }
+                        }
+                        catch (Exception error) when (error is CrerException or OperationCanceledException or HttpRequestException)
+                        { /* 較正できなかった場合は、終了時に明示的な較正エラーを返す。 */ }
+                        continue;
+                    }
+                    if (input.Kind == 2) { mouseDown = new(input.X, input.Y); mouseMoved = false; }
+                    else if (input.Kind == 1 && mouseDown is not null && (input.X != mouseDown.X || input.Y != mouseDown.Y)) mouseMoved = true;
+                    else if (input.Kind == 3)
+                    {
+                        if (mouseDown is not null && !mouseMoved) LogClick(new(input.X, input.Y));
+                        mouseDown = null;
+                        mouseMoved = false;
+                    }
+                    await writer.WriteLineAsync(item.ToJsonString());
+                }
+            }
+
             options.Error.WriteLine("Click the 64x64 magenta marker at the page's upper-left corner to calibrate and begin recording.");
             Exception? recordingError = null, metadataError = null;
             var finalBounds = new ContentBounds(0, default);
-            // The established format appends raw input, including when a caller deliberately resumes a file.
-            await using var stream = new FileStream(output, FileMode.Append, FileAccess.Write, FileShare.Read);
-            await using var writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n" };
+            var rawOpened = false;
             try
             {
+                // 再開を意図した呼び出しも含め、既存の追記形式を維持する。
+                await using var stream = new FileStream(output, FileMode.Append, FileAccess.Write, FileShare.Read);
+                await using var writer = new StreamWriter(stream, new UTF8Encoding(false)) { NewLine = "\n" };
+                rawOpened = true;
                 var events = new InputEvent[256];
-                while (!token.IsCancellationRequested)
+                try
                 {
-                    if (options.IsTargetAlive?.Invoke() == false) break;
-                    if (!native.IsRunning)
+                    while (!token.IsCancellationRequested)
                     {
-                        var status = native.LastError;
-                        throw new CrerException(3, status == 0 ? "Raw Input recorder stopped unexpectedly" : $"Raw Input recorder failed: {status}");
-                    }
-                    if (options.ReadViewport is not null && Environment.TickCount64 >= nextViewportCheck)
-                    {
-                        NormalizePoint next;
-                        try { next = await options.ReadViewport(token); }
-                        catch (CrerException error) when (error.Code == 3 && options.IsTargetAlive?.Invoke() == false)
+                        if (options.IsTargetAlive?.Invoke() == false) break;
+                        if (!native.IsRunning)
                         {
-                            // The user may close CfT after the loop's liveness check but before
-                            // this CDP read completes. A confirmed process exit is a normal stop.
-                            break;
+                            var status = native.LastError;
+                            throw new CrerException(3, status == 0 ? "Raw Input recorder stopped unexpectedly" : $"Raw Input recorder failed: {status}");
                         }
-                        if (activeViewport is not null && next != activeViewport)
-                            options.Error.WriteLine($"Note: recording viewport changed from {activeViewport.X}x{activeViewport.Y} to {next.X}x{next.Y}; subsequent input will use the new coordinate space.");
-                        activeViewport = next;
-                        nextViewportCheck = Environment.TickCount64 + 250;
-                    }
-                    var count = native.Read(events);
-                    for (var index = 0; index < count; index++)
-                    {
-                        var input = events[index];
-                        var item = new JsonObject
+                        if (options.ReadViewport is not null && Environment.TickCount64 >= nextViewportCheck)
                         {
-                            ["qpc"] = input.Qpc.ToString(CultureInfo.InvariantCulture), ["x"] = input.X, ["y"] = input.Y,
-                            ["kind"] = input.Kind, ["data"] = input.Data,
-                        };
-                        if (activeViewport is not null && options.Viewport is not null && activeViewport != options.Viewport)
-                            item["css_viewport"] = Point(activeViewport);
-                        if (calibration is null && options.MarkerClick is not null && options.Viewport is not null)
-                        {
-                            try
+                            NormalizePoint next;
+                            try { next = await options.ReadViewport(token); }
+                            catch (CrerException error) when (error.Code == 3 && options.IsTargetAlive?.Invoke() == false)
                             {
-                                if (input.Kind == 3)
-                                {
-                                    await Task.Delay(20, token);
-                                    if (await options.MarkerClick(token) is { } css)
-                                    {
-                                        calibration = new JsonObject { ["screenClick"] = new JsonObject { ["x"] = input.X, ["y"] = input.Y }, ["cssPoint"] = Point(css) };
-                                        options.Error.WriteLine("Calibration complete. Recording browser interactions now.");
-                                    }
-                                }
+                                // 生存確認の直後に利用者が CfT を閉じた場合も正常停止として扱う。
+                                break;
                             }
-                            catch (Exception error) when (error is CrerException or OperationCanceledException or HttpRequestException)
-                            { /* Explicit coordinate normalization remains available if CDP cannot read the marker. */ }
-                            continue;
+                            if (activeViewport is not null && next != activeViewport)
+                                options.Error.WriteLine($"Note: recording viewport changed from {activeViewport.X}x{activeViewport.Y} to {next.X}x{next.Y}; subsequent input will use the new coordinate space.");
+                            activeViewport = next;
+                            nextViewportCheck = Environment.TickCount64 + 250;
                         }
-                        if (input.Kind == 2) { mouseDown = new(input.X, input.Y); mouseMoved = false; }
-                        else if (input.Kind == 1 && mouseDown is not null && (input.X != mouseDown.X || input.Y != mouseDown.Y)) mouseMoved = true;
-                        else if (input.Kind == 3)
-                        {
-                            if (mouseDown is not null && !mouseMoved) LogClick(new(input.X, input.Y));
-                            mouseDown = null;
-                            mouseMoved = false;
-                        }
-                        await writer.WriteLineAsync(item.ToJsonString());
+                        var count = native.Read(events);
+                        await SaveEvents(writer, events, count, token);
+                        try { await Task.Delay(options.PollInterval, token); }
+                        catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                     }
-                    try { await Task.Delay(options.PollInterval, token); }
-                    catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+                catch (Exception error) { recordingError = error; }
+                finally
+                {
+                    // 入力生成を先に止め、最後の Read と停止要求の間に届いたイベントも保存する。
+                    try { StopCapture(); }
+                    catch (Exception error) { recordingError ??= error; }
+                }
+                if (stopReturned && stopStatus != 0)
+                    recordingError ??= new CrerException(3, $"Raw Input stop failed: {stopStatus}");
+                try
+                {
+                    // 停止失敗時は生成継続の可能性があるため、キュー容量分までの回収に限定する。
+                    var remaining = stopReturned && stopStatus == 0 ? int.MaxValue : 8192;
+                    // 較正照会の期限は全バッチで共有し、期限切れでも較正済みの raw 保存は続ける。
+                    using var calibrationDeadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(1500));
+                    while (remaining > 0)
+                    {
+                        var count = native.Read(events.AsSpan(0, Math.Min(events.Length, remaining)));
+                        if (count == 0) break;
+                        await SaveEvents(writer, events, count, calibrationDeadline.Token);
+                        remaining -= count;
+                    }
+                }
+                catch (Exception error) { recordingError ??= error; }
             }
-            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-            catch (Exception error) { recordingError = error; throw; }
+            catch (Exception error) { recordingError ??= error; }
             finally
             {
-                await writer.FlushAsync(CancellationToken.None);
+                try { StopCapture(); }
+                catch (Exception error) { recordingError ??= error; }
+            }
+            if (options.MarkerClick is not null && calibration is null)
+                recordingError ??= new CrerException(3, "recording calibration marker was not clicked");
+            if (rawOpened)
+            {
                 try { finalBounds = await WriteMetadata(recordingError); }
                 catch (Exception error)
                 {
@@ -171,24 +220,18 @@ public static partial class Recorder
                     if (recordingError is not null) options.Error.WriteLine($"Failed to write incomplete recording metadata: {error.Message}");
                 }
             }
+            if (recordingError is not null) ExceptionDispatchInfo.Capture(recordingError).Throw();
             if (metadataError is not null) ExceptionDispatchInfo.Capture(metadataError).Throw();
-            if (options.MarkerClick is not null && calibration is null)
-                throw new CrerException(3, "recording calibration marker was not clicked");
             if (finalBounds.Status != 0 || finalBounds.Rect.Width < 32 || finalBounds.Rect.Height < 32)
                 options.Error.WriteLine($"Warning: CfT content bounds were unavailable (Win32 status {finalBounds.Status}); normalize may require explicit coordinate options.");
         }
         catch (Exception error) { primary = error; }
-        finally { if (started) stopStatus = native.Stop(); }
-        if (primary is not null) ExceptionDispatchInfo.Capture(primary).Throw();
-        if (stopStatus != 0)
+        finally
         {
-            var error = $"Raw Input stop failed: {stopStatus}";
-            var metadata = Normalize.ReadSidecar(output) ?? new JsonObject();
-            metadata["incomplete"] = true;
-            metadata["recording_error"] = error;
-            await File.WriteAllTextAsync(output + ".meta.json", metadata.ToJsonString(MetadataFormat) + "\n", new UTF8Encoding(false));
-            throw new CrerException(3, error);
+            try { StopCapture(); }
+            catch (Exception error) { primary ??= error; }
         }
+        if (primary is not null) ExceptionDispatchInfo.Capture(primary).Throw();
     }
 
     private static JsonObject Point(NormalizePoint point) => new() { ["x"] = point.X, ["y"] = point.Y };

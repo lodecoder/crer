@@ -32,26 +32,26 @@ public static class Template
             match.Y + safeInset + Math.Floor(random() * Math.Max(1, match.Height - safeInset * 2)));
     }
 
-    public static async Task<TemplateResult> MatchAsync(InputCall call, JsonObject options, string? directory)
+    public static async Task<TemplateResult> MatchAsync(InputCall call, JsonObject options, string? directory, CancellationToken token = default)
     {
-        var (value, screenshot) = await EvaluateAsync(call, options, directory, false, 0, 1);
+        var (value, screenshot) = await EvaluateAsync(call, options, directory, false, 0, 1, token);
         var match = TemplateMatch.From(value) ?? throw new TemplateMatchException("template match returned an invalid result", screenshot);
         return new(match, screenshot);
     }
 
-    public static async Task<TemplateMatchesResult> MatchManyAsync(InputCall call, JsonObject options, string? directory, double threshold, double maxMatches)
+    public static async Task<TemplateMatchesResult> MatchManyAsync(InputCall call, JsonObject options, string? directory, double threshold, double maxMatches, CancellationToken token = default)
     {
-        var (value, screenshot) = await EvaluateAsync(call, options, directory, true, threshold, maxMatches);
+        var (value, screenshot) = await EvaluateAsync(call, options, directory, true, threshold, maxMatches, token);
         if (value is not JsonArray array) throw new TemplateMatchException("template matching returned an invalid result", screenshot);
         var matches = array.Select(TemplateMatch.From).ToArray();
         if (matches.Any(match => match == null)) throw new TemplateMatchException("template matching returned an invalid result", screenshot);
         return new(matches.Select(match => match!).ToArray(), screenshot);
     }
 
-    private static async Task<(JsonNode? Value, string Screenshot)> EvaluateAsync(InputCall call, JsonObject options, string? directory, bool many, double threshold, double maxMatches)
+    private static async Task<(JsonNode? Value, string Screenshot)> EvaluateAsync(InputCall call, JsonObject options, string? directory, bool many, double threshold, double maxMatches, CancellationToken token)
     {
         var capture = call("Page.captureScreenshot", new() { ["format"] = "png" });
-        var image = File.ReadAllBytesAsync(PathFor(directory, options["path"]!.GetValue<string>()));
+        var image = File.ReadAllBytesAsync(PathFor(directory, options["path"]!.GetValue<string>()), token);
         await Task.WhenAll(capture, image);
         var screenshot = (await capture)["data"]!.GetValue<string>();
         var sourceUrl = JsonValue.Create("data:image/png;base64," + Convert.ToBase64String(await image))!.ToJsonString();

@@ -98,6 +98,21 @@ for (var session = 0; session < 2; session++)
     Equal(0, input.Stop(), "stop");
 }
 
+Equal(0, input.Start((uint)Environment.ProcessId), "末尾回収の記録開始");
+await Task.Delay(25);
+Array.Clear(packet);
+packet[4] = 1;
+InputBridge.TestMousePacket(packet, 100, 200);
+packet[4] = 2;
+InputBridge.TestMousePacket(packet, 100, 200);
+Equal(0, input.Stop(), "未読入力を残した記録停止");
+var stoppedEvents = new InputEvent[8];
+Equal(2, input.Read(stoppedEvents), "停止後も未読クリックを回収できる");
+Equal(2, (int)stoppedEvents[0].Kind, "停止後のmousedown");
+Equal(3, (int)stoppedEvents[1].Kind, "停止後のmouseup");
+Equal(0, input.Read(stoppedEvents), "停止後のキューが空になる");
+Equal(1168, input.GetContentRect().Status, "停止後もbounds取得APIを使用できる");
+
 Equal(0, input.Start((uint)Environment.ProcessId), "overflow start");
 await Task.Delay(25);
 for (var index = 0; index <= 8192; index++) InputBridge.TestPush();

@@ -93,6 +93,11 @@ functions / params / args / call の schema と実行系を移植している。
 乱数は splitmix64 / xoshiro256**。実効 seed は uint64 の十進文字列として保存する。
 操作は対象 page session の CDP Input だけで送り、DOM の click・値代入や物理入力注入は使わない。
 曖昧な down 応答も保守的に解放し、解放できなければ環境エラーとして停止する。
+空の `repeat.steps` でも各反復で利用者・workerの取消しを確認する。
+`wait_for` の `action_ms` は条件のCDP照会と再照会待ちを含む期限であり、期限後の成立を成功にしない。
+期限超過は `timeout` 方針に従い、利用者・workerからの取消しとCDP接続断は区別する。
+templateのデコードと照合は、専用CfT内に遅延作成する非表示環境で実行する。対象ページのCSPを維持し、
+ページ遷移や同じbrowser sessionの後続探索で照合環境を再利用して、終了時に閉じる。
 
 plan は共通の同時実行上限、profile ごとの排他、協調停止を持つ。
 same-profile reuse では URL・window・display・遮断を再適用し、plan の最後に全 CfT を閉じる。
@@ -127,6 +132,9 @@ occluded renderer のリサイズが遅延した場合は、読み取り専用�
 
 record は `Crer.Windows` の C# API を直接呼び、Raw Input / Low Level Hook で物理操作を観測する。
 marker の手動クリックで較正し、Enter / Ctrl+C / duration / stop-file / CfT 終了で停止する。
+停止時は入力生成を止めた後に未読キューを回収し、最後の取得以降に到着したイベントもrawへ保存する。
+停止後の較正照会には全バッチ共通の1.5秒期限を設け、較正済みイベントの保存はこの期限で中断しない。
+停止失敗時は回収をキュー容量の8192件までに制限し、sidecarに `incomplete` と一次エラーを残す。
 古い sidecar、requested_content 由来の DPI scale、event ごとの viewport、QPC 間隔、
 layout 由来の文字、Space の既定操作を保持する。IME 確定文字列は元から対象外。
 

@@ -22,17 +22,13 @@ public sealed partial class Playback
         var globalJitter = JitterConfig.From(scenario.Playback["jitter"]);
         var execution = new ExecutionContext();
         InputCall call = (method, parameters) => Call(method, parameters);
+        TemplateMatcher Matcher() => templates ??= new TemplateMatcher(cdp!, session!);
         var adapter = new AtomicActionAdapter
         {
             Call = call, CleanupCall = (method, parameters) => Call(method, parameters, cancellation: CancellationToken.None, timeout: 1500),
             Viewport = new(width, height), Sleep = Delay, Capture = name => Capture(name, token), Log = logger.Log,
             AssertState = AssertActionState,
-            WaitFor = async (step, limit) =>
-            {
-                var watch = Stopwatch.StartNew();
-                while (watch.Elapsed.TotalMilliseconds < limit) { token.ThrowIfCancellationRequested(); if (await WaitCondition(step)) return; await Delay(100); }
-                throw new InvalidOperationException("wait_for timed out");
-            }
+            WaitFor = WaitForCondition
         };
         var executor = new StepExecutor<CachedTemplate>(execution, async (frame, children) =>
         {
@@ -89,7 +85,11 @@ public sealed partial class Playback
                         var count = ExpandedInteger(step["count"], 0, "repeat count must be a non-negative integer after argument expansion");
                         var record = Record("ok"); record["count"] = count; await Write(record);
                         for (double iteration = 0; iteration < count && !execution.Stopped; iteration++)
+                        {
+                            // 子が空、または同期的に完了する場合も worker・利用者の取消しを確認する。
+                            token.ThrowIfCancellationRequested();
                             await children(Steps(step, "steps"), $"{index}.{iteration.ToString(CultureInfo.InvariantCulture)}");
+                        }
                         succeeded = true; break;
                     }
                     case "repeat_until":
@@ -103,7 +103,7 @@ public sealed partial class Playback
                         while (true)
                         {
                             token.ThrowIfCancellationRequested();
-                            var found = await Template.MatchAsync(call, template, templateDirectory); match = found.Match;
+                            var found = await Matcher().MatchAsync(template, templateDirectory, token); match = found.Match;
                             await TemplateImage($"template-{index}.attempt-{attempts.ToString(CultureInfo.InvariantCulture)}", found.Screenshot);
                             logger.Log($"template: {path}, similarity: {match.Similarity:F4}, threshold: {threshold.ToString("R", CultureInfo.InvariantCulture)}");
                             var visible = match.Similarity >= threshold;
@@ -133,7 +133,7 @@ public sealed partial class Playback
                         var template = step["template"]!.AsObject(); var path = Json.Text(template["path"]);
                         var threshold = ActionNumber.Read(template["min_similarity"], ActionNumber.Read(defaults?["min_similarity"], .8));
                         var maximum = ExpandedInteger(step["max_matches"], 1, "for_each_template max_matches must be an integer from 1 through 100 after argument expansion", 100);
-                        var found = await Template.MatchManyAsync(call, template, templateDirectory, threshold, maximum);
+                        var found = await Matcher().MatchManyAsync(template, templateDirectory, threshold, maximum, token);
                         await TemplateImage($"template-{index}", found.Screenshot);
                         logger.Log($"template: {path}, matches: {found.Matches.Count}, threshold: {threshold.ToString("R", CultureInfo.InvariantCulture)}");
                         if (found.Matches.Count == 0)
@@ -179,7 +179,7 @@ public sealed partial class Playback
                             var path = Json.Text(template["path"]);
                             var threshold = ActionNumber.Read(template["min_similarity"], ActionNumber.Read(defaults?["min_similarity"], .8));
                             var reused = frame.CachedTemplate is { } cache && cache.Path == path && cache.Threshold == threshold;
-                            var found = reused ? new TemplateResult(frame.CachedTemplate!.Match, frame.CachedTemplate.Screenshot) : await Template.MatchAsync(call, template, templateDirectory);
+                            var found = reused ? new TemplateResult(frame.CachedTemplate!.Match, frame.CachedTemplate.Screenshot) : await Matcher().MatchAsync(template, templateDirectory, token);
                             match = found.Match;
                             await TemplateImage($"template-{index}", found.Screenshot);
                             logger.Log($"template: {path}, similarity: {match.Similarity:F4}, threshold: {threshold.ToString("R", CultureInfo.InvariantCulture)}{(reused ? " (reused)" : "")}");
@@ -311,7 +311,7 @@ public sealed partial class Playback
         public string ErrorName { get; } = name;
     }
 
-    private async Task<JsonObject> ReadActionState(JsonObject step)
+    private async Task<JsonObject> ReadActionState(JsonObject step, CancellationToken? cancellation = null)
     {
         var hint = step["locator_hint"]?.ToJsonString() ?? "{}";
         var url = step["url"]?.ToJsonString() ?? "null";
@@ -339,7 +339,7 @@ public sealed partial class Playback
           return { url: location.href, state: document.readyState, found, urlMatches };
         })()
         """;
-        var state = (await Evaluate(expression))?.AsObject() ?? new();
+        var state = (await Evaluate(expression, cancellation))?.AsObject() ?? new();
         if (state["urlError"] != null) throw new JavaScriptActionException(Json.Text(state["urlErrorName"], "SyntaxError"), Json.Text(state["urlError"]));
         return state;
     }
@@ -354,9 +354,43 @@ public sealed partial class Playback
         if (state["found"]?.GetValue<bool>() != true) throw new InvalidOperationException("assert locator failed");
     }
 
-    private async Task<bool> WaitCondition(JsonObject step)
+    private async Task WaitForCondition(JsonObject step, double limit)
     {
-        var state = await ReadActionState(step);
+        var watch = Stopwatch.StartNew();
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(token);
+        try
+        {
+            while (watch.Elapsed.TotalMilliseconds < limit)
+            {
+                waiting.Token.ThrowIfCancellationRequested();
+                var remaining = limit - watch.Elapsed.TotalMilliseconds;
+                if (remaining <= 0) break;
+                // 大きな有限数も受理し、残り期限がタイマー上限内に入った時点で有効にする。
+                if (remaining <= uint.MaxValue - 1d) waiting.CancelAfter(TimeSpan.FromMilliseconds(remaining));
+                var matched = await WaitCondition(step, waiting.Token);
+                waiting.Token.ThrowIfCancellationRequested();
+                remaining = limit - watch.Elapsed.TotalMilliseconds;
+                // タイマーと応答が競合しても、期限後の成立を成功として受け入れない。
+                if (remaining <= 0) break;
+                if (matched) return;
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(100, remaining)), waiting.Token);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // linked token ではなく、元の利用者・worker の取消し理由を優先する。
+            token.ThrowIfCancellationRequested();
+            if (waiting.IsCancellationRequested) throw new InvalidOperationException("wait_for timed out");
+            throw;
+        }
+        // 利用者・worker の取消しは、ステップの待機期限とは別の理由として伝播する。
+        token.ThrowIfCancellationRequested();
+        throw new InvalidOperationException("wait_for timed out");
+    }
+
+    private async Task<bool> WaitCondition(JsonObject step, CancellationToken cancellation)
+    {
+        var state = await ReadActionState(step, cancellation);
         var desired = Json.Text(step["state"]);
         var stateMatches = desired is "visible" or "" || Json.Text(state["state"]) == "complete";
         if (desired == "network_idle") lock (networkLock)

@@ -5,9 +5,7 @@
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="..\..\src\Crer.Cli\Template.cs" Link="Template.cs" />
-    <Compile Include="..\..\src\Crer.Cli\Prng.cs" Link="Prng.cs" />
-    <Compile Include="..\..\src\Crer.Cli\InputGuard.cs" Link="InputGuard.cs" />
+    <ProjectReference Include="..\..\src\Crer.Cli\Crer.Cli.csproj" />
     <None Update="baseline-template-vectors.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

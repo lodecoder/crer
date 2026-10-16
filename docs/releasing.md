@@ -5,16 +5,23 @@ ARM64 は今回の対象外。
 
 ## 配布物を作る
 
-Windows PowerShell 5.1 または PowerShell 7 で、リポジトリルートから実行する。
+リリースのビルド・fixture検証は **PowerShell 7.2 以降**で、リポジトリルートから実行する。
+Windows PowerShell 5.1 では、fixtureスクリプトは実行開始時に必要なバージョンを表示して停止する。
+配布物のインストール・更新・削除と `package-release.ps1` は、引き続き Windows PowerShell 5.1 に対応する。
 ビルドには .NET 10 SDK、MSVC x64 build tools、Windows SDK が必要。
 
 ```powershell
 .\scripts\verify.ps1
+.\scripts\test-fixture-input.ps1
 .\scripts\build-release.ps1
 .\scripts\test-release.ps1 -Chrome $env:CRER_CHROME
 $tag = Read-Host 'GitHub Release tag'
 .\scripts\package-release.ps1 -Version $tag
 ```
+
+8080以外の空きポートを使う場合は `test-release.ps1 -Port 18080` を指定する。
+play・plan・session reuse の各検証は同じportを使い、元のfixture YAMLを変更しない。
+入力コピーと相対パスの扱いは [実機受入の手順](manual-test.md) を参照する。
 
 `package-release.ps1` は既存の `dist/win-x64` を再ビルドせず、次を `dist/releases` に生成する。
 同名ファイルがあると拒否するので、再作成時は `-OutputDirectory 'dist/releases/candidate-2'` のように別フォルダを使う。

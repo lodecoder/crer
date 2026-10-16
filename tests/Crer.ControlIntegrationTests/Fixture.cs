@@ -13,11 +13,14 @@ internal sealed class Fixture : IAsyncDisposable
     private readonly ConcurrentDictionary<long, Task> pending = new();
     private long sequence;
     private readonly byte[] html;
+    private readonly byte[] cspHtml, pattern;
     public int Port { get; }
     public string Url => $"http://127.0.0.1:{Port}/index.html";
+    public string CspUrl => $"http://127.0.0.1:{Port}/csp.html";
 
     public Fixture(byte[] pattern)
     {
+        this.pattern = pattern;
         html = Encoding.UTF8.GetBytes("""
         <!doctype html><html><head><meta charset="utf-8"><style>
         html,body{margin:0;width:100%;height:100%;overflow:hidden;background:rgb(100,178,217);font:14px Arial}
@@ -51,6 +54,21 @@ internal sealed class Fixture : IAsyncDisposable
         document.addEventListener('mouseup',event=>{if(dragging){document.getElementById('drop').textContent=event.clientX+','+event.clientY;dragging=false;}});
         </script></body></html>
         """.Replace("PATTERN", "data:image/png;base64," + Convert.ToBase64String(pattern), StringComparison.Ordinal));
+        // ページ内の画像は同一originから読み込み、照合用のdata URLだけをCSPで拒否する。
+        cspHtml = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(html)
+            .Replace("data:image/png;base64," + Convert.ToBase64String(pattern), "/pattern.png", StringComparison.Ordinal)
+            .Replace("</body>", """
+            <output role="status" aria-label="CSP" id="csp">pending</output>
+            <script>
+            function checkCsp() {
+              const status=document.getElementById('csp');status.textContent='pending';
+              const probe=new Image();probe.onload=()=>status.textContent='bypassed';probe.onerror=()=>status.textContent='blocked';
+              probe.src='data:image/png;base64,PATTERN';
+            }
+            document.querySelectorAll('.pattern').forEach(image=>image.addEventListener('click',checkCsp));
+            checkCsp();
+            </script></body>
+            """.Replace("PATTERN", Convert.ToBase64String(pattern), StringComparison.Ordinal), StringComparison.Ordinal));
         listener.Start(); Port = ((IPEndPoint)listener.LocalEndpoint).Port;
         serving = Serve();
     }
@@ -87,9 +105,13 @@ internal sealed class Fixture : IAsyncDisposable
                     if (header.Count >= 4 && header[^4] == 13 && header[^3] == 10 && header[^2] == 13 && header[^1] == 10) break;
                 }
                 var line = Encoding.ASCII.GetString(header.ToArray()).Split("\r\n")[0];
-                var ok = line.StartsWith("GET /index.html", StringComparison.Ordinal) || line.StartsWith("GET / ", StringComparison.Ordinal);
-                var content = ok ? html : Encoding.UTF8.GetBytes("Not found");
-                var response = Encoding.ASCII.GetBytes($"HTTP/1.1 {(ok ? "200 OK" : "404 Not Found")}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {content.Length}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+                var csp = line.StartsWith("GET /csp.html", StringComparison.Ordinal);
+                var image = line.StartsWith("GET /pattern.png ", StringComparison.Ordinal);
+                var ok = csp || image || line.StartsWith("GET /index.html", StringComparison.Ordinal) || line.StartsWith("GET / ", StringComparison.Ordinal);
+                var content = image ? pattern : csp ? cspHtml : ok ? html : Encoding.UTF8.GetBytes("Not found");
+                var security = csp ? "Content-Security-Policy: img-src 'self'\r\n" : "";
+                var type = image ? "image/png" : "text/html; charset=utf-8";
+                var response = Encoding.ASCII.GetBytes($"HTTP/1.1 {(ok ? "200 OK" : "404 Not Found")}\r\nContent-Type: {type}\r\n{security}Content-Length: {content.Length}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
                 await stream.WriteAsync(response, deadline.Token); await stream.WriteAsync(content, deadline.Token);
             }
             catch (Exception error) when (error is IOException or OperationCanceledException or SocketException) { }

@@ -3,10 +3,14 @@ using System.Text.Json.Nodes;
 
 namespace Crer;
 
-public interface IUrlBlockerTransport
+public interface ICdpTransport
+{
+    Task<JsonObject> Call(string method, JsonObject? parameters = null, string? session = null, CancellationToken token = default, int timeoutMs = 10000);
+}
+
+public interface IUrlBlockerTransport : ICdpTransport
 {
     event Action<string, JsonObject, string?>? Event;
-    Task<JsonObject> Call(string method, JsonObject? parameters = null, string? session = null, CancellationToken token = default, int timeoutMs = 10000);
     void Abort(Exception error);
 }
 
