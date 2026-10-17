@@ -1,11 +1,35 @@
 [mcp_servers.git]
 enabled = true
-command = "C:/Users/a5/.local/bin/uvx.exe"
+command = "pwsh"
 args = [
-  "--python", "3.12",
-  "--from", "mcp-server-git==2026.8.18",
-  "mcp-server-git",
-  "--repository", "D:/devaid/crer"
+  "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+  '''
+$ErrorActionPreference = 'Stop'
+$utf8 = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+
+$repoRoot = & git rev-parse --show-toplevel
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+$originUrl = & git -C $repoRoot remote get-url origin
+if ($LASTEXITCODE -ne 0) {
+    exit $LASTEXITCODE
+}
+
+$expectedOrigin = 'https://github.com/lodecoder/crer.git'
+if ($originUrl -cne $expectedOrigin) {
+    [Console]::Error.WriteLine("Git MCP を起動しません: origin が $expectedOrigin ではありません。")
+    exit 1
+}
+
+Set-Location -LiteralPath $repoRoot
+& uvx --python 3.12 --from mcp-server-git==2026.8.18 mcp-server-git --repository $repoRoot
+exit $LASTEXITCODE
+'''
 ]
 startup_timeout_sec = 60
 enabled_tools = [
