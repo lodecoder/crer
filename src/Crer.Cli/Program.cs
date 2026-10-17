@@ -1,5 +1,9 @@
 using System.Globalization;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Unicode;
 
 namespace Crer;
 
@@ -12,6 +16,8 @@ public static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        // リダイレクト時も日本語を含むログと結果JSONをUTF-8で出力する。
+        Console.OutputEncoding = new UTF8Encoding(false);
         using var cancellation = new CancellationTokenSource();
         ConsoleCancelEventHandler handler = (_, e) => { e.Cancel = true; cancellation.Cancel(); };
         Console.CancelKeyPress += handler;
@@ -73,7 +79,8 @@ public static class Program
 
 public static class Json
 {
-    public static readonly System.Text.Json.JsonSerializerOptions Indented = new() { WriteIndented = true, TypeInfoResolver = JsonContext.Default };
+    public static readonly JsonSerializerOptions Compact = new() { Encoder = JavaScriptEncoder.Create(UnicodeRanges.All), TypeInfoResolver = JsonContext.Default };
+    public static readonly JsonSerializerOptions Indented = new(Compact) { WriteIndented = true };
     public static string Text(JsonNode? node, string fallback = "") => node?.GetValue<string>() ?? fallback;
     public static double Number(JsonNode? node, double fallback = 0) => node == null ? fallback : double.Parse(node.ToJsonString(), CultureInfo.InvariantCulture);
     public static void Write(string path, JsonNode value) => System.IO.File.WriteAllText(path, value.ToJsonString(Indented) + "\n");

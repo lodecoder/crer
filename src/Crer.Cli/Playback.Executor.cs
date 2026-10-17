@@ -41,7 +41,7 @@ public sealed partial class Playback
             async Task Write(JsonObject record)
             {
                 try { record["url"] = await Evaluate("location.href", CancellationToken.None); } catch { }
-                await File.AppendAllTextAsync(Path.Combine(absoluteRunDir, "steps.ndjson"), record.ToJsonString() + "\n");
+                await File.AppendAllTextAsync(Path.Combine(absoluteRunDir, "steps.ndjson"), record.ToJsonString(Json.Compact) + "\n");
             }
             JsonObject WithCoordinates(JsonObject record)
             {

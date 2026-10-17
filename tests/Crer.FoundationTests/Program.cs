@@ -39,6 +39,23 @@ Test("logger per-line prefix and ANSI reset", () =>
     Check(ScenarioLogger.Format("login", "one\ntwo", "red", true) == "\u001b[31m[login] one\u001b[39m\n\u001b[31m[login] two\u001b[39m");
     Check(ScenarioLogger.Format("b", "x", "default", true) == "[b] x");
 });
+Test("失敗JSONは日本語画像パスを読みやすく保ち、制御文字と引用符を正しく保存する", () =>
+{
+    var message = "0:template:Error: template match failed: templates\\日本語画像.png \"確認\"\r\n次の行\t詳細";
+    var failure = new JsonObject { ["code"] = 4, ["failures"] = new JsonArray(message) };
+    foreach (var (name, options) in new[] { ("整形なし", Json.Compact), ("整形あり", Json.Indented) })
+    {
+        var text = failure.ToJsonString(options);
+        Check(text.Contains("日本語画像.png", StringComparison.Ordinal), $"{name}のJSONで日本語画像パスがエスケープされました");
+        Check(JsonNode.DeepEquals(JsonNode.Parse(text), failure), $"{name}のJSONで引用符・バックスラッシュ・改行・タブが変化しました");
+        if (!options.WriteIndented) Check(text.IndexOfAny(['\r', '\n', '\t']) < 0, "整形なしのJSONが複数行になったか、制御文字がそのまま出力されました");
+    }
+    var file = Path.Combine(root, "unicode-failure.json");
+    Json.Write(file, failure);
+    var written = File.ReadAllText(file);
+    Check(written.Contains("日本語画像.png", StringComparison.Ordinal) && JsonNode.DeepEquals(JsonNode.Parse(written), failure),
+        "失敗JSONのファイル出力で日本語画像パスまたは文字列の内容が変化しました");
+});
 Test("Chrome drops inherited DPI shims with all whitespace and retains unrelated settings", () =>
 {
     Check(ChromeEnvironment.FilterCompatibilityLayer(null) == null);

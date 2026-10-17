@@ -17,7 +17,7 @@ var root = Path.GetFullPath(options.GetValueOrDefault("--root", Path.Combine(".c
 if (Directory.Exists(root)) throw new ArgumentException("Evidence directory must be new, to preserve earlier acceptance results.");
 Directory.CreateDirectory(root);
 var pattern = Fixture.Png(); var missing = Fixture.Png(true);
-var patternPath = Path.Combine(root, "pattern.png"); var missingPath = Path.Combine(root, "missing.png");
+var patternPath = Path.Combine(root, "pattern.png"); var missingPath = Path.Combine(root, "未一致画像.png");
 await File.WriteAllBytesAsync(patternPath, pattern); await File.WriteAllBytesAsync(missingPath, missing);
 await using var fixture = new Fixture(pattern);
 using (var http = new HttpClient(new HttpClientHandler { UseProxy = false }))
@@ -59,7 +59,7 @@ async Task<Run> Play(string name, JsonArray steps, int expected = 0, string poli
     if (functions != null) scenario["functions"] = functions.DeepClone();
     var path = Path.Combine(root, name + ".crer.yaml");
     await File.WriteAllTextAsync(path, scenario.ToJsonString(), new UTF8Encoding(false));
-    var start = new ProcessStartInfo(executable) { WorkingDirectory = Environment.CurrentDirectory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+    var start = new ProcessStartInfo(executable) { WorkingDirectory = Environment.CurrentDirectory, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8 };
     foreach (var argument in new[] { "play", path, "--chrome", chrome, "--mute-audio" }) start.ArgumentList.Add(argument);
     using var process = Process.Start(start) ?? throw new IOException("Could not start the published CLI.");
     var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
@@ -195,6 +195,13 @@ await Test("template on_missing skip continues, fail aborts, and failure-only re
     var failure = await Play("missing-fail", new JsonArray(TemplateClick(true, "fail"), Fail("unreachable")), 4, "failure-only");
     Check(File.Exists(Path.Combine(failure.Directory, "failure-0.png")) && Directory.GetFiles(failure.Directory, "template-*.png").Length == 0, "failure-only lost failure image or retained template images");
     Check(failure.Steps.Length == 1 && Text(failure.Steps[0], "kind") == "template", "template failure continued or changed kind");
+    var resultStart = Regex.Matches(failure.Stdout, @"(?m)^\{").Cast<Match>().Last().Index;
+    foreach (var (name, text) in new[]
+    {
+        ("標準出力の結果JSON", failure.Stdout[resultStart..]),
+        ("run.json", await File.ReadAllTextAsync(Path.Combine(failure.Directory, "run.json"))),
+        ("steps.ndjson", await File.ReadAllTextAsync(Path.Combine(failure.Directory, "steps.ndjson")))
+    }) Check(text.Contains("未一致画像.png", StringComparison.Ordinal), $"{name}で日本語画像パスがエスケープされました");
 });
 await Test("same-seed real CDP coordinates match fixed legacy vectors, step override and drag displacement", async () =>
 {
