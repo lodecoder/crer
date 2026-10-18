@@ -37,6 +37,7 @@ public sealed partial class Playback
     private TemplateMatcher? templates;
     private WindowController? windows;
     private readonly Stopwatch startupWatch = new();
+    private int startupTimeoutMs = 60000;
     private JsonObject startupDiagnostic = new();
     private string startupStage = "initializing";
     private ScenarioLogger logger = new("crer");
@@ -107,6 +108,7 @@ public sealed partial class Playback
         }
         startupWatch.Restart();
         var startupMs = (int)Json.Number(s.Playback["timeouts"]?["startup_ms"], 60000);
+        startupTimeoutMs = startupMs;
         startupDiagnostic = new() { ["status"] = "starting", ["reused"] = reused, ["timeoutMs"] = startupMs, ["stages"] = new JsonArray() };
         SetStartupStage("initializing");
         try
@@ -364,7 +366,10 @@ public sealed partial class Playback
             }
         }
         SetStartupStage("window_control");
-        await windows!.Configure(process!.Id, s.Window, options, logger, absoluteRunDir, retainSession, FocusPolicy, token);
+        // 最前面化だけを短い別期限で打ち切らず、起動全体の残り時間を使う。
+        var remainingStartup = startupTimeoutMs == 0 ? Timeout.InfiniteTimeSpan
+            : TimeSpan.FromMilliseconds(Math.Max(0, startupTimeoutMs - startupWatch.Elapsed.TotalMilliseconds));
+        await windows!.Configure(process!.Id, s.Window, options, logger, absoluteRunDir, retainSession, FocusPolicy, token, remainingStartup, cdp!.Disconnected);
         SetStartupStage("url_blocking");
         await blocker!.Configure(s.Browser["block_urls"] as JsonArray, token);
         SetStartupStage("navigation");

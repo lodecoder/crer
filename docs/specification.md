@@ -112,7 +112,11 @@ HWND の再生成に追従する。終了時には watchdog を止めてから t
 フォーカスとウィンドウの重なり順だけを変更し、物理ポインタや通常 Chrome のプロセスを操作しない。
 
 `foreground_mode: once` では起動時または scenario ごとの再利用時の初期設定として topmost を適用する。
-ウィンドウ生成直後の一時的な API 失敗や `WS_EX_TOPMOST` の不一致は最大2秒、50 ms 間隔で再試行する。
+ウィンドウ生成直後の一時的な API 失敗や `WS_EX_TOPMOST` の不一致は、起動全体の
+`playback.timeouts.startup_ms`（既定60000）の残り時間内で、50 ms 間隔で再試行する。
+前段の起動処理に消費した時間を差し引き、scenario再利用時にも今回の起動予算を改めて適用する。
+`startup_ms: 0` ではこの再試行も無期限とし、利用者・workerからの取消しを引き続き受け付ける。
+再試行中にCfTのCDP接続が切断された場合は、期限を待たず環境エラーで終了する。
 最初に成功した時点で再試行を終了し、前景フォーカスの要求も再試行のたびには行わない。
 利用者の中断、起動期限、plan の worker timeout は再試行の待機にも適用する。
 watchdog と各 step の直前の topmost・フォーカス再適用を行わず、他の topmost ウィンドウが上に
@@ -120,6 +124,8 @@ watchdog と各 step の直前の topmost・フォーカス再適用を行わず
 前の scenario が `always` の場合、再利用の準備前に監視を停止する。初期設定が期限内に成功しなければ
 環境エラーで終了する。`foreground.json` の `topmostStartup.attempts` には試行ごとの API の失敗と
 属性の不一致を区別して記録する。`foreground` が `false` または省略の場合は mode を無視する。
+`topmostStartup.timeoutScope` は公開CLIでは `browser_startup_remaining`、`timeoutMs` は最前面化開始時の
+残り予算とする。無期限の場合は `timeoutMs: null`、`timeoutMode: infinite` を記録する。
 両モードとも終了時は topmost を解除し、`foreground.json` の `mode` に実効モードを保存する。
 
 `browser.window.opacity` は CfT 本体ウィンドウの不透明度を指定する有限数値（範囲 `0..1`、既定 `1`）。

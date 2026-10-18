@@ -684,11 +684,18 @@ if (args.Contains("--windows")) await Test("windows", "公開exeで半透明のo
     {
         var profile = Profile("once-parallel-" + index);
         var labels = new[] { "once-parallel-" + index + "-first", "once-parallel-" + index + "-reused" };
-        var files = labels.Select(label => Write(label, Scenario(label, fixture.Base + "/window", profile, new()
+        var files = labels.Select((label, scenarioIndex) =>
         {
-            ["foreground"] = true, ["foreground_mode"] = "once", ["opacity"] = .5,
-            ["bounds"] = new JsonObject { ["left"] = 30, ["top"] = 30, ["width"] = 400, ["height"] = 300 },
-        }, new() { ["do"] = "wait_for", ["state"] = "complete" }, Sleep(750)))).ToArray();
+            var scenario = Scenario(label, fixture.Base + "/window", profile, new()
+            {
+                ["foreground"] = true, ["foreground_mode"] = "once", ["opacity"] = .5,
+                ["bounds"] = new JsonObject { ["left"] = 30, ["top"] = 30, ["width"] = 400, ["height"] = 300 },
+            }, new() { ["do"] = "wait_for", ["state"] = "complete" }, Sleep(750));
+            // 再利用時の無期限指定も公開exeからwindow制御へ伝わることを確認する。
+            if (index == 2 && scenarioIndex == 1)
+                scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 0 } };
+            return Write(label, scenario);
+        }).ToArray();
         groups.Add(Serial(files.Select(Leaf).ToArray()));
         profiles.Add((labels[0], labels[1]));
     }
@@ -724,6 +731,12 @@ if (args.Contains("--windows")) await Test("windows", "公開exeで半透明のo
             var attempts = startup["attempts"]!.AsArray();
             Check(Json.Text(foreground["mode"]) == "once" && Json.Text(startup["status"]) == "succeeded" && attempts.Count > 0,
                 "onceの初期設定成功または試行記録がない: " + directory);
+            Check(Json.Text(startup["timeoutScope"]) == "browser_startup_remaining", "起動全体の残り予算が最前面化へ渡っていない: " + directory);
+            if (pair.Second == "once-parallel-2-reused" && !focusRequested)
+                Check(startup["timeoutMs"] is null && Json.Text(startup["timeoutMode"]) == "infinite", "再利用時の無期限指定が反映されない: " + directory);
+            else
+                Check(Json.Number(startup["timeoutMs"]) > 2000 && Json.Number(startup["timeoutMs"]) <= 60000
+                    && Json.Text(startup["timeoutMode"]) == "finite", "独立した2秒制限が残っているか起動予算を超えている: " + directory);
             Check(startup["focusRequested"]!.GetValue<bool>() == focusRequested, "初回だけ前景化する方針に一致しない: " + directory);
             foreach (var attempt in attempts)
                 Check(new[] { "status", "failureStage", "window", "setWindowPosSucceeded", "setWindowPosError", "extendedStyle", "styleReadError" }

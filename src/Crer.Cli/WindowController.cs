@@ -9,6 +9,9 @@ internal sealed class WindowController : IDisposable
     private readonly IWindowInput native;
     private readonly nint original;
     private readonly TimeSpan topmostTimeout, topmostRetryInterval;
+    private TimeSpan startupTimeout;
+    private Task<Exception>? startupDisconnected;
+    private string startupTimeoutScope = "window_control";
     private readonly Stopwatch startupWatch = new();
     private readonly JsonArray startupAttempts = new();
     private string startupStatus = "not_requested";
@@ -37,17 +40,20 @@ internal sealed class WindowController : IDisposable
     internal WindowController(IWindowInput native, TimeSpan? topmostTimeout = null, TimeSpan? topmostRetryInterval = null)
     {
         ArgumentNullException.ThrowIfNull(native);
-        this.topmostTimeout = topmostTimeout ?? TimeSpan.FromSeconds(2);
+        this.topmostTimeout = topmostTimeout ?? TimeSpan.FromSeconds(60);
         this.topmostRetryInterval = topmostRetryInterval ?? TimeSpan.FromMilliseconds(50);
-        if (this.topmostTimeout <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(topmostTimeout));
+        if (this.topmostTimeout <= TimeSpan.Zero && this.topmostTimeout != Timeout.InfiniteTimeSpan) throw new ArgumentOutOfRangeException(nameof(topmostTimeout));
         if (this.topmostRetryInterval <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(topmostRetryInterval));
+        startupTimeout = this.topmostTimeout;
         this.native = native;
         original = native.GetForegroundWindow();
     }
 
     public async Task Configure(int processId, JsonObject window, CliOptions options, ScenarioLogger log, string runDirectory, bool reuse, string focus,
-        CancellationToken cancellation = default)
+        CancellationToken cancellation = default, TimeSpan? startupTimeout = null, Task<Exception>? browserDisconnected = null)
     {
+        if (startupTimeout is { } requested && requested < TimeSpan.Zero && requested != Timeout.InfiniteTimeSpan)
+            throw new ArgumentOutOfRangeException(nameof(startupTimeout));
         Pause();
         lock (gate)
         {
@@ -58,6 +64,9 @@ internal sealed class WindowController : IDisposable
             startupAttempts.Clear(); lastTopmostResult = null;
             startupStatus = requireForeground ? "pending" : "not_requested";
             startupFocusRequested = false;
+            this.startupTimeout = startupTimeout ?? topmostTimeout;
+            startupDisconnected = browserDisconnected;
+            startupTimeoutScope = startupTimeout.HasValue ? "browser_startup_remaining" : "window_control";
             startupWatch.Restart();
         }
         try
@@ -66,6 +75,7 @@ internal sealed class WindowController : IDisposable
             {
                 cancellation.ThrowIfCancellationRequested();
                 ObjectDisposedException.ThrowIf(disposed, this);
+                ThrowIfStartupFailed();
                 var opacity = options.OpacityOverride ?? Json.Number(window["opacity"], 1);
                 alpha = OpacityAlpha(opacity);
                 if (alpha != 255 || opacityUsed)
@@ -77,9 +87,9 @@ internal sealed class WindowController : IDisposable
                 if (requireForeground)
                 {
                     topmost = true; everForeground = true;
-                    startupWatch.Restart();
                     ApplyTopmost(recordStartup: true);
                     cancellation.ThrowIfCancellationRequested();
+                    ThrowIfStartupFailed();
                     if (!shared || !focusedOnce) { startupFocusRequested = true; Focus(); }
                     startupStatus = topmostStatus == 0 ? "succeeded" : mode == "once" ? "retrying" : "failed";
                     SaveStartupDiagnostic();
@@ -103,6 +113,7 @@ internal sealed class WindowController : IDisposable
             {
                 cancellation.ThrowIfCancellationRequested();
                 ObjectDisposedException.ThrowIf(disposed, this);
+                ThrowIfStartupFailed();
                 configured = true;
                 startupWatch.Stop();
                 WriteDiagnostic();
@@ -134,14 +145,12 @@ internal sealed class WindowController : IDisposable
             {
                 cancellation.ThrowIfCancellationRequested();
                 ObjectDisposedException.ThrowIf(disposed, this);
+                ThrowIfStartupFailed();
                 if (topmostStatus == 0) { startupStatus = "succeeded"; return; }
-                var remaining = topmostTimeout - startupWatch.Elapsed;
-                if (remaining <= TimeSpan.Zero)
-                {
-                    startupStatus = "timeout";
-                    throw new CrerException(3, $"could not make CfT topmost within {topmostTimeout.TotalMilliseconds:0} ms ({TopmostFailure()})");
-                }
-                delay = remaining < topmostRetryInterval ? remaining : topmostRetryInterval;
+                var remaining = startupTimeout == Timeout.InfiniteTimeSpan ? Timeout.InfiniteTimeSpan : startupTimeout - startupWatch.Elapsed;
+                delay = startupTimeout == Timeout.InfiniteTimeSpan ? topmostRetryInterval
+                    : remaining <= TimeSpan.Zero ? TimeSpan.Zero
+                    : remaining < topmostRetryInterval ? remaining : topmostRetryInterval;
             }
             // 待機中は gate を解放し、起動全体・worker・利用者からの取消しを直ちに受け付ける。
             await Task.Delay(delay, cancellation).ConfigureAwait(false);
@@ -149,11 +158,26 @@ internal sealed class WindowController : IDisposable
             {
                 cancellation.ThrowIfCancellationRequested();
                 ObjectDisposedException.ThrowIf(disposed, this);
-                if (startupWatch.Elapsed >= topmostTimeout) continue;
+                ThrowIfStartupFailed();
                 ApplyTopmost(recordStartup: true);
                 SaveStartupDiagnostic();
             }
         }
+    }
+
+    private void ThrowIfStartupFailed()
+    {
+        // 局所予算は once の初期最前面化だけに適用し、他のモードは起動全体の取消しに従う。
+        if (!requireForeground || mode != "once") return;
+        // 無期限でも、所有CfTの切断後に存在しないウィンドウを探し続けない。
+        if (startupDisconnected?.IsCompletedSuccessfully == true)
+        {
+            startupStatus = "failed";
+            throw new CrerException(3, $"CfT disconnected during initial window setup: {startupDisconnected.GetAwaiter().GetResult().Message}");
+        }
+        if (startupTimeout == Timeout.InfiniteTimeSpan || startupWatch.Elapsed < startupTimeout) return;
+        startupStatus = "timeout";
+        throw new CrerException(3, $"could not make CfT topmost within {startupTimeout.TotalMilliseconds:0.###} ms ({TopmostFailure()})");
     }
 
     private void ApplyTopmost(bool recordStartup = false)
@@ -249,7 +273,9 @@ internal sealed class WindowController : IDisposable
             if (directory.Length == 0) return;
             var record = new JsonObject { ["before"] = $"0x{original:x}", ["requested"] = requireForeground, ["mode"] = mode,
                 ["pid"] = pid, ["topmostStatus"] = topmostStatus, ["foregroundStatus"] = foregroundStatus, ["topmostAttempts"] = attempts, ["sharedSession"] = shared,
-                ["topmostStartup"] = new JsonObject { ["status"] = startupStatus, ["timeoutMs"] = topmostTimeout.TotalMilliseconds,
+                ["topmostStartup"] = new JsonObject { ["status"] = startupStatus,
+                    ["timeoutMs"] = startupTimeout == Timeout.InfiniteTimeSpan ? null : startupTimeout.TotalMilliseconds,
+                    ["timeoutMode"] = startupTimeout == Timeout.InfiniteTimeSpan ? "infinite" : "finite", ["timeoutScope"] = startupTimeoutScope,
                     ["retryIntervalMs"] = topmostRetryInterval.TotalMilliseconds, ["elapsedMs"] = startupWatch.Elapsed.TotalMilliseconds,
                     ["focusRequested"] = startupFocusRequested, ["attempts"] = startupAttempts.DeepClone() } };
             if (lastTopmostResult != null) record["topmostLastAttempt"] = TopmostDiagnostic(lastTopmostResult);

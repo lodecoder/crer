@@ -120,11 +120,16 @@ occluded renderer のリサイズが遅延した場合は、読み取り専用�
 一致条件は緩和しない。foreground always / once と opacity は独立して制御する。
 
 `foreground_mode: once` の最前面属性は、起動時・scenario 再利用時の初期設定だけで適用する。
-一時的な失敗は最大2秒、50 ms 間隔で再試行し、最初の成功後は再要求しない。
+一時的な失敗は、起動全体の `startup_ms`（既定60秒）の残り時間内で50 ms 間隔で再試行する。
+遅い端末でウィンドウの属性が整うまで時間がかかっても、同じ起動期限を共有して待機する。
+`startup_ms: 0` は最前面化も無期限で、利用者・workerからの取消しは有効。最初の成功後は再要求しない。
+再試行中のCfT終了によるCDP切断は、無期限指定でも環境エラーで停止する。
 再試行中に前景フォーカスを繰り返し取得せず、監視や step 直前の再適用も行わない。
 利用者の中断、起動期限、plan の worker timeout は再試行の待機にも適用する。
 期限内に成功しなければ環境エラーとし、各試行の API 失敗と最前面属性の不一致を
 `foreground.json` の `topmostStartup.attempts` に分けて記録する。
+`topmostStartup.timeoutMs` は今回の最前面化に渡した起動残り予算、`timeoutScope` は
+`browser_startup_remaining`。`startup_ms: 0` なら `timeoutMs: null` と `timeoutMode: infinite` を記録する。
 
 2026-10-16 の CfT 155 による3並列・各2シナリオの回帰検証では、初回に属性不一致となった
 2ウィンドウがどちらも2回目の試行で回復し、再利用を含む6シナリオすべてが成功した。

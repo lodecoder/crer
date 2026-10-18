@@ -180,7 +180,7 @@ Test("default opaque windows configure and opacity rejects a missing process", (
     var directory = Path.Combine(root, "opacity"); Directory.CreateDirectory(directory);
     using var window = (IDisposable)Activator.CreateInstance(windowType)!;
     var configure = windowType.GetMethod("Configure")!;
-    void Configure(JsonObject setting) => ((Task)InvokeWindow(configure, window, 0, setting, CliOptions.Parse(["play", "unused"]), new ScenarioLogger("test"), directory, false, "once", CancellationToken.None)).GetAwaiter().GetResult();
+    void Configure(JsonObject setting) => ((Task)InvokeWindow(configure, window, 0, setting, CliOptions.Parse(["play", "unused"]), new ScenarioLogger("test"), directory, false, "once", CancellationToken.None, null, null)).GetAwaiter().GetResult();
     Configure(new()); Configure(new() { ["opacity"] = 1 });
     Check(Json.Number(JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "opacity.json")))?["alpha"]) == 255);
     Reject(() => Configure(new() { ["opacity"] = .5 }), "could not set CfT opacity (Win32 status 87)", 3);
