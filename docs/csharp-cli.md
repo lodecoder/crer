@@ -48,6 +48,9 @@ YamlDotNet は明示的なノード変換で使い、反射 deserialization を�
 JSON も reflection serialization を無効にする。
 ECMAScript 正規表現の構文検証には Acornima を使う。URL 遮断の照合は同じ専用 CfT に所有する
 非表示 target の V8 で行い、表示用 page は一つに保つ。照合用 target も終了時に閉じる。
+遮断・継続の `Fetch.failRequest` / `Fetch.continueRequest` に対して、期限切れの要求IDを示す
+`CDP: Invalid InterceptionId.` が返った場合だけ無視し、CDP接続断として扱わない。
+照合処理の失敗や他のCDPエラーは、引き続き環境エラーとして停止する。
 IANA time zone と Unicode のため globalization を有効にして AOT publish する。
 
 2026-10-16 の構成整理では、`verify.ps1` の13テストプロジェクト（390件と Windows 入力の
@@ -127,16 +130,38 @@ occluded renderer のリサイズが遅延した場合は、読み取り専用�
 遅い端末でウィンドウの属性が整うまで時間がかかっても、同じ起動期限を共有して待機する。
 `startup_ms: 0` は最前面化も無期限で、利用者・workerからの取消しは有効。最初の成功後は再要求しない。
 再試行中のCfT終了によるCDP切断は、無期限指定でも環境エラーで停止する。
-再試行中に前景フォーカスを繰り返し取得せず、監視や step 直前の再適用も行わない。
+初回の前景フォーカス要求が未成功の間だけ、最前面属性の初期再試行中に250 ms間隔で前景化を再試行する。
+最前面属性が成功した後は、フォーカス成功を別に強制待機しない。
+前景化の最初の成功後はフォーカスを再取得せず、`browser_session.focus: once` の再利用時も取得しない。
+初回のフォーカスが未成功なら、同じprofileの次のscenarioで再要求できる。
+監視や step 直前の最前面属性の再適用も行わない。
 利用者の中断、起動期限、plan の worker timeout は再試行の待機にも適用する。
-期限内に成功しなければ環境エラーとし、各試行の API 失敗と最前面属性の不一致を
+最前面属性を設定する直前に `AllowSetForegroundWindow` で所有CfTへ前景化の許可を渡し、
+各試行の `foregroundPermissionGranted` / `foregroundPermissionError` に許可の成否とエラーを残す。
+この許可の拒否だけで最前面化の失敗とは判定せず、実際の `WS_EX_TOPMOST` 属性で成功を確認する。
+`SetWindowPos` が成功を返しても最前面属性が付かない場合は、同じHWNDを一度 `HWND_NOTOPMOST` に戻してから
+`HWND_TOPMOST` を1回再設定し、拡張スタイルを再検証する。再設定にも `SWP_NOACTIVATE` を使い、
+フォーカスを強制取得せず、不透明度を維持する。フォーカス取得の成否は `foregroundStatus` に別途記録する。
+再設定の有無と初回スタイルは `recoveryAttempted` / `recoveryInitialStyle`、解除・再設定のAPI結果は
+`recoveryResetSucceeded` / `recoveryResetError` / `recoveryReapplySucceeded` / `recoveryReapplyError` に残す。
+失敗が期限内に回復しなければ環境エラーとし、各試行の API 失敗と最前面属性の不一致を
 `foreground.json` の `topmostStartup.attempts` に分けて記録する。
 `topmostStartup.timeoutMs` は今回の最前面化に渡した起動残り予算、`timeoutScope` は
 `browser_startup_remaining`。`startup_ms: 0` なら `timeoutMs: null` と `timeoutMode: infinite` を記録する。
 
+最前面属性を期限内に取得できなければ環境エラー（終了コード3）で終了し、ページ遷移やstepを開始しない。
+所有CfTとCDPを後始末し、`foreground.json` の `requested: true` と要求した `mode` を維持して
+実際の属性・APIの失敗情報を記録する。
+`foreground_mode: always` も初期の最前面化に失敗したら環境エラーとする。
+planで環境エラー後に別のscenarioを実行するかどうかは、既存の `on_failure` 方針に従う。
+
 2026-10-16 の CfT 155 による3並列・各2シナリオの回帰検証では、初回に属性不一致となった
 2ウィンドウがどちらも2回目の試行で回復し、再利用を含む6シナリオすべてが成功した。
 初回だけのフォーカス要求と、再利用時にフォーカスを取り直さない動作も確認した。
+
+2026-10-18 の CfT 155 による3並列・各2シナリオの回帰検証では、初回3ウィンドウの属性不一致が
+解除・再設定で回復し、再利用を含む6件すべてで終了コード0と実測 `WS_EX_TOPMOST` を確認した。
+前景化の許可とフォーカス取得は拒否されたままでも、最前面属性・半透明設定を保持して手動操作なしで完走した。
 
 record は `Crer.Windows` の C# API を直接呼び、Raw Input / Low Level Hook で物理操作を観測する。
 marker の手動クリックで較正し、Enter / Ctrl+C / duration / stop-file / CfT 終了で停止する。
@@ -166,6 +191,13 @@ dotnet run --project tests/Crer.IntegrationTests -- --exe dist/win-x64/crer.exe 
 
 3並列での初回表示サイズ・背面ウィンドウの描画・10秒超の初期応答・同じ profile の再利用・起動中の worker timeout を確認するには、
 上の IntegrationTests コマンドに `--only startup` を追加する。外部サイトや既存の利用者 profile は使わない。
+`foreground: true`・`foreground_mode: once`・`opacity: 0.5`・`browser_session.focus: once` の組合せは
+`--only parallel-focus` で独立して確認する。3個の専用の検証用profileを並列に起動し、
+各profileの2シナリオを、手動フォーカスなし・各15秒の起動期限で検証する。
+最初のページスクリプトの表示サイズ、描画フレームの進行、成功後にフォーカスを再取得しない方針、
+URL遮断を併用した再利用と終了時の後始末も確認する。6件すべての終了コード0と `topmostStatus: 0`、
+実測の `WS_EX_TOPMOST` 属性を成功条件とし、前景化の許可が拒否されても最前面属性を取得できれば成功とする。
+このケースに `--windows` は不要。
 viewport待機に入った後の追加遷移、初回・再利用時の10秒超の文書読み込み、起動期限とworker取消しは
 `--only readiness-redirect` で確認する。
 

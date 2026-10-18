@@ -47,9 +47,13 @@ if (invalidWindow.FailureStage != "set_window_pos" || invalidWindow.SetWindowPos
     || invalidWindow.SetWindowPosError == 0 || invalidWindow.Status != invalidWindow.SetWindowPosError
     || invalidWindow.ExtendedStyle is not null || invalidWindow.StyleReadError != 0)
     throw new Exception("invalid HWND must preserve the real SetWindowPos failure instead of reporting a style mismatch");
+if (invalidWindow.RecoveryAttempted || invalidWindow.RecoveryResetSucceeded is not null || invalidWindow.RecoveryReapplySucceeded is not null)
+    throw new Exception("無効な HWND の API 失敗時には最前面属性の回復処理を行わない");
 Equal(87, recorder.ForegroundProcessWindow(0), "foreground rejects missing process");
 Equal(87, recorder.RestoreForegroundWindow(0), "restore rejects missing window");
 InputRegressionTests.CapsLock();
+if (Environment.GetEnvironmentVariable("CRER_TEST_WINDOWS") == "1"
+    || Environment.GetEnvironmentVariable("CRER_TEST_WINDOWS_FOREGROUND") == "1") await ForegroundRequestTests.Run();
 if (Environment.GetEnvironmentVariable("CRER_TEST_WINDOWS") == "1")
 {
     TopmostTests.Run();

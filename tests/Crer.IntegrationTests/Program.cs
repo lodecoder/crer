@@ -17,7 +17,7 @@ var exe = Path.GetFullPath(Option("--exe") ?? Environment.GetEnvironmentVariable
 var chrome = Option("--chrome") ?? Environment.GetEnvironmentVariable("CRER_TEST_CHROME");
 if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(chrome) || !File.Exists(exe) || !File.Exists(chrome))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,readiness-redirect,plan,navigation,blocking,keyboard,windows,display,profiles]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,parallel-focus,readiness-redirect,plan,navigation,blocking,keyboard,windows,display,profiles]");
     return 2;
 }
 if (args.Contains("--probe-hidden")) return await ProbeTools.Hidden(chrome!);
@@ -164,6 +164,83 @@ async Task Test(string key, string label, Func<Task> action)
     }
     File.WriteAllText(Path.Combine(evidence, "summary.json"), summary.ToJsonString(Json.Indented));
 }
+
+await Test("parallel-focus", "公開exeで半透明onceの3並列起動と同じprofileの再遷移を最前面属性を保って完走する", async () =>
+{
+    var labels = new[] { "parallel-focus-a", "parallel-focus-b", "parallel-focus-c" };
+    var groups = new List<JsonObject>();
+    foreach (var label in labels)
+    {
+        var profile = Profile(label);
+        var scenarios = new List<JsonObject>();
+        for (var index = 1; index <= 2; index++)
+        {
+            var name = label + index;
+            var scenario = Scenario(name, fixture.Base + "/initial-viewport/" + name, profile, new()
+            {
+                ["foreground"] = true, ["foreground_mode"] = "once", ["opacity"] = .5,
+                ["bounds"] = new JsonObject { ["left"] = 100, ["top"] = 100 },
+                ["content"] = new JsonObject { ["width"] = 600, ["height"] = 400 },
+            }, Wait("ready"), Idle());
+            // 手動フォーカスで救済せず、初回・再利用とも短い起動期限内で完了させる。
+            scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 15000 } };
+            if (label != labels[^1]) scenario["browser"]!["block_urls"] = new JsonArray("initial-viewport-blocked\\.svg");
+            scenarios.Add(Leaf(Write(name, scenario)));
+        }
+        groups.Add(Serial(scenarios.ToArray()));
+    }
+    var plan = Plan(Parallel(false, groups.ToArray()), maximum: 3);
+    plan["browser_session"]!["focus"] = "once";
+    var path = Write("parallel-focus-plan", plan);
+    var (_, value) = await Run("parallel-focus", 0, "run", path, "--mute-audio", "--template-screenshots", "failure-only");
+    var results = value.AsArray();
+    Check(results.Count == 6 && results.All(result => Json.Number(result!["code"]) == 0 && result["failures"]!.AsArray().Count == 0),
+        "半透明onceの3並列起動・再遷移が6件すべて成功しない");
+    var processes = new HashSet<double>(); var endpoints = new HashSet<string>(StringComparer.Ordinal);
+    foreach (var label in labels)
+    {
+        var first = results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(label + "1"))!;
+        var second = results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(label + "2"))!;
+        var initial = Read(RunDirectory(first), "run.json"); var reused = Read(RunDirectory(second), "run.json");
+        Check(initial["browserSession"]!["reused"]!.GetValue<bool>() == false && reused["browserSession"]!["reused"]!.GetValue<bool>()
+            && Json.Number(initial["chromePid"]) == Json.Number(reused["chromePid"])
+            && Json.Text(initial["cdpEndpoint"]) == Json.Text(reused["cdpEndpoint"]), "同じprofileのCfTを再利用していない: " + label);
+        var initialLaunch = Read(RunDirectory(first), "launch.json"); var reusedLaunch = Read(RunDirectory(second), "launch.json");
+        Check(Json.Text(initialLaunch["targetId"]) == Json.Text(reusedLaunch["targetId"])
+            && Json.Text(initialLaunch["sessionId"]) == Json.Text(reusedLaunch["sessionId"]), "再利用でtarget/sessionが変わった: " + label);
+        Check(processes.Add(Json.Number(initial["chromePid"])) && Json.Text(initial["cdpEndpoint"]).Length > 0
+            && endpoints.Add(Json.Text(initial["cdpEndpoint"])), "並列profile間でCfTまたはCDP endpointを共有した: " + label);
+        var focusSucceeded = false;
+        for (var index = 1; index <= 2; index++)
+        {
+            var name = label + index;
+            var result = index == 1 ? first : second; var directory = RunDirectory(result);
+            var startup = Read(directory, "startup.json");
+            var foreground = Read(directory, "foreground.json"); var opacity = Read(directory, "opacity.json");
+            var topmost = foreground["topmostStartup"]!; var attempts = topmost["attempts"]!.AsArray();
+            Check(foreground["requested"]!.GetValue<bool>() && Json.Text(foreground["mode"]) == "once",
+                "foregroundの要求またはonce設定が失われた: " + name);
+            Check(attempts.Count > 0, "最前面属性の初期試行診断がない: " + name);
+            var last = attempts.Last()!; var style = Json.Text(last["extendedStyle"]);
+            Check(Json.Text(startup["status"]) == "ready" && Json.Text(topmost["status"]) == "succeeded"
+                && Json.Number(foreground["topmostStatus"]) == 0 && Json.Number(last["status"]) == 0
+                && style.StartsWith("0x", StringComparison.Ordinal) && (Convert.ToInt64(style[2..], 16) & 8) != 0,
+                "最前面属性WS_EX_TOPMOSTの取得を確認できない: " + name);
+            Check(fixture.InitialDisplays.TryGetValue(name, out var report), "操作なしで初期URLのスクリプトが実行されない: " + name);
+            var display = JsonNode.Parse(report!)!;
+            Check(Json.Number(display["width"]) == 600 && Json.Number(display["height"]) == 400 && Json.Number(display["dpr"]) == 1,
+                "最初のスクリプトが指定表示サイズを参照できない: " + name + " " + report);
+            Check(topmost["focusRequested"]!.GetValue<bool>() == !focusSucceeded
+                && (Json.Number(topmost["focusAttempts"]) > 0) == !focusSucceeded,
+                "成功済みのフォーカスを再取得するか、未成功のフォーカスを再要求しない: " + name);
+            focusSucceeded |= Json.Number(foreground["foregroundStatus"]) == 0;
+            Check(attempts.All(attempt => attempt!.AsObject().ContainsKey("foregroundPermissionGranted")
+                && attempt.AsObject().ContainsKey("foregroundPermissionError")), "前景化の許可診断がない: " + name);
+            Check(opacity["applied"]!.GetValue<bool>() && Json.Number(opacity["alpha"]) == 128, "半透明設定が反映されない: " + name);
+        }
+        Cleanup(second);
+    }
+});
 
 await Test("startup", "public three-way initial viewport precedes page scripts on launch and reuse", async () =>
 {
@@ -843,7 +920,8 @@ if (args.Contains("--windows")) await Test("windows", "公開exeで半透明のo
         Check(firstRun["browserSession"]!["reused"]!.GetValue<bool>() == false
             && secondRun["browserSession"]!["reused"]!.GetValue<bool>(), "初回・再利用の診断が一致しない: " + pair.First);
         var previousAttempts = 0d;
-        foreach (var (result, focusRequested) in new[] { (first, true), (second, false) })
+        var firstFocused = Json.Number(Read(RunDirectory(first), "foreground.json")["foregroundStatus"]) == 0;
+        foreach (var (result, focusRequested) in new[] { (first, true), (second, !firstFocused) })
         {
             var directory = RunDirectory(result);
             var foreground = Read(directory, "foreground.json");
@@ -852,12 +930,12 @@ if (args.Contains("--windows")) await Test("windows", "公開exeで半透明のo
             Check(Json.Text(foreground["mode"]) == "once" && Json.Text(startup["status"]) == "succeeded" && attempts.Count > 0,
                 "onceの初期設定成功または試行記録がない: " + directory);
             Check(Json.Text(startup["timeoutScope"]) == "browser_startup_remaining", "起動全体の残り予算が最前面化へ渡っていない: " + directory);
-            if (pair.Second == "once-parallel-2-reused" && !focusRequested)
+            if (pair.Second == "once-parallel-2-reused" && ReferenceEquals(result, second))
                 Check(startup["timeoutMs"] is null && Json.Text(startup["timeoutMode"]) == "infinite", "再利用時の無期限指定が反映されない: " + directory);
             else
                 Check(Json.Number(startup["timeoutMs"]) > 2000 && Json.Number(startup["timeoutMs"]) <= 60000
                     && Json.Text(startup["timeoutMode"]) == "finite", "独立した2秒制限が残っているか起動予算を超えている: " + directory);
-            Check(startup["focusRequested"]!.GetValue<bool>() == focusRequested, "初回だけ前景化する方針に一致しない: " + directory);
+            Check(startup["focusRequested"]!.GetValue<bool>() == focusRequested, "取得済みの前景を再取得しない方針に一致しない: " + directory);
             foreach (var attempt in attempts)
                 Check(new[] { "status", "failureStage", "window", "setWindowPosSucceeded", "setWindowPosError", "extendedStyle", "styleReadError" }
                     .All(key => attempt!.AsObject().ContainsKey(key)), "最前面属性のAPI診断キーが不足している: " + directory);

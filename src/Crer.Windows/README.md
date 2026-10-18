@@ -20,6 +20,9 @@ dotnet run --project tests/Crer.WindowsTests/Crer.WindowsTests.csproj -c Release
 Remove-Item Env:CRER_TEST_WINDOWS
 ```
 
+UI スレッドが応答しないウィンドウへの前景要求が 2 秒以内に戻ることだけを確認する場合は、
+`CRER_TEST_WINDOWS_FOREGROUND=1` を指定します。テスト終了時に元の前景ウィンドウへ戻す要求も行います。
+
 実際の CfT でもページのクリック・キー入力、タイトルバーの除外、ページ遷移後の追跡を確認する場合は、
 `CRER_TEST_CHROME` に既存の CfT の `chrome.exe` を指定して同じテストを実行します。
 この検証は専用プロファイルを使い、物理キーやポインター、利用者の前景ウィンドウを変更しません。
@@ -64,14 +67,25 @@ Caps Lock と修飾キーは開始時の状態を読み、対象外アプリに�
 `IWindowInput.SetProcessTopmostDetailed(pid, enabled)` は同じ操作の詳細を `TopmostResult` で返します。
 `FailureStage` は成功時の `none`、PID 不正の `invalid_process`、対象不在の `window_not_found`、
 OS API 失敗の `set_window_pos`、属性取得失敗の `read_style`、設定後の属性不一致の
-`style_mismatch` を区別します。対象 HWND、`SetWindowPos` の戻り値と直後の実エラー、
+`style_mismatch`、回復処理での解除失敗の `reset_topmost` を区別します。対象 HWND、`SetWindowPos` の戻り値と直後の実エラー、
 取得した拡張スタイルと取得時の実エラーも保持します。属性不一致の状態コード 5 は
 アプリ側の合成値で、Windows が返したアクセス拒否を意味するとは限りません。
 詳細を取得する入口もフォーカスを変更しません。
+有効化の API が成功しても `WS_EX_TOPMOST` が反映されない場合だけ、`SWP_NOACTIVATE` を維持して
+`HWND_NOTOPMOST` で一度解除し、`HWND_TOPMOST` を再設定します。回復処理は一回に限定し、再設定後も
+実際の属性を検証します。解除・再設定の API 失敗や属性不一致を成功扱いにはしません。
+`RecoveryAttempted`、`RecoveryInitialStyle`、`RecoveryResetSucceeded` / `RecoveryResetError`、
+`RecoveryReapplySucceeded` / `RecoveryReapplyError` に初回の属性と回復処理の結果を保持します。
+通常の API 失敗、属性取得失敗、無効な HWND、最前面属性の解除要求では回復処理を行いません。
 前景フォーカスは `ForegroundProcessWindow(pid)` で別に要求するため、監視処理は
 繰り返しフォーカスを奪わずに最前面属性を修復できます。`SetProcessTopmost` は両方の操作を行い、
 `LastForegroundStatus` はそのフォーカス取得結果を返します。
 最前面属性の設定に成功しても、Windows が前景フォーカスの要求を拒否する場合があります。
+最前面属性を有効にする直前には、`AllowSetForegroundWindow(pid)` で所有 CfT へ前景化の許可を渡せる場合に渡します。
+許可の移譲の成否から最前面設定の可否を決めず、実 API 結果と属性で判定します。`TopmostResult.ForegroundPermissionGranted` と
+`ForegroundPermissionError` に結果を保持します。解除時や不透明度の変更時には権限を渡しません。
+前景要求では入力キューを接続せず `SetForegroundWindow` を使い、最小化からの復元も
+`ShowWindowAsync` で要求します。対象 UI の非応答により起動の取消しや期限判定を妨げる同期待ちを避けます。
 
 `SetProcessOpacity(pid, alpha)` は `WS_EX_LAYERED` と `SetLayeredWindowAttributes(LWA_ALPHA)` を使います。
 alpha の範囲は0（透明）から255（不透明）です。他の拡張スタイル、フォーカス、重なり順を維持します。

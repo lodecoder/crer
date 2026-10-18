@@ -64,6 +64,42 @@ await Test("interception errors abort the connection and remain terminal environ
         await Error(() => blocker.Configure(new(), default), "URL blocking failed");
     }
 });
+await Test("expired interception IDs do not abort URL blocking and later requests still resolve", async () =>
+{
+    foreach (var method in new[] { "Fetch.failRequest", "Fetch.continueRequest" })
+    {
+        var cdp = new Transport { RejectMethod = method, RejectError = new CrerException(4, "CDP: Invalid InterceptionId.") };
+        await using var blocker = new UrlBlocker(cdp, "page"); await blocker.Configure(new JsonArray("blocked"), default);
+        cdp.Decisions.Enqueue(method == "Fetch.failRequest"); cdp.Request("https://example/canceled");
+        Check(cdp.Calls[^1].Method == method && cdp.Aborted == null, "expired request aborted the connection");
+        blocker.AssertHealthy();
+        cdp.RejectMethod = null;
+        foreach (var blocked in new[] { false, true })
+        {
+            cdp.Decisions.Enqueue(blocked); cdp.Request("https://example/next");
+            Check(cdp.Calls[^1].Method == (blocked ? "Fetch.failRequest" : "Fetch.continueRequest"), "later request did not resolve");
+        }
+        blocker.AssertHealthy();
+    }
+});
+await Test("only Fetch protocol errors for expired interception IDs are ignored", async () =>
+{
+    foreach (var (method, error) in new (string, Exception)[]
+    {
+        ("Runtime.evaluate", new CrerException(4, "CDP: Invalid InterceptionId.")),
+        ("Fetch.continueRequest", new CrerException(4, "CDP: Invalid state for continueInterceptedRequest")),
+        ("Fetch.failRequest", new CrerException(3, "CDP: Invalid InterceptionId.")),
+        ("Fetch.continueRequest", new IOException("CDP: Invalid InterceptionId."))
+    })
+    {
+        var cdp = new Transport();
+        await using var blocker = new UrlBlocker(cdp, "page"); await blocker.Configure(new JsonArray("blocked"), default);
+        cdp.RejectMethod = method; cdp.RejectError = error;
+        cdp.Decisions.Enqueue(method == "Fetch.failRequest"); cdp.Request("https://example/blocked");
+        Check(cdp.Aborted is CrerException { Code: 3 }, "an unrelated matcher or transport error was ignored");
+        await Error(() => Task.Run(blocker.AssertHealthy), "URL blocking failed");
+    }
+});
 await Test("setup errors propagate and retry does not create a second hidden matcher", async () =>
 {
     var cdp = new Transport { RejectMethod = "Fetch.enable" }; await using var blocker = new UrlBlocker(cdp, "page");
@@ -142,6 +178,7 @@ sealed class Transport : IUrlBlockerTransport
     public Queue<bool> Decisions { get; } = new();
     public string? ExpectedPatterns { get; set; }
     public string? RejectMethod { get; set; }
+    public Exception? RejectError { get; set; }
     public string? ExpectedUrl { get; set; }
     public bool BlockEvaluation { get; set; }
     public bool CompileError { get; set; }
@@ -155,7 +192,7 @@ sealed class Transport : IUrlBlockerTransport
     public Task<JsonObject> Call(string method, JsonObject? parameters = null, string? session = null, CancellationToken token = default, int timeoutMs = 10000)
     {
         parameters ??= new(); Calls.Add(new(method, parameters.DeepClone().AsObject(), session));
-        if (method == RejectMethod) return Task.FromException<JsonObject>(new IOException("interception rejected"));
+        if (method == RejectMethod) return Task.FromException<JsonObject>(RejectError ?? new IOException("interception rejected"));
         if (method.StartsWith("Target.", StringComparison.Ordinal) && session != null) throw new Exception("browser Target operation used page session");
         if (method == "Target.createTarget")
         {

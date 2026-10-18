@@ -89,9 +89,17 @@ public sealed class UrlBlocker(IUrlBlockerTransport cdp, string session) : IAsyn
             { ["expression"] = "globalThis.__crerPatterns.some(p=>p.test(" + (data["request"]?["url"]?.ToJsonString() ?? "\"\"") + "))", ["returnByValue"] = true }, matcherSession, lifetime.Token);
             if (value["exceptionDetails"] != null) throw new CrerException(3, "URL expression evaluation failed");
             var blocked = value["result"]?["value"]?.GetValue<bool>() ?? throw new CrerException(3, "URL matcher did not return a decision");
-            await cdp.Call(blocked ? "Fetch.failRequest" : "Fetch.continueRequest", blocked ? new()
-            { ["requestId"] = data["requestId"]!.DeepClone(), ["errorReason"] = "BlockedByClient" } : new()
-            { ["requestId"] = data["requestId"]!.DeepClone() }, session, lifetime.Token);
+            try
+            {
+                await cdp.Call(blocked ? "Fetch.failRequest" : "Fetch.continueRequest", blocked ? new()
+                { ["requestId"] = data["requestId"]!.DeepClone(), ["errorReason"] = "BlockedByClient" } : new()
+                { ["requestId"] = data["requestId"]!.DeepClone() }, session, lifetime.Token);
+            }
+            catch (CrerException e) when (e.Code == 4 && e.Message == "CDP: Invalid InterceptionId.")
+            {
+                // URL 評価中の遷移や通信キャンセルで Chromium が破棄した要求は解放不要。
+                // この Fetch 応答だけを無視し、評価や接続の障害は引き続き致命的に扱う。
+            }
         }
         catch (Exception e) when (!lifetime.IsCancellationRequested)
         {

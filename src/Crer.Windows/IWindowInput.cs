@@ -10,7 +10,17 @@ public sealed record TopmostResult(
     bool? SetWindowPosSucceeded,
     int SetWindowPosError,
     long? ExtendedStyle,
-    int StyleReadError);
+    int StyleReadError)
+{
+    public bool? ForegroundPermissionGranted { get; init; }
+    public int ForegroundPermissionError { get; init; }
+    public bool RecoveryAttempted { get; init; }
+    public long? RecoveryInitialStyle { get; init; }
+    public bool? RecoveryResetSucceeded { get; init; }
+    public int RecoveryResetError { get; init; }
+    public bool? RecoveryReapplySucceeded { get; init; }
+    public int RecoveryReapplyError { get; init; }
+}
 
 public interface IWindowInput : IDisposable
 {

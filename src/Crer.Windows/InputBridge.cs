@@ -58,9 +58,7 @@ internal static class InputBridge
     [DllImport("user32.dll")] private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetWindowPos(IntPtr h, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
-    [DllImport("user32.dll", SetLastError=true)] private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
-    [DllImport("user32.dll")] private static extern bool BringWindowToTop(IntPtr h);
-    [DllImport("user32.dll")] private static extern IntPtr SetFocus(IntPtr h);
+    [DllImport("user32.dll", SetLastError=true)] private static extern bool AllowSetForegroundWindow(uint processId);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr h);
     [DllImport("user32.dll")] private static extern bool IsWindow(IntPtr h);
@@ -69,7 +67,7 @@ internal static class InputBridge
     [DllImport("user32.dll", SetLastError=true)] private static extern IntPtr SetWindowLongPtrW(IntPtr h, int index, IntPtr value);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool SetLayeredWindowAttributes(IntPtr h, uint colorKey, byte alpha, uint flags);
     [DllImport("user32.dll", SetLastError=true)] private static extern bool GetLayeredWindowAttributes(IntPtr h, out uint colorKey, out byte alpha, out uint flags);
-    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr h, int command);
+    [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr h, int command);
     [DllImport("user32.dll")] private static extern IntPtr GetAncestor(IntPtr h, uint flags);
     [DllImport("user32.dll")] private static extern bool EnumWindows(EnumProc p, IntPtr l);
     [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumProc p, IntPtr l);
@@ -437,25 +435,11 @@ internal static class InputBridge
     }
     private static int TryBringToForeground(IntPtr target)
     {
-        if (IsIconic(target)) ShowWindow(target, 9); // SW_RESTORE
+        // 入力キューを接続すると対象の UI 停止が呼び出し元にも伝播するため、前景要求だけを行う。
+        if (IsIconic(target)) ShowWindowAsync(target, 9); // SW_RESTORE
         if (SetForegroundWindow(target)) return 0;
-        var active = GetForegroundWindow();
-        var targetThread = GetWindowThreadProcessId(target, out _);
-        var activeThread = active == IntPtr.Zero ? 0 : GetWindowThreadProcessId(active, out _);
-        var attached = targetThread != 0 && activeThread != 0 && targetThread != activeThread &&
-            AttachThreadInput(targetThread, activeThread, true);
-        try
-        {
-            BringWindowToTop(target);
-            SetFocus(target);
-            if (SetForegroundWindow(target)) return 0;
-            var error = Marshal.GetLastWin32Error();
-            return error == 0 ? 5 : error;
-        }
-        finally
-        {
-            if (attached) AttachThreadInput(targetThread, activeThread, false);
-        }
+        var error = Marshal.GetLastWin32Error();
+        return error == 0 ? 5 : error;
     }
     internal static int SetProcessTopmost(uint pid, bool enabled)
     {
@@ -483,13 +467,47 @@ internal static class InputBridge
         _foregroundTarget = IntPtr.Zero;
         EnumWindows(FindForeground, IntPtr.Zero);
         if (_foregroundTarget == IntPtr.Zero) return new(1168, "window_not_found", 0, null, 0, null, 0);
-        return ApplyTopmost(_foregroundTarget, enabled);
+        // 所有する CfT へ前景化の許可を渡せる場合に渡し、成否は診断として保持する。
+        // 許可の移譲が拒否されても最前面設定の実 API 結果と属性で成功を判定する。
+        bool? permissionGranted = enabled ? AllowSetForegroundWindow(pid) : null;
+        var permissionError = permissionGranted == false ? Marshal.GetLastWin32Error() : 0;
+        return ApplyTopmost(_foregroundTarget, enabled) with
+        {
+            ForegroundPermissionGranted = permissionGranted,
+            ForegroundPermissionError = permissionError,
+        };
     }
     internal static TopmostResult ApplyTopmost(nint window, bool enabled)
     {
         lock (WindowGate) return ApplyTopmostCore(window, enabled);
     }
     private static TopmostResult ApplyTopmostCore(nint window, bool enabled)
+    {
+        var initial = ApplyTopmostRequest(window, enabled);
+        if (!enabled || initial.FailureStage != "style_mismatch") return initial;
+
+        // API が成功しても最前面属性が反映されない状態だけ、一度解除してから設定し直す。
+        // 前景フォーカスや入力キューは変更せず、回復処理は一回に限定する。
+        var resetSucceeded = SetWindowPos(window, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+        var resetError = Marshal.GetLastWin32Error();
+        if (!resetSucceeded)
+            return initial with
+            {
+                Status = resetError == 0 ? 5 : resetError, FailureStage = "reset_topmost",
+                RecoveryAttempted = true, RecoveryInitialStyle = initial.ExtendedStyle,
+                RecoveryResetSucceeded = false, RecoveryResetError = resetError,
+            };
+
+        var reapplied = ApplyTopmostRequest(window, true);
+        return reapplied with
+        {
+            RecoveryAttempted = true, RecoveryInitialStyle = initial.ExtendedStyle,
+            RecoveryResetSucceeded = true, RecoveryResetError = resetError,
+            RecoveryReapplySucceeded = reapplied.SetWindowPosSucceeded,
+            RecoveryReapplyError = reapplied.SetWindowPosError,
+        };
+    }
+    private static TopmostResult ApplyTopmostRequest(nint window, bool enabled)
     {
         var insertAfter = enabled ? new IntPtr(-1) : new IntPtr(-2); // HWND_TOPMOST / HWND_NOTOPMOST
         // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE。フォーカスは変更しない。

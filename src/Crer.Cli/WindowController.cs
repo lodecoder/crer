@@ -13,6 +13,8 @@ internal sealed class WindowController : IDisposable
     private Task<Exception>? startupDisconnected;
     private string startupTimeoutScope = "window_control";
     private readonly Stopwatch startupWatch = new();
+    private readonly Stopwatch startupFocusWatch = new();
+    private static readonly TimeSpan StartupFocusRetryInterval = TimeSpan.FromMilliseconds(250);
     private readonly JsonArray startupAttempts = new();
     private string startupStatus = "not_requested";
     private bool startupFocusRequested, disposed;
@@ -22,7 +24,7 @@ internal sealed class WindowController : IDisposable
     private int pid;
     private bool requireForeground, topmost, focusedOnce, configured, shared, everForeground;
     private string mode = "always", focusPolicy = "once", directory = "";
-    private int attempts, topmostStatus, foregroundStatus;
+    private int attempts, topmostStatus, foregroundStatus, startupFocusAttempts;
     private int? lastTopmostWarning, lastOpacityWarning, restoreStatus, clearTopmostStatus;
     private uint alpha = 255;
     private bool opacityUsed;
@@ -64,6 +66,8 @@ internal sealed class WindowController : IDisposable
             startupAttempts.Clear(); lastTopmostResult = null;
             startupStatus = requireForeground ? "pending" : "not_requested";
             startupFocusRequested = false;
+            startupFocusAttempts = 0;
+            startupFocusWatch.Reset();
             this.startupTimeout = startupTimeout ?? topmostTimeout;
             startupDisconnected = browserDisconnected;
             startupTimeoutScope = startupTimeout.HasValue ? "browser_startup_remaining" : "window_control";
@@ -86,15 +90,23 @@ internal sealed class WindowController : IDisposable
                 }
                 if (requireForeground)
                 {
-                    topmost = true; everForeground = true;
+                    topmost = true;
                     ApplyTopmost(recordStartup: true);
                     cancellation.ThrowIfCancellationRequested();
                     ThrowIfStartupFailed();
-                    if (!shared || !focusedOnce) { startupFocusRequested = true; Focus(); }
+                    if (!shared || !focusedOnce)
+                    {
+                        startupFocusRequested = true;
+                        Focus();
+                        startupFocusAttempts++;
+                        startupFocusWatch.Restart();
+                    }
+                    cancellation.ThrowIfCancellationRequested();
+                    ThrowIfStartupFailed();
                     startupStatus = topmostStatus == 0 ? "succeeded" : mode == "once" ? "retrying" : "failed";
                     SaveStartupDiagnostic();
                     if (topmostStatus != 0 && mode != "once")
-                        logger.Warn($"Warning: initial CfT topmost request failed ({TopmostFailure()}); retrying before steps");
+                        throw new CrerException(3, $"could not make CfT topmost ({TopmostFailure()})");
                 }
                 else
                 {
@@ -159,7 +171,18 @@ internal sealed class WindowController : IDisposable
                 cancellation.ThrowIfCancellationRequested();
                 ObjectDisposedException.ThrowIf(disposed, this);
                 ThrowIfStartupFailed();
+                // 起動直後の拒否・HWND未検出だけを再試行し、一度取得できた前景は取り直さない。
+                if (startupFocusRequested && foregroundStatus != 0 && startupFocusWatch.Elapsed >= StartupFocusRetryInterval)
+                {
+                    Focus(logFailure: false);
+                    startupFocusAttempts++;
+                    startupFocusWatch.Restart();
+                    cancellation.ThrowIfCancellationRequested();
+                    ThrowIfStartupFailed();
+                }
                 ApplyTopmost(recordStartup: true);
+                cancellation.ThrowIfCancellationRequested();
+                ThrowIfStartupFailed();
                 SaveStartupDiagnostic();
             }
         }
@@ -167,14 +190,14 @@ internal sealed class WindowController : IDisposable
 
     private void ThrowIfStartupFailed()
     {
-        // 局所予算は once の初期最前面化だけに適用し、他のモードは起動全体の取消しに従う。
-        if (!requireForeground || mode != "once") return;
         // 無期限でも、所有CfTの切断後に存在しないウィンドウを探し続けない。
         if (startupDisconnected?.IsCompletedSuccessfully == true)
         {
             startupStatus = "failed";
             throw new CrerException(3, $"CfT disconnected during initial window setup: {startupDisconnected.GetAwaiter().GetResult().Message}");
         }
+        // 局所予算は once の初期最前面化だけに適用し、他のモードは起動全体の取消しに従う。
+        if (!requireForeground || mode != "once") return;
         if (startupTimeout == Timeout.InfiniteTimeSpan || startupWatch.Elapsed < startupTimeout) return;
         startupStatus = "timeout";
         throw new CrerException(3, $"could not make CfT topmost within {startupTimeout.TotalMilliseconds:0.###} ms ({TopmostFailure()})");
@@ -202,6 +225,11 @@ internal sealed class WindowController : IDisposable
         ["status"] = result.Status, ["failureStage"] = result.FailureStage, ["window"] = $"0x{result.Window:x}",
         ["setWindowPosSucceeded"] = result.SetWindowPosSucceeded, ["setWindowPosError"] = result.SetWindowPosError,
         ["extendedStyle"] = result.ExtendedStyle is { } style ? $"0x{style:x}" : null, ["styleReadError"] = result.StyleReadError,
+        ["foregroundPermissionGranted"] = result.ForegroundPermissionGranted, ["foregroundPermissionError"] = result.ForegroundPermissionError,
+        ["recoveryAttempted"] = result.RecoveryAttempted,
+        ["recoveryInitialStyle"] = result.RecoveryInitialStyle is { } initialStyle ? $"0x{initialStyle:x}" : null,
+        ["recoveryResetSucceeded"] = result.RecoveryResetSucceeded, ["recoveryResetError"] = result.RecoveryResetError,
+        ["recoveryReapplySucceeded"] = result.RecoveryReapplySucceeded, ["recoveryReapplyError"] = result.RecoveryReapplyError,
     };
 
     private void SaveStartupDiagnostic()
@@ -216,11 +244,11 @@ internal sealed class WindowController : IDisposable
         return (uint)Math.Floor(opacity * 255 + .5);
     }
 
-    private void Focus()
+    private void Focus(bool logFailure = true)
     {
         foregroundStatus = native.ForegroundProcessWindow((uint)pid);
-        focusedOnce = true;
-        if (foregroundStatus != 0) logger.Warn($"Warning: Windows did not grant CfT foreground focus (Win32 status {foregroundStatus})");
+        if (foregroundStatus == 0) { focusedOnce = true; everForeground = true; }
+        else if (logFailure) logger.Warn($"Warning: Windows did not grant CfT foreground focus (Win32 status {foregroundStatus})");
     }
 
     public void BeforeStep()
@@ -277,7 +305,7 @@ internal sealed class WindowController : IDisposable
                     ["timeoutMs"] = startupTimeout == Timeout.InfiniteTimeSpan ? null : startupTimeout.TotalMilliseconds,
                     ["timeoutMode"] = startupTimeout == Timeout.InfiniteTimeSpan ? "infinite" : "finite", ["timeoutScope"] = startupTimeoutScope,
                     ["retryIntervalMs"] = topmostRetryInterval.TotalMilliseconds, ["elapsedMs"] = startupWatch.Elapsed.TotalMilliseconds,
-                    ["focusRequested"] = startupFocusRequested, ["attempts"] = startupAttempts.DeepClone() } };
+                    ["focusRequested"] = startupFocusRequested, ["focusAttempts"] = startupFocusAttempts, ["attempts"] = startupAttempts.DeepClone() } };
             if (lastTopmostResult != null) record["topmostLastAttempt"] = TopmostDiagnostic(lastTopmostResult);
             if (restoreStatus != null) record["restoreStatus"] = restoreStatus;
             record["restorePerformed"] = restorePerformed;

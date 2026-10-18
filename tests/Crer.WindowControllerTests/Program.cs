@@ -63,6 +63,152 @@ await Test("一時的なスタイル不一致から回復しフォーカス要�
     Check(fake.FocusCalls == 1, "最前面化の再試行ごとにフォーカスを要求しました");
 });
 
+await Test("初回フォーカスの拒否を間隔を空けて再試行し取得後は取り直さない", async () =>
+{
+    var directory = DirectoryFor("focus-recovery");
+    var focusWatch = new Stopwatch();
+    var focused = false;
+    var succeededAt = 0;
+    var fake = new FakeWindowInput
+    {
+        FocusResultFactory = attempt =>
+        {
+            if (attempt == 1) { focusWatch.Start(); return 5; }
+            Check(focusWatch.Elapsed >= TimeSpan.FromMilliseconds(250), "拒否されたフォーカスを短い間隔で繰り返しました");
+            focused = true;
+            return 0;
+        },
+        ResultFactory = attempt =>
+        {
+            if (focused && succeededAt == 0) succeededAt = attempt;
+            return focused && attempt >= succeededAt + 2 ? Outcomes.Success() : Outcomes.Mismatch(0x112);
+        },
+    };
+    using var controller = new WindowController(fake, TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(5));
+    await Configure(controller, directory, shared: true).WaitAsync(TimeSpan.FromSeconds(3));
+    Check(fake.FocusCalls == 2 && fake.EnableCalls > 3, "拒否の再試行または取得後の最前面化待機が壊れています");
+    Check(Json.Number(Startup(directory)["focusAttempts"]) == 2 && Json.Number(Foreground(directory)["foregroundStatus"]) == 0,
+        "フォーカスの再試行と回復を診断できません");
+    await Configure(controller, DirectoryFor("focus-recovery-reuse"), shared: true);
+    Check(fake.FocusCalls == 2, "取得済みの共有セッションのフォーカスを再取得しました");
+});
+
+await Test("失敗したフォーカス要求を共有セッションの取得済み状態にしない", async () =>
+{
+    var fake = new FakeWindowInput { FocusResultFactory = attempt => attempt == 1 ? 1168 : 0 };
+    using var controller = new WindowController(fake);
+    await Configure(controller, DirectoryFor("focus-failed-first"), shared: true);
+    var directory = DirectoryFor("focus-failed-reuse");
+    await Configure(controller, directory, shared: true);
+    Check(fake.FocusCalls == 2 && Startup(directory)["focusRequested"]!.GetValue<bool>(), "未取得のフォーカスを再利用時にも抑止しました");
+    await Configure(controller, DirectoryFor("focus-acquired-reuse"), shared: true);
+    Check(fake.FocusCalls == 2, "取得後のfocus onceを維持しませんでした");
+});
+
+await Test("前景権限の診断にかかわらず最前面化できなければ環境エラーで終了する", async () =>
+{
+    foreach (var mode in new[] { "once", "always" })
+    foreach (var outcome in new[] { Outcomes.Mismatch(0x113), Outcomes.ApiFailure(0x113) })
+    {
+        var directory = DirectoryFor("permission-denied-" + mode + "-" + outcome.FailureStage);
+        var fake = new FakeWindowInput
+        {
+            DefaultResult = outcome with { ForegroundPermissionGranted = false, ForegroundPermissionError = 5 },
+            FocusResultFactory = _ => 5,
+        };
+        using var controller = new WindowController(fake, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(5));
+        var settings = Window(.5); settings["foreground_mode"] = mode;
+        await EnvironmentFailure(() => Configure(controller, directory, settings, shared: true).WaitAsync(TimeSpan.FromSeconds(2)));
+        Check(Json.Text(Startup(directory)["status"]) == (mode == "once" ? "timeout" : "failed"), "最前面化の失敗を診断できません");
+        Check((mode == "once" ? fake.EnableCalls > 1 : fake.EnableCalls == 1) && fake.FocusCalls == 1, "最前面化の再試行方針が変わりました");
+        Check(fake.Opacities.SequenceEqual(new uint[] { 128 }), "起動失敗後に不透明度の監視を開始しました");
+        controller.Dispose();
+        Check(fake.RestoredWindows.Count == 0, "前景を取得していないのに終了時に他アプリの前景を変更しました");
+    }
+});
+
+await Test("前景権限付与の拒否だけでは終了せず最前面化の回復を確認する", async () =>
+{
+    var denied = Outcomes.Mismatch(0x114) with { ForegroundPermissionGranted = false, ForegroundPermissionError = 5 };
+    var fake = new FakeWindowInput(denied, Outcomes.Success()) { FocusResultFactory = attempt => attempt == 1 ? 5 : 0 };
+    using var controller = new WindowController(fake, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(5));
+    var firstDirectory = DirectoryFor("permission-reuse-denied");
+    await Configure(controller, firstDirectory, shared: true);
+    Check(Json.Text(Startup(firstDirectory)["status"]) == "succeeded" && fake.EnableCalls == 2,
+        "前景権限付与の拒否だけで最前面化の再試行を打ち切りました");
+    var directory = DirectoryFor("permission-reuse-recovered");
+    await Configure(controller, directory, shared: true);
+    Check(Json.Text(Startup(directory)["status"]) == "succeeded",
+        "前の権限拒否を再利用時にも引き継ぎました");
+    await Configure(controller, DirectoryFor("permission-reuse-focus-once"), shared: true);
+    Check(fake.FocusCalls == 2, "回復後のfocus onceを維持しませんでした");
+});
+
+await Test("前景権限付与が拒否されても最前面属性が確認できれば成功する", async () =>
+{
+    foreach (var mode in new[] { "once", "always" })
+    {
+        var directory = DirectoryFor("permission-independent-" + mode);
+        var fake = new FakeWindowInput
+        {
+            DefaultResult = Outcomes.Success() with { ForegroundPermissionGranted = false, ForegroundPermissionError = 5 },
+            FocusResultFactory = _ => 5,
+        };
+        using var controller = new WindowController(fake);
+        var settings = Window(); settings["foreground_mode"] = mode;
+        await Configure(controller, directory, settings);
+        controller.Pause();
+        Check(Json.Text(Startup(directory)["status"]) == "succeeded" && Json.Number(Foreground(directory)["topmostStatus"]) == 0,
+            "前景化の権限付与と最前面属性の成否を混同しました");
+    }
+});
+
+await Test("一時的な最前面化失敗は期限内で再試行し回復しなければ終了する", async () =>
+{
+    foreach (var result in new[]
+    {
+        Outcomes.Mismatch(0x115) with { ForegroundPermissionGranted = true },
+        Outcomes.ApiFailure(0x115) with { ForegroundPermissionGranted = false, ForegroundPermissionError = 6 },
+    })
+    {
+        var directory = DirectoryFor("permission-unrelated-" + result.ForegroundPermissionError);
+        using var controller = new WindowController(new FakeWindowInput { DefaultResult = result }, TimeSpan.FromMilliseconds(100), TimeSpan.FromMilliseconds(5));
+        await EnvironmentFailure(() => Configure(controller, directory));
+        Check(Json.Text(Startup(directory)["status"]) == "timeout", "一時的な失敗の期限切れを記録しませんでした");
+    }
+});
+
+await Test("権限拒否よりも利用者取消しとCfT切断を優先する", async () =>
+{
+    foreach (var mode in new[] { "once", "always" })
+    foreach (var cancel in new[] { false, true })
+    {
+        var directory = DirectoryFor("permission-disconnect-" + mode + "-" + cancel);
+        using var cancellation = new CancellationTokenSource();
+        var disconnected = new TaskCompletionSource<Exception>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fake = new FakeWindowInput
+        {
+            DefaultResult = Outcomes.Mismatch(0x116) with { ForegroundPermissionGranted = false, ForegroundPermissionError = 5 },
+            FocusResultFactory = _ =>
+            {
+                disconnected.SetResult(new IOException("owned CfT closed"));
+                if (cancel) cancellation.Cancel();
+                return 5;
+            },
+        };
+        using var controller = new WindowController(fake, TimeSpan.FromSeconds(1), TimeSpan.FromMilliseconds(5));
+        var settings = Window(); settings["foreground_mode"] = mode;
+        Task Run() => Configure(controller, directory, settings, cancellation: cancellation.Token, browserDisconnected: disconnected.Task);
+        if (cancel) await Cancelled(Run, cancellation.Token);
+        else
+        {
+            try { await Run(); throw new Exception("CfT切断を隠しました"); }
+            catch (CrerException error) when (error.Code == 3 && error.Message.Contains("owned CfT closed", StringComparison.Ordinal)) { }
+        }
+        Check(Json.Text(Startup(directory)["status"]) == (cancel ? "cancelled" : "failed"), "取消し・切断の診断を保持しませんでした");
+    }
+});
+
 await Test("既定予算60秒で2秒を超える初期化から回復する", async () =>
 {
     var directory = DirectoryFor("slow-default-startup");
@@ -365,6 +511,7 @@ sealed class FakeWindowInput(params TopmostResult[] results) : IWindowInput
     private int focusCalls, disposeCalls;
     public TopmostResult DefaultResult { get; init; } = Outcomes.Success();
     public Func<int, TopmostResult>? ResultFactory { get; init; }
+    public Func<int, int>? FocusResultFactory { get; init; }
     public TaskCompletionSource FirstTopmost { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource TopmostRetried { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource OpacityMaintenance { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -377,7 +524,7 @@ sealed class FakeWindowInput(params TopmostResult[] results) : IWindowInput
     public nint GetForegroundWindow() => OriginalWindow;
     public bool IsProcessForeground(uint pid) => true;
     public int RestoreForegroundWindow(nint window) { lock (gate) restored.Add(window); return 0; }
-    public int ForegroundProcessWindow(uint pid) { lock (gate) focusCalls++; return 0; }
+    public int ForegroundProcessWindow(uint pid) { lock (gate) { focusCalls++; return FocusResultFactory?.Invoke(focusCalls) ?? 0; } }
     public TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled)
     {
         lock (gate)
