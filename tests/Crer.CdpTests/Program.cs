@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -296,6 +297,105 @@ await Test("concurrent repeated disposal and abort after disposal are safe", asy
     await ErrorCode(fixture.Client.Call("After.repeated.dispose"), 3, "closed by client");
     Check(fixture.Client.PendingCount == 0, "repeated disposal created pending state");
 });
+
+async Task InitialViewportFinalCheck(bool contextDestroyed)
+{
+    var directory = Path.Combine(Path.GetTempPath(), "crer-initial-viewport-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        await using var fixture = await Connection.Create();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var playback = new Playback();
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        void Set(string field, object value) => typeof(Playback).GetField(field, flags)!.SetValue(playback, value);
+        var diagnostic = new JsonObject { ["status"] = "starting", ["timeoutMs"] = 0, ["stages"] = new JsonArray() };
+        Set("cdp", fixture.Client); Set("session", "viewport-test"); Set("absoluteRunDir", directory);
+        Set("token", deadline.Token); Set("startupDiagnostic", diagnostic);
+        ((Stopwatch)typeof(Playback).GetField("startupWatch", flags)!.GetValue(playback)!).Restart();
+        typeof(Playback).GetMethod("SetStartupStage", flags)!.Invoke(playback, ["document_readiness"]);
+        var document = typeof(Playback).GetMethod("WaitForInitialDocument", flags)!;
+        var viewport = typeof(Playback).GetMethod("WaitForInitialViewport", flags)!;
+        var documentCalls = 0; var finalChecks = 0; var injected = false;
+        var displayPath = Path.Combine(directory, "display.json");
+        Task Value(JsonObject request, JsonNode value) => fixture.Reply(request, new()
+        {
+            ["result"] = new JsonObject { ["value"] = value },
+        });
+        async Task Serve()
+        {
+            while (true)
+            {
+                var request = await fixture.Read();
+                Check(Json.Text(request["sessionId"]) == "viewport-test", "viewport 測定の session が変わった");
+                var method = Json.Text(request["method"]);
+                if (method == "Page.getLayoutMetrics")
+                {
+                    await fixture.Reply(request, new()
+                    {
+                        ["cssVisualViewport"] = new JsonObject { ["clientWidth"] = documentCalls > 1 ? 900 : 800, ["clientHeight"] = documentCalls > 1 ? 500 : 400 },
+                    });
+                    continue;
+                }
+                Check(method == "Runtime.evaluate", "viewport 測定中に想定外の CDP 操作を要求した: " + method);
+                var expression = Json.Text(request["params"]?["expression"]);
+                if (expression == "({url:location.href,ready:document.readyState})")
+                {
+                    documentCalls++;
+                    await Value(request, new JsonObject { ["url"] = documentCalls == 1 ? "http://fixture/before" : "http://fixture/after", ["ready"] = "complete" });
+                    continue;
+                }
+                if (expression == "({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1})")
+                {
+                    await Value(request, new JsonObject { ["dpr"] = 1, ["scale"] = 1 });
+                    continue;
+                }
+                Check(expression == "document.readyState", "想定外のページ評価を要求した: " + expression);
+                // display.json の保存前には常に complete を返し、保存直後の最後の照会だけを競合させる。
+                if (File.Exists(displayPath) && !injected)
+                {
+                    injected = true; finalChecks++;
+                    if (contextDestroyed)
+                        await fixture.Send(new JsonObject
+                        {
+                            ["id"] = request["id"]!.DeepClone(),
+                            ["error"] = new JsonObject { ["code"] = -32000, ["message"] = "Execution context was destroyed." },
+                        }.ToJsonString());
+                    else await Value(request, JsonValue.Create("loading")!);
+                    continue;
+                }
+                var final = injected && documentCalls > 1 && File.Exists(displayPath)
+                    && Json.Number(JsonNode.Parse(File.ReadAllText(displayPath))?["actual"]?["width"]) == 900;
+                if (final) finalChecks++;
+                await Value(request, JsonValue.Create("complete")!);
+                if (final) return;
+            }
+        }
+        async Task<JsonObject> Prepare()
+        {
+            await (Task)document.Invoke(playback, null)!;
+            return await (Task<JsonObject>)viewport.Invoke(playback, [null, false, new JsonObject()])!;
+        }
+        var preparing = Prepare();
+        await Task.WhenAll(preparing, Serve());
+        var actual = await preparing;
+        Check(injected && finalChecks == 2 && documentCalls == 2, "診断保存後の競合で文書準備と最終確認をやり直していない");
+        Check(Json.Number(actual["width"]) == 900 && Json.Number(actual["height"]) == 500, "追加遷移前の測定値を返した");
+        Check((double)typeof(Playback).GetField("width", flags)!.GetValue(playback)! == 900
+            && (double)typeof(Playback).GetField("height", flags)!.GetValue(playback)! == 500, "入力用の viewport フィールドに再測定値を反映していない");
+        var savedDisplay = JsonNode.Parse(File.ReadAllText(displayPath))!;
+        Check(Json.Number(savedDisplay["actual"]?["width"]) == 900 && Json.Number(savedDisplay["actual"]?["height"]) == 500, "display.json に古い測定値が残った");
+        var stages = JsonNode.Parse(File.ReadAllText(Path.Combine(directory, "startup.json")))!["stages"]!.AsArray()
+            .Select(stage => Json.Text(stage!["stage"])).ToArray();
+        Check(stages.SequenceEqual(new[] { "document_readiness", "viewport_stability", "document_readiness", "viewport_stability" }),
+            "診断保存後の競合で起動段階の再往復を記録していない");
+        Check(fixture.Client.PendingCount == 0 && !fixture.Client.Disconnected.IsCompleted, "viewport 再待機で CDP 要求が残るか接続を破棄した");
+    }
+    finally { Directory.Delete(directory, true); }
+}
+
+await Test("viewport診断保存後にloadingへ戻っても文書準備とサイズ測定をやり直す", () => InitialViewportFinalCheck(false));
+await Test("viewport診断保存後に実行コンテキストが破棄されても文書準備とサイズ測定をやり直す", () => InitialViewportFinalCheck(true));
 
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;

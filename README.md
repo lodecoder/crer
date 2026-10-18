@@ -87,6 +87,8 @@ plan の `on_failure.environment: continue` は、環境エラーになった sc
 
 初回・再利用時のページ準備は既定60秒まで待機します。応答の遅いページでは scenario に
 `playback.timeouts.startup_ms` を指定できます。`0` は無制限で、中断と plan の worker timeout は有効です。
+準備確認後や表示サイズの最終確認中に別の文書へ遷移した場合も、同じ起動期限の残り時間で
+読み込みを待ち直し、表示サイズを再確認します。
 
 ```yaml
 playback:

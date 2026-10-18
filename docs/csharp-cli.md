@@ -116,6 +116,9 @@ iframe を含む文書要求の件数で、URL・ヘッダー・本文は追加�
 要求開始後に文書応答が0件のまま `navigation` で停止した場合は、ページ応答を待っている状態を示す。
 DNS・TLS・サーバーのいずれが原因かは、追加の調査で確認する。
 viewport は `window.viewport ?? window.content` と実測比較する。
+初期文書の準備後に追加遷移で `loading` へ戻った場合、表示サイズの最終確認時も起動全体の期限で
+文書準備を待ち直す。実行コンテキストの切替による一時的な照会失敗も同様に扱う。
+待ち直し後は前の文書のサイズ・安定時間を捨て、viewportの計測期限と安定判定を開始し直す。
 occluded renderer のリサイズが遅延した場合は、読み取り専用キャプチャ後に再測定する。
 一致条件は緩和しない。foreground always / once と opacity は独立して制御する。
 
@@ -163,6 +166,8 @@ dotnet run --project tests/Crer.IntegrationTests -- --exe dist/win-x64/crer.exe 
 
 3並列での初回表示サイズ・背面ウィンドウの描画・10秒超の初期応答・同じ profile の再利用・起動中の worker timeout を確認するには、
 上の IntegrationTests コマンドに `--only startup` を追加する。外部サイトや既存の利用者 profile は使わない。
+viewport待機に入った後の追加遷移、初回・再利用時の10秒超の文書読み込み、起動期限とworker取消しは
+`--only readiness-redirect` で確認する。
 
 fixture server は BCL 製。サーバーと CfT を同じデスクトップ・ネットワーク環境で動かす。
 カーソル等が動いた観測は、外部操作を切り分けられない場合に判定不能として保存する。

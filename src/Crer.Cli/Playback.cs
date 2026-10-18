@@ -377,33 +377,8 @@ public sealed partial class Playback
         if (navigation["errorText"] != null) throw new CrerException(3, $"Initial navigation failed: {Json.Text(navigation["errorText"])}");
         SetStartupStage("document_readiness");
         await WaitForInitialDocument();
-        SetStartupStage("viewport_stability");
         var expected = s.Window["viewport"] ?? s.Window["content"];
-        JsonObject? actual = null;
-        string? previous = null;
-        long stableSince = Environment.TickCount64;
-        var watch = Stopwatch.StartNew();
-        while (watch.Elapsed.TotalMilliseconds < (expected != null && !options.IgnoreViewportMismatch ? 30000 : 10000))
-        {
-            actual = await ReadDisplay();
-            var signature = actual.ToJsonString();
-            if (signature != previous) { stableSince = Environment.TickCount64; previous = signature; }
-            var ready = Json.Text(await Evaluate("document.readyState")) != "loading";
-            var matches = options.IgnoreViewportMismatch || expected == null || (Json.Number(actual["width"]) == Json.Number(expected["width"]) && Json.Number(actual["height"]) == Json.Number(expected["height"]));
-            if (ready && matches && Environment.TickCount64 - stableSince >= 1000) break;
-            await Task.Delay(100, token);
-        }
-        actual ??= await ReadDisplay();
-        Json.Write(Path.Combine(absoluteRunDir, "display.json"), new JsonObject { ["actual"] = actual.DeepClone(), ["expectedViewport"] = expected?.DeepClone(), ["display"] = s.Display.DeepClone(), ["ignoreViewportMismatch"] = options.IgnoreViewportMismatch });
-        width = Json.Number(actual["width"]); height = Json.Number(actual["height"]);
-        if (width <= 0 || height <= 0) throw new CrerException(3, "CfT viewport was unavailable");
-        if (Json.Text(await Evaluate("document.readyState")) == "loading") throw new CrerException(3, "CfT initial page loading timed out");
-        if (expected != null && (width != Json.Number(expected["width"]) || height != Json.Number(expected["height"])))
-        {
-            var message = $"Viewport mismatch: expected {Json.Number(expected["width"])}x{Json.Number(expected["height"])}, got {width}x{height}";
-            if (!options.IgnoreViewportMismatch) throw new CrerException(3, message);
-            logger.Warn($"Warning: {message}; continuing because --ignore-viewport-mismatch was specified");
-        }
+        var actual = await WaitForInitialViewport(expected, options.IgnoreViewportMismatch, s.Display);
         SetStartupStage("display_validation");
         var mode = Json.Text(s.Display["zoom_check"]);
         void Report(string message) { if (mode == "strict") throw new CrerException(3, message); logger.Warn(message); }
@@ -419,6 +394,61 @@ public sealed partial class Playback
         Json.Write(Path.Combine(absoluteRunDir, "launch.json"), new JsonObject { ["stage"] = "ready", ["pid"] = process!.Id, ["targetId"] = targetId, ["sessionId"] = session });
     }
 
+    private async Task<JsonObject> WaitForInitialViewport(JsonNode? expected, bool ignoreViewportMismatch, JsonObject display)
+    {
+        SetStartupStage("viewport_stability");
+        JsonObject? actual = null;
+        string? previous = null;
+        long stableSince = Environment.TickCount64;
+        var watch = Stopwatch.StartNew();
+        var viewportTimeoutMs = expected != null && !ignoreViewportMismatch ? 30000 : 10000;
+        while (true)
+        {
+            try
+            {
+                var measured = await ReadDisplay();
+                // 測定後の文書を確認し、追加遷移の読み込みをviewportの短い期限で打ち切らない。
+                if (Json.Text(await Evaluate("document.readyState")) != "loading")
+                {
+                    actual = measured;
+                    var signature = actual.ToJsonString();
+                    if (signature != previous) { stableSince = Environment.TickCount64; previous = signature; }
+                    var matches = ignoreViewportMismatch || expected == null || (Json.Number(actual["width"]) == Json.Number(expected["width"]) && Json.Number(actual["height"]) == Json.Number(expected["height"]));
+                    if (matches && Environment.TickCount64 - stableSince >= 1000 || watch.Elapsed.TotalMilliseconds >= viewportTimeoutMs)
+                    {
+                        Json.Write(Path.Combine(absoluteRunDir, "display.json"), new JsonObject { ["actual"] = actual.DeepClone(), ["expectedViewport"] = expected?.DeepClone(), ["display"] = display.DeepClone(), ["ignoreViewportMismatch"] = ignoreViewportMismatch });
+                        width = Json.Number(actual["width"]); height = Json.Number(actual["height"]);
+                        if (width <= 0 || height <= 0) throw new CrerException(3, "CfT viewport was unavailable");
+                        // 診断保存中にも文書が切り替わるため、最後の確認も同じ準備待ちへ戻す。
+                        if (Json.Text(await Evaluate("document.readyState")) != "loading") break;
+                    }
+                    else
+                    {
+                        await Task.Delay(100, token);
+                        continue;
+                    }
+                }
+            }
+            catch (CrerException error) when (IsChangingDocument(error))
+            {
+                // 文書の切替中はサイズやreadyStateの評価先も置き換わる。
+            }
+            SetStartupStage("document_readiness");
+            await WaitForInitialDocument();
+            SetStartupStage("viewport_stability");
+            actual = null; previous = null; stableSince = Environment.TickCount64;
+            watch.Restart();
+        }
+        actual ??= await ReadDisplay();
+        if (expected != null && (width != Json.Number(expected["width"]) || height != Json.Number(expected["height"])))
+        {
+            var message = $"Viewport mismatch: expected {Json.Number(expected["width"])}x{Json.Number(expected["height"])}, got {width}x{height}";
+            if (!ignoreViewportMismatch) throw new CrerException(3, message);
+            logger.Warn($"Warning: {message}; continuing because --ignore-viewport-mismatch was specified");
+        }
+        return actual;
+    }
+
     private async Task WaitForInitialDocument()
     {
         // target の URL が遷移先を示していても、実行コンテキストは about:blank の場合がある。
@@ -432,15 +462,17 @@ public sealed partial class Playback
                 var state = await Evaluate("({url:location.href,ready:document.readyState})");
                 if (Json.Text(state?["url"]) is not ("about:blank" or "data:text/html,") && Json.Text(state?["ready"]) is "interactive" or "complete") return;
             }
-            catch (CrerException error) when (error.Code == 4 &&
-                (error.Message.Contains("Execution context was destroyed", StringComparison.OrdinalIgnoreCase) ||
-                 error.Message.Contains("Cannot find context with specified id", StringComparison.OrdinalIgnoreCase)))
+            catch (CrerException error) when (IsChangingDocument(error))
             {
                 // リダイレクトによって、ポーリングと評価の間に実行コンテキストが置き換わる場合がある。
             }
             await Task.Delay(50, token);
         }
     }
+
+    private static bool IsChangingDocument(CrerException error) => error.Code == 4 &&
+        (error.Message.Contains("Execution context was destroyed", StringComparison.OrdinalIgnoreCase) ||
+         error.Message.Contains("Cannot find context with specified id", StringComparison.OrdinalIgnoreCase));
 
     private void OnNetworkEvent(string method, JsonObject p, string? id)
     {

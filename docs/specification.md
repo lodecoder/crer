@@ -476,6 +476,11 @@ artifact screenshot も保存し、標準出力の template 行末に `(reused)`
 準備完了後の step 実行には適用しない。利用者の中断と plan の `timeouts.worker_ms` は常に有効である。
 起動期限超過は環境エラー（終了コード `3`）として当該ブラウザーを破棄し、plan の `environment` ポリシーで
 後続処理を決める。`navigation_ms` の従来の受理のみという扱いは変更しない。
+初期文書の準備後、viewportの測定中や最終確認時に追加遷移で `loading` へ戻った場合は、
+同じ起動期限の残り時間で文書準備を待ち直す。文書切替に伴う実行コンテキストの破棄・未検出も再待機する。
+再待機後は前の文書の測定値・安定時間を引き継がず、viewportの計測を開始し直す。
+viewportの一致・安定確認には従来の10秒（期待サイズを厳密検証する場合は30秒）を使うが、
+文書の再読み込みはこの短い期限で打ち切らない。利用者・workerの取消しとCDP切断は引き続き有効である。
 
 `playback.on_failure` は、続行可能なステップ失敗に対するポリシーである。キーは `default`、
 `navigation`、`timeout`、`action`、`assertion`、`jitter_bounds`、`template` のみを許可し、値は `abort` または

@@ -17,7 +17,7 @@ var exe = Path.GetFullPath(Option("--exe") ?? Environment.GetEnvironmentVariable
 var chrome = Option("--chrome") ?? Environment.GetEnvironmentVariable("CRER_TEST_CHROME");
 if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(chrome) || !File.Exists(exe) || !File.Exists(chrome))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,plan,navigation,blocking,keyboard,windows,display,profiles]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,readiness-redirect,plan,navigation,blocking,keyboard,windows,display,profiles]");
     return 2;
 }
 if (args.Contains("--probe-hidden")) return await ProbeTools.Hidden(chrome!);
@@ -108,6 +108,33 @@ async Task<(string Directory, JsonObject Metadata, JsonObject Launch, nint Windo
         await Task.Delay(50);
     }
     throw new Exception("public CLI did not expose a ready owned CfT window for " + label);
+}
+async Task<string> RedirectDuringViewport(string label, Process owner)
+{
+    var watch = Stopwatch.StartNew();
+    while (watch.Elapsed < TimeSpan.FromSeconds(45))
+    {
+        Check(!owner.HasExited, "追加遷移の準備前にCLIが終了した: " + label + " (code " + (owner.HasExited ? owner.ExitCode : -1) + ")");
+        foreach (var directory in Directory.EnumerateDirectories(Path.GetFullPath(".crer/runs"), "*-" + Name(label) + "-*"))
+            try
+            {
+                if (Json.Text(Read(directory, "startup.json")["stage"]) != "viewport_stability"
+                    || !fixture.Requests.Contains("/readiness-redirect-gate/" + label)) continue;
+                fixture.ReleaseReadinessRedirect(label);
+                return directory;
+            }
+            catch (Exception error) when (error is IOException or System.Text.Json.JsonException) { }
+        await Task.Delay(20);
+    }
+    throw new Exception("追加遷移前に viewport_stability と文書 load 後の gate を確認できない: " + label);
+}
+void CheckRedirectReadiness(JsonNode result, string label)
+{
+    var directory = RunDirectory(result); var startup = Read(directory, "startup.json");
+    Check(fixture.ReadinessStates.TryGetValue(label, out var state) && state == "loading", "第二文書が loading の状態を通過していない: " + label);
+    var stages = startup["stages"]!.AsArray().Select(stage => Json.Text(stage!["stage"])).ToArray();
+    var viewport = Array.IndexOf(stages, "viewport_stability");
+    Check(viewport >= 0 && stages.Skip(viewport + 1).Contains("document_readiness"), "viewport 待機中の追加遷移を文書準備待ちへ戻していない: " + label);
 }
 async Task<Cdp> ObserveCdp(JsonObject metadata)
 {
@@ -355,6 +382,99 @@ await Test("startup", "public startup worker timeout cancels navigation and repl
     Check(!results[0]!["failures"]!.AsArray().Any(failure => Json.Text(failure).Contains("CfT startup timed out", StringComparison.Ordinal)), "unlimited startup replaced the worker cancellation reason");
     var cancelled = Read(RunDirectory(results[0]!), "run.json"); var continued = Read(RunDirectory(results[1]!), "run.json");
     Check(continued["browserSession"]!["reused"]!.GetValue<bool>() == false && Json.Number(cancelled["chromePid"]) != Json.Number(continued["chromePid"]), "cancelled startup browser was reused by the next scenario");
+    Cleanup(results[0]!); Cleanup(results[1]!);
+});
+
+await Test("readiness-redirect", "viewport待機中の追加遷移は初回と再利用で10秒を超えても読み込みを待つ", async () =>
+{
+    var labels = new[] { "readiness-redirect-first", "readiness-redirect-reused" };
+    var profile = Profile("readiness-redirect-success");
+    var leaves = new List<JsonObject>();
+    for (var index = 0; index < labels.Length; index++)
+    {
+        var label = labels[index];
+        var scenario = Scenario(label, fixture.Base + "/readiness-redirect/" + label, profile, null, Wait("ready"), Idle());
+        if (index == 1) scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 0 } };
+        leaves.Add(Leaf(Write(label, scenario)));
+    }
+    var path = Write("readiness-redirect-success", Plan(Serial(leaves.ToArray())));
+    using var process = Start("readiness-redirect-success", "run", path, "--ignore-viewport-mismatch");
+    foreach (var label in labels) await RedirectDuringViewport(label, process.Process);
+    var output = await process.Finish();
+    Check(output.Code == 0, "追加遷移後の文書読み込みが局所期限で失敗した: " + output.Stderr);
+    var results = TrailingJson(output.Stdout).AsArray();
+    Check(results.Count == 2 && results.All(result => Json.Number(result!["code"]) == 0), "初回または再利用時の追加遷移が失敗した");
+    for (var index = 0; index < labels.Length; index++)
+    {
+        var label = labels[index]; var result = results[index]!;
+        CheckRedirectReadiness(result, label);
+        var startup = Read(RunDirectory(result), "startup.json");
+        Check(Json.Text(startup["status"]) == "ready" && Json.Number(startup["elapsedMs"]) >= 12000
+            && Json.Number(startup["timeoutMs"]) == (index == 0 ? 60000 : 0), "10秒を超える読み込みまたは起動期限の診断が一致しない: " + label);
+        Check(fixture.Exchanges.Contains(("/readiness-redirect-body/" + label, "response")), "第二文書の末尾送信前に準備完了とした: " + label);
+    }
+    var first = Read(RunDirectory(results[0]!), "run.json"); var last = Read(RunDirectory(results[1]!), "run.json");
+    Check(first["browserSession"]!["reused"]!.GetValue<bool>() == false && last["browserSession"]!["reused"]!.GetValue<bool>()
+        && Json.Number(first["chromePid"]) == Json.Number(last["chromePid"]) && Json.Text(first["cdpEndpoint"]) == Json.Text(last["cdpEndpoint"]),
+        "追加遷移を含む同一 profile のシナリオでブラウザーを再利用していない");
+    var firstLaunch = Read(RunDirectory(results[0]!), "launch.json"); var lastLaunch = Read(RunDirectory(results[1]!), "launch.json");
+    Check(Json.Text(firstLaunch["targetId"]) == Json.Text(lastLaunch["targetId"]) && Json.Text(firstLaunch["sessionId"]) == Json.Text(lastLaunch["sessionId"]),
+        "追加遷移で再利用する target または session が変わった");
+    Check(fixture.Tokens.TryGetValue(labels[0], out var token) && fixture.Tokens.TryGetValue(labels[1], out var reusedToken) && token == reusedToken,
+        "追加遷移後に sessionStorage が継承されない");
+    var retained = Read(RunDirectory(results[0]!), "cleanup.json");
+    Check(retained["sessionRetained"]!.GetValue<bool>() && retained["chromeExited"]!.GetValue<bool>() == false
+        && Json.Number(retained["pendingCdpRequests"]) == 0 && retained["errors"]!.AsArray().Count == 0, "初回の正常なブラウザーセッションを保持できない");
+    Cleanup(results[1]!);
+});
+
+await Test("readiness-redirect", "viewport待機中の追加遷移にも起動全体の期限が適用される", async () =>
+{
+    var label = "readiness-redirect-deadline"; var profile = Profile(label);
+    var scenario = Scenario(label, fixture.Base + "/readiness-redirect/" + label, profile, null, Wait("ready"));
+    scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 6000 } };
+    var next = Write(label + "-next", Scenario(label + "-next", fixture.Base + "/window", profile, null, Wait("ready")));
+    var plan = Plan(Serial(Leaf(Write(label, scenario)), Leaf(next)));
+    plan["on_failure"] = new JsonObject { ["default"] = "abort", ["environment"] = "continue" };
+    var path = Write(label + "-plan", plan);
+    using var process = Start(label, "run", path, "--ignore-viewport-mismatch");
+    await RedirectDuringViewport(label, process.Process);
+    var output = await process.Finish();
+    Check(output.Code == 3, "追加遷移中の起動期限を環境エラーとして終了しない: " + output.Stderr);
+    var results = TrailingJson(output.Stdout).AsArray();
+    Check(results.Count == 2 && Json.Number(results[0]!["code"]) == 3 && Json.Number(results[1]!["code"]) == 0, "起動期限後の同一 profile の継続が失敗した");
+    CheckRedirectReadiness(results[0]!, label);
+    var startup = Read(RunDirectory(results[0]!), "startup.json");
+    Check(Json.Text(startup["status"]) == "failed" && Json.Text(startup["stage"]) == "document_readiness"
+        && results[0]!["failures"]!.AsArray().Any(failure => Json.Text(failure) == "CfT startup timed out (stage: document_readiness)"),
+        "起動期限時の追加遷移を document_readiness として診断しない");
+    var failedRun = Read(RunDirectory(results[0]!), "run.json"); var nextRun = Read(RunDirectory(results[1]!), "run.json");
+    Check(nextRun["browserSession"]!["reused"]!.GetValue<bool>() == false && Json.Number(failedRun["chromePid"]) != Json.Number(nextRun["chromePid"]),
+        "起動期限で失敗したブラウザーを再利用した");
+    Cleanup(results[0]!); Cleanup(results[1]!);
+});
+
+await Test("readiness-redirect", "無期限起動の追加遷移もworker期限で取消し所有ブラウザーを破棄する", async () =>
+{
+    var label = "readiness-redirect-worker"; var profile = Profile(label);
+    var scenario = Scenario(label, fixture.Base + "/readiness-redirect/" + label, profile, null, Wait("ready"));
+    scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 0 } };
+    var next = Write(label + "-next", Scenario(label + "-next", fixture.Base + "/window", profile, null, Wait("ready")));
+    var path = Write(label + "-plan", Plan(Serial(Leaf(Write(label, scenario)), Leaf(next)), worker: 6000));
+    using var process = Start(label, "run", path, "--ignore-viewport-mismatch");
+    await RedirectDuringViewport(label, process.Process);
+    var output = await process.Finish();
+    Check(output.Code == 4, "追加遷移中のworker期限を操作失敗として終了しない: " + output.Stderr);
+    var results = TrailingJson(output.Stdout).AsArray();
+    Check(results.Count == 2 && Json.Number(results[0]!["code"]) == 4 && Json.Number(results[1]!["code"]) == 0, "worker期限後の同一 profile の継続が失敗した");
+    CheckRedirectReadiness(results[0]!, label);
+    Check(Json.Text(Read(RunDirectory(results[0]!), "startup.json")["stage"]) == "document_readiness"
+        && results[0]!["failures"]!.AsArray().Any(failure => Json.Text(failure) == "plan:timeout:worker_ms")
+        && !results[0]!["failures"]!.AsArray().Any(failure => Json.Text(failure).Contains("CfT startup timed out", StringComparison.Ordinal)),
+        "無期限起動がworker取消し理由を置き換えた");
+    var cancelled = Read(RunDirectory(results[0]!), "run.json"); var continued = Read(RunDirectory(results[1]!), "run.json");
+    Check(continued["browserSession"]!["reused"]!.GetValue<bool>() == false && Json.Number(cancelled["chromePid"]) != Json.Number(continued["chromePid"]),
+        "追加遷移中に取消されたブラウザーを再利用した");
     Cleanup(results[0]!); Cleanup(results[1]!);
 });
 

@@ -12,6 +12,7 @@ internal sealed class FixtureServer : IAsyncDisposable
     private readonly ConcurrentDictionary<string, bool> arrived = new();
     private readonly TaskCompletionSource occlusionBarrier = new(TaskCreationOptions.RunContinuationsAsynchronously);
     private readonly ConcurrentDictionary<string, bool> occlusionArrived = new();
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> readinessRedirectGates = new();
     private int startupActive;
     private Task? accept;
     public readonly ConcurrentQueue<string> Requests = [];
@@ -21,6 +22,7 @@ internal sealed class FixtureServer : IAsyncDisposable
     public readonly ConcurrentDictionary<string, string> Tokens = new();
     public readonly ConcurrentDictionary<string, string> Snapshots = new();
     public readonly ConcurrentDictionary<string, string> InitialDisplays = new();
+    public readonly ConcurrentDictionary<string, string> ReadinessStates = new();
     public bool Overlapped { get; private set; }
     public bool StartupOverlapped { get; private set; }
     public bool OcclusionOverlapped { get; private set; }
@@ -30,6 +32,8 @@ internal sealed class FixtureServer : IAsyncDisposable
         listener.Start(); Base = "http://127.0.0.1:" + ((IPEndPoint)listener.LocalEndpoint).Port;
         accept = Accept();
     }
+    public void ReleaseReadinessRedirect(string name) => readinessRedirectGates.GetOrAdd(name,
+        _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).TrySetResult();
     private async Task Accept()
     {
         try { while (!lifetime.IsCancellationRequested) clients.Add(Handle(await listener.AcceptTcpClientAsync(lifetime.Token))); }
@@ -76,6 +80,46 @@ internal sealed class FixtureServer : IAsyncDisposable
                     return;
                 }
                 else if (path.StartsWith("/startup-close/")) return;
+                else if (path.StartsWith("/readiness-redirect-gate/"))
+                {
+                    var name = path["/readiness-redirect-gate/".Length..];
+                    await readinessRedirectGates.GetOrAdd(name,
+                        _ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).Task.WaitAsync(lifetime.Token);
+                    body = "ok"; type = "text/plain; charset=utf-8";
+                }
+                else if (path == "/readiness-redirect-state")
+                {
+                    ReadinessStates[Query(uri, "name")] = Query(uri, "state");
+                    body = "ok"; type = "text/plain; charset=utf-8";
+                }
+                else if (path.StartsWith("/readiness-redirect-body/"))
+                {
+                    var name = path["/readiness-redirect-body/".Length..];
+                    // ヘッダーと先頭を即時に返し、HTML の末尾だけを保留して loading を維持する。
+                    var prefix = "<!doctype html><html><head><title>crer readiness redirect</title><style>body{margin:0;overflow:hidden}</style></head>"
+                        + "<body><p role='status'>loading</p><script>fetch('/readiness-redirect-state?name=" + name
+                        + "&state='+document.readyState).then(response=>response.text());</script><!--" + new string(' ', 4096) + "-->";
+                    var suffix = "<script>document.querySelector('[role=status]').textContent='ready';"
+                        + "const token=sessionStorage.token ||= crypto.randomUUID();fetch('/seen?name=" + name
+                        + "&token='+token).then(response=>response.text());</script></body></html>";
+                    var first = Encoding.UTF8.GetBytes(prefix); var last = Encoding.UTF8.GetBytes(suffix);
+                    var responseHead = Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {first.Length + last.Length}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n");
+                    await stream.WriteAsync(responseHead, lifetime.Token); await stream.WriteAsync(first, lifetime.Token);
+                    Exchanges.Enqueue((path, "prefix"));
+                    await Task.Delay(12000, lifetime.Token);
+                    await stream.WriteAsync(last, lifetime.Token);
+                    Exchanges.Enqueue((path, "response"));
+                    return;
+                }
+                else if (path.StartsWith("/readiness-redirect/"))
+                {
+                    var name = path["/readiness-redirect/".Length..];
+                    // fetch の保留は文書の load を妨げず、テストが viewport 待機へ入ってから追加遷移できる。
+                    // 本文まで読み切ってから遷移し、完了前の通信をネットワーク待機に残さない。
+                    body = "<!doctype html><title>crer before readiness redirect</title><style>body{margin:0;overflow:hidden}</style>"
+                        + "<p role='status'>before redirect</p><script>addEventListener('load',()=>fetch('/readiness-redirect-gate/"
+                        + name + "').then(response=>response.text()).then(()=>location.replace('/readiness-redirect-body/" + name + "')),{once:true});</script>";
+                }
                 else if (path.EndsWith(".svg")) { type = "image/svg+xml"; body = "<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='red'/></svg>"; }
                 else if (path.StartsWith("/initial-viewport/"))
                 {
