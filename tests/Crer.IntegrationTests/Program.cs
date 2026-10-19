@@ -17,7 +17,7 @@ var exe = Path.GetFullPath(Option("--exe") ?? Environment.GetEnvironmentVariable
 var chrome = Option("--chrome") ?? Environment.GetEnvironmentVariable("CRER_TEST_CHROME");
 if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(chrome) || !File.Exists(exe) || !File.Exists(chrome))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only template-search,startup,parallel-focus,readiness-redirect,plan,navigation,keyboard,windows,display,profiles]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only diagnostics,template-search,startup,parallel-focus,readiness-redirect,plan,navigation,keyboard,windows,display,profiles]");
     return 2;
 }
 if (args.Contains("--probe-hidden")) return await ProbeTools.Hidden(chrome!);
@@ -166,6 +166,101 @@ async Task Test(string key, string label, Func<Task> action)
 }
 
 await Test("template-search", "旧式と最適化後の画像照合結果を小画像・境界・大画面で比較する", () => TemplateSearchTests.Run(chrome!, evidence));
+
+JsonObject[] DiagnosticRecords(string directory, string file)
+{
+    var path = Path.Combine(directory, file);
+    Check(File.Exists(path), "診断ログを作成しなかった: " + path);
+    var text = File.ReadAllText(path);
+    foreach (var secret in new[] { "crer-diagnostics-url-secret", "crer-diagnostics-input-secret", "crer-diagnostics-exception-secret",
+        "crer-diagnostics-header-secret", "crer-diagnostics-body-secret" })
+        Check(!text.Contains(secret, StringComparison.Ordinal), "診断ログへ入力・通信・例外の本文が漏れた: " + file);
+    Check(!text.Contains("://", StringComparison.Ordinal), "診断ログへURLを保存した: " + file);
+    var allowed = (file == "network.ndjson"
+        ? new[] { "at", "method", "sessionId", "targetType", "requestId", "pending", "type", "status", "errorText", "canceled", "encodedDataLength", "removedPending" }
+        : new[] { "at", "method", "sessionId", "targetType", "status", "ready", "visibility", "focused", "online", "dialogType", "accepted", "errorType" }).ToHashSet(StringComparer.Ordinal);
+    var records = text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(line => JsonNode.Parse(line)!.AsObject()).ToArray();
+    foreach (var record in records)
+        Check(record.All(field => allowed.Contains(field.Key)), "診断ログに未承認のフィールドが含まれる: " + file + " " + record);
+    return records;
+}
+
+await Test("diagnostics", "公開exeでOOPIFと子workerの通信・状態・例外を再利用後も本文なしで診断する", async () =>
+{
+    var labels = new[] { "diagnostics-first", "diagnostics-reused" };
+    var profile = Profile("diagnostics");
+    var nodes = new List<JsonObject>();
+    foreach (var label in labels)
+    {
+        var scenario = Scenario(label, fixture.Base + "/diagnostics/" + label + "?private=crer-diagnostics-url-secret", profile, null,
+            Wait("ready"), new JsonObject { ["do"] = "click", ["at"] = new JsonObject { ["x"] = 30, ["y"] = 75 } }, Wait("pending"), Sleep(11000));
+        nodes.Add(Leaf(Write(label, scenario)));
+    }
+    var plan = Write("diagnostics-plan", Plan(Serial(nodes.ToArray()), maximum: 1));
+    var (_, value) = await Run("diagnostics-plan", 0, "run", plan, "--mute-audio", "--template-screenshots", "failure-only");
+    var results = value.AsArray();
+    Check(results.Count == 2, "診断の再利用planが二回の結果を返さなかった");
+    var runs = labels.Select(label => results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(label))!).ToArray();
+    var first = Read(RunDirectory(runs[0]), "run.json"); var second = Read(RunDirectory(runs[1]), "run.json");
+    Check(Json.Number(first["chromePid"]) == Json.Number(second["chromePid"])
+        && second["browserSession"]?["reused"]?.GetValue<bool>() == true, "診断回帰で実際のprofile再利用を通過していない");
+    for (var index = 0; index < labels.Length; index++)
+    {
+        var directory = RunDirectory(runs[index]);
+        var network = DiagnosticRecords(directory, "network.ndjson");
+        var states = DiagnosticRecords(directory, "page-state.ndjson");
+        var main = Json.Text(Read(directory, "launch.json")["sessionId"]);
+        foreach (var role in new[] { "iframe", "worker" })
+        {
+            Check(fixture.DiagnosticRequests.TryGetValue(labels[index] + ":" + role, out var received) && received >= 2,
+                "子のローカルHTTP要求をサーバーで確認できなかった: " + labels[index] + " " + role);
+            var child = network.Where(record => Json.Text(record["targetType"]) == role && Json.Text(record["sessionId"]) is { Length: > 0 } session && session != main).ToArray();
+            Check(child.Any(record => Json.Text(record["method"]) == "Network.requestWillBeSent")
+                && child.Any(record => Json.Text(record["method"]) == "Network.responseReceived" && Json.Number(record["status"]) == 200),
+                "サーバーへ届いた子HTTP通信が対応する子sessionのログに現れない: " + labels[index] + " " + role);
+            Check(states.Any(record => Json.Text(record["method"]) == "Runtime.exceptionThrown" && Json.Text(record["targetType"]) == role),
+                "子Runtimeの例外発生を本文なしで保存しなかった: " + labels[index] + " " + role);
+        }
+        Check(fixture.DiagnosticPending.ContainsKey(labels[index] + ":iframe"), "保留するOOPIFのfetchが開始されなかった");
+        foreach (var role in new[] { "page", "iframe" })
+            Check(states.Any(record => Json.Text(record["method"]) == "Page.stateSample" && Json.Text(record["targetType"]) == role
+                && Json.Text(record["status"]) == "ok" && Json.Text(record["ready"]) == "complete"
+                && record["visibility"] is JsonValue && record["focused"] is JsonValue focused && focused.TryGetValue<bool>(out _)
+                && record["online"] is JsonValue online && online.TryGetValue<bool>(out _)),
+                "十秒周期の親子状態サンプルを保存しなかった: " + labels[index] + " " + role);
+    }
+    Cleanup(runs[^1]);
+});
+
+await Test("diagnostics", "子workerの長期fetchを観測してもステップ実行と後始末を妨げない", async () =>
+{
+    const string label = "diagnostics-worker-progress";
+    // worker 初期 Script の移管は親の pending を残すため、既存 network_idle の成否とは分けて検証する。
+    var scenario = Scenario(label, fixture.Base + "/diagnostics/" + label + "?worker=1&private=crer-diagnostics-url-secret", null, null,
+        Wait("ready"), new JsonObject { ["do"] = "click", ["at"] = new JsonObject { ["x"] = 30, ["y"] = 75 } }, Wait("pending"), Sleep(1000),
+        new JsonObject { ["do"] = "log", ["message"] = "diagnostics-pending-continued" });
+    scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["action_ms"] = 3000 } };
+    var path = Write(label, scenario);
+    var (_, result) = await Run(label, 0, "play", path, "--mute-audio", "--template-screenshots", "failure-only");
+    Check(fixture.DiagnosticPending.ContainsKey(label + ":worker"), "子workerの長期fetchが開始されていない");
+    var directory = RunDirectory(result);
+    var network = DiagnosticRecords(directory, "network.ndjson");
+    var steps = File.ReadLines(Path.Combine(directory, "steps.ndjson")).Select(line => JsonNode.Parse(line)!).ToArray();
+    var continued = steps.Single(step => Json.Text(step["index"]) == "4");
+    Check(Json.Text(continued["status"]) == "ok" && Json.Text(continued["message"]) == "diagnostics-pending-continued"
+        && steps.Any(step => Json.Text(step["index"]) == "3" && Json.Text(step["do"]) == "sleep" && Json.Text(step["status"]) == "ok"),
+        "子の長期通信の観測が後続ステップを妨げた");
+    var began = DateTimeOffset.Parse(Json.Text(steps.Single(step => Json.Text(step["index"]) == "1")["startedAt"]));
+    var ended = DateTimeOffset.Parse(Json.Text(continued["completedAt"]));
+    Check(network.Any(request => Json.Text(request["method"]) == "Network.requestWillBeSent" && Json.Text(request["targetType"]) == "worker"
+        && Json.Text(request["type"]) == "Fetch" && DateTimeOffset.Parse(Json.Text(request["at"])) >= began
+        && DateTimeOffset.Parse(Json.Text(request["at"])) <= ended
+        && !network.Any(completion => (Json.Text(completion["method"]) is "Network.loadingFinished" or "Network.loadingFailed")
+            && Json.Text(completion["sessionId"]) == Json.Text(request["sessionId"]) && Json.Text(completion["requestId"]) == Json.Text(request["requestId"])
+            && DateTimeOffset.Parse(Json.Text(completion["at"])) <= ended)),
+        "後続ステップの成功時にも子workerのfetchが未完了だった証拠がない");
+    Cleanup(result);
+});
 
 await Test("parallel-focus", "公開exeで半透明onceの3並列起動と同じprofileの再遷移を最前面属性を保って完走する", async () =>
 {

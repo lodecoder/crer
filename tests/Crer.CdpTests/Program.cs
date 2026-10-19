@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -700,8 +701,188 @@ await Test("記録開始前に古い巨大viewportをcaptureで同期し要求co
 await Test("記録開始前の真のスクロールバー縮小はDOMと一致すれば許可する", () => RecordingContentSize(true, false));
 await Test("記録のviewportが要求contentへ反映されなければ期限内に明示的に失敗する", () => RecordingContentSize(false, true));
 
+JsonObject Attached(string id, string type) => new()
+{
+    ["sessionId"] = id, ["waitingForDebugger"] = false,
+    ["targetInfo"] = new JsonObject { ["type"] = type, ["targetId"] = "target-" + id, ["url"] = "https://private.test/do-not-log" },
+};
+async Task ObserverSettled(Func<bool> ready)
+{
+    var watch = Stopwatch.StartNew();
+    while (!ready() && watch.Elapsed < TimeSpan.FromSeconds(3)) await Task.Delay(5);
+    Check(ready(), "関連 target の非同期初期化または detach が完了しない");
+}
+void AutoAttachRequest(JsonObject request, string session)
+{
+    Check(Json.Text(request["method"]) == "Target.setAutoAttach" && Json.Text(request["sessionId"]) == session, "autoAttach の設定先が違う");
+    var settings = request["params"]!;
+    Check(settings["autoAttach"]!.GetValue<bool>() && settings["flatten"]!.GetValue<bool>()
+        && !settings["waitForDebuggerOnStart"]!.GetValue<bool>(), "関連 target を debugger 停止させたか平坦化を省いた");
+    var filter = settings["filter"]!.AsArray();
+    Check(filter.Count == 5 && filter.Last()!["exclude"]!.GetValue<bool>()
+        && filter.Take(4).Select(item => Json.Text(item!["type"])).SequenceEqual(new[] { "iframe", "worker", "shared_worker", "service_worker" }),
+        "無関係な page を含む autoAttach filter を使用した");
+}
+
+await Test("関連iframeとworkerを再帰観測し子の初期化待ちでCDP受信を止めない", async () =>
+{
+    await using var fixture = await Connection.Create();
+    var removed = new ConcurrentQueue<string>();
+    await using var observer = new RelatedTargetObserver(fixture.Client, "observed-page", removed.Enqueue);
+    fixture.Client.Event += observer.OnEvent;
+    Check(observer.TryGetScope("observed-page", out var mainType) && mainType == "page", "親 page を観測範囲に含めない");
+    var starting = observer.Start(default);
+    var root = await fixture.Read(); AutoAttachRequest(root, "observed-page");
+    await fixture.Reply(root, new()); await starting;
+    await fixture.Send(new JsonObject { ["method"] = "Target.attachedToTarget", ["params"] = Attached("frame", "iframe"), ["sessionId"] = "observed-page" }.ToJsonString());
+    var network = await fixture.Read();
+    Check(Json.Text(network["method"]) == "Network.enable" && Json.Text(network["sessionId"]) == "frame"
+        && observer.TryGetScope("frame", out var frameType) && frameType == "iframe", "子 iframe を初期化前に登録しない");
+    var ping = fixture.Client.Call("Test.observer.ping");
+    var request = await fixture.Read();
+    Check(Json.Text(request["method"]) == "Test.observer.ping", "子の返信待ちが親の要求を塞いだ");
+    await fixture.Reply(request, new() { ["ok"] = true });
+    Check((await ping.WaitAsync(TimeSpan.FromSeconds(1)))["ok"]!.GetValue<bool>(), "イベントハンドラーが子の初期化を同期的に待った");
+    await fixture.Reply(network, new());
+    var runtime = await fixture.Read();
+    Check(Json.Text(runtime["method"]) == "Runtime.enable" && Json.Text(runtime["sessionId"]) == "frame", "子 Runtime の例外観測を有効にしない");
+    await fixture.Reply(runtime, new());
+    var recursive = await fixture.Read(); AutoAttachRequest(recursive, "frame"); await fixture.Reply(recursive, new());
+    await fixture.Send(new JsonObject { ["method"] = "Target.attachedToTarget", ["params"] = Attached("nested-worker", "worker"), ["sessionId"] = "frame" }.ToJsonString());
+    foreach (var method in new[] { "Network.enable", "Runtime.enable", "Target.setAutoAttach" })
+    {
+        var worker = await fixture.Read();
+        Check(Json.Text(worker["method"]) == method && Json.Text(worker["sessionId"]) == "nested-worker", "孫 worker の初期化が欠けた");
+        if (method == "Target.setAutoAttach") AutoAttachRequest(worker, "nested-worker");
+        await fixture.Reply(worker, new());
+    }
+    await ObserverSettled(() => Json.Number(observer.Diagnostic()["pendingInitializations"]) == 0);
+    var snapshot = observer.SnapshotScopes();
+    Check(snapshot.Count == 3 && snapshot[0] == ("observed-page", "page")
+        && Json.Number(observer.Diagnostic()["networkEnabled"]) == 2 && Json.Number(observer.Diagnostic()["runtimeEnabled"]) == 2,
+        "親・子・孫の観測範囲または有効化回数が違う");
+    observer.OnEvent("Target.attachedToTarget", Attached("unrelated-page", "page"), "observed-page");
+    observer.OnEvent("Target.attachedToTarget", Attached("unrelated-worker", "worker"), "other-page");
+    Check(!observer.TryGetScope("unrelated-page", out _) && !observer.TryGetScope("unrelated-worker", out _), "無関係な target を観測した");
+    await fixture.Send(new JsonObject { ["method"] = "Target.detachedFromTarget", ["params"] = new JsonObject { ["sessionId"] = "frame" }, ["sessionId"] = "observed-page" }.ToJsonString());
+    await ObserverSettled(() => removed.Count == 2);
+    Check(!observer.TryGetScope("frame", out _) && !observer.TryGetScope("nested-worker", out _)
+        && snapshot.Count == 3 && observer.SnapshotScopes().Count == 1, "detach で孫が残るか以前のスナップショットが変化した");
+    Check(fixture.Client.PendingCount == 0 && !fixture.Client.Disconnected.IsCompleted, "診断用の観測で本体CDPを壊した");
+});
+
+await Test("関連targetの未対応domainを型と件数だけに記録し他の初期化を続ける", async () =>
+{
+    const string secret = "PRIVATE-URL-TOKEN-INPUT";
+    var calls = new ConcurrentQueue<string>();
+    var transport = new ObserverTransport((method, _, session, _, _) =>
+    {
+        calls.Enqueue(session + ":" + method);
+        if (session == "worker" && method == "Network.enable") throw new CrerException(4, secret);
+        if (session == "worker" && method == "Runtime.enable") throw new InvalidOperationException(secret);
+        return Task.FromResult(new JsonObject());
+    });
+    await using var observer = new RelatedTargetObserver(transport, "page", _ => { });
+    await observer.Start(default);
+    observer.OnEvent("Target.attachedToTarget", Attached("worker", "service_worker"), "page");
+    await ObserverSettled(() => calls.Count == 4 && Json.Number(observer.Diagnostic()["pendingInitializations"]) == 0);
+    var diagnostic = observer.Diagnostic();
+    Check(observer.TryGetScope("worker", out var type) && type == "service_worker"
+        && calls.Contains("worker:Target.setAutoAttach") && Json.Number(diagnostic["failures"]) == 2
+        && Json.Number(diagnostic["failureTypes"]?[nameof(CrerException)]) == 1
+        && Json.Number(diagnostic["failureTypes"]?[nameof(InvalidOperationException)]) == 1,
+        "未対応domainで関連 target の観測全体を中断した");
+    Check(!diagnostic.ToJsonString().Contains(secret) && !diagnostic.ToJsonString().Contains("private.test"), "診断へURLや例外メッセージを保存した");
+    await using var unsupported = new RelatedTargetObserver(new ObserverTransport((_, _, _, _, _) => throw new CrerException(4, secret)), "page", _ => { });
+    await unsupported.Start(default);
+    Check(Json.Number(unsupported.Diagnostic()["failures"]) == 1 && unsupported.Diagnostic()["mainAutoAttachEnabled"]?.GetValue<bool>() == false,
+        "親 autoAttach の未対応を本体エラーへ伝播した");
+});
+
+await Test("関連target観測の開始取消しは元の利用者tokenを維持する", async () =>
+{
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var ignored = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+    await using var observer = new RelatedTargetObserver(new ObserverTransport((_, _, _, _, _) =>
+    { entered.TrySetResult(); return ignored.Task; }), "page", _ => { });
+    using var cancellation = new CancellationTokenSource();
+    var starting = observer.Start(cancellation.Token);
+    await entered.Task;
+    cancellation.Cancel();
+    try { await starting; throw new Exception("観測開始が利用者の取消しを無視した"); }
+    catch (OperationCanceledException error) { Check(error.CancellationToken == cancellation.Token, "元の利用者tokenを置き換えた"); }
+    await observer.DisposeAsync();
+    Check(Json.Number(observer.Diagnostic()["failures"]) == 0, "利用者取消しをdomain未対応として数えた");
+});
+
+await Test("関連targetの初期化が取消しを無視しても終了時に有限で排出する", async () =>
+{
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var ignored = new TaskCompletionSource<JsonObject>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var removed = new ConcurrentQueue<string>();
+    var callToken = CancellationToken.None;
+    var callTimeout = 0;
+    var transport = new ObserverTransport((method, _, session, token, timeout) =>
+    {
+        if (session == "child" && method == "Network.enable")
+        {
+            callToken = token; callTimeout = timeout;
+            entered.TrySetResult(); return ignored.Task;
+        }
+        return Task.FromResult(new JsonObject());
+    });
+    var observer = new RelatedTargetObserver(transport, "page", removed.Enqueue);
+    await observer.Start(default);
+    observer.OnEvent("Target.attachedToTarget", Attached("child", "shared_worker"), "page");
+    await entered.Task;
+    var watch = Stopwatch.StartNew();
+    await Task.WhenAll(observer.DisposeAsync().AsTask(), observer.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(1));
+    Check(watch.Elapsed < TimeSpan.FromSeconds(1) && removed.SequenceEqual(new[] { "child" })
+        && observer.SnapshotScopes().Count == 0 && !observer.TryGetScope("child", out _)
+        && !callToken.CanBeCanceled && callTimeout == 1500
+        && observer.Diagnostic()["drainTimedOut"]?.GetValue<bool>() == false,
+        "終了時に観測scopeが残るか、診断の取消しで再利用する接続の送信へ影響した");
+    observer.OnEvent("Target.attachedToTarget", Attached("late", "worker"), "page");
+    Check(!observer.TryGetScope("late", out _), "終了後のイベントで監視を再開した");
+});
+
+await Test("観測用transportが同期停止しても終了処理は有限で診断する", async () =>
+{
+    using var release = new ManualResetEventSlim();
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var transport = new ObserverTransport((method, _, session, _, _) =>
+    {
+        if (session == "blocked" && method == "Network.enable")
+        {
+            entered.TrySetResult();
+            if (!release.Wait(TimeSpan.FromSeconds(8))) throw new Exception("調査用transportの解放が遅れた");
+        }
+        return Task.FromResult(new JsonObject());
+    });
+    var observer = new RelatedTargetObserver(transport, "page", _ => { });
+    try
+    {
+        await observer.Start(default);
+        observer.OnEvent("Target.attachedToTarget", Attached("blocked", "worker"), "page");
+        await entered.Task;
+        await observer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+        Check(observer.Diagnostic()["drainTimedOut"]?.GetValue<bool>() == true, "同期停止した診断初期化を無期限に待った");
+    }
+    finally { release.Set(); await observer.DisposeAsync(); }
+    await ObserverSettled(() => Json.Number(observer.Diagnostic()["pendingInitializations"]) == 0);
+});
+
+await PageStateMonitorTests.Run(Test, Check);
+await RelatedNetworkPlaybackTests.Run(Test, Check);
+
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
+
+sealed class ObserverTransport(Func<string, JsonObject?, string?, CancellationToken, int, Task<JsonObject>> call) : ICdpTransport
+{
+    public Task<JsonObject> Call(string method, JsonObject? parameters = null, string? session = null, CancellationToken token = default, int timeoutMs = 10000)
+        => call(method, parameters, session, token, timeoutMs);
+}
 
 // A real loopback WebSocket, built only from the BCL. No Chrome or HTTP URL ACL is required.
 sealed class Connection(Cdp client, TcpClient tcp, WebSocket server) : IAsyncDisposable

@@ -21,6 +21,8 @@ internal sealed class FixtureServer : IAsyncDisposable
     public readonly ConcurrentDictionary<string, string> Snapshots = new();
     public readonly ConcurrentDictionary<string, string> InitialDisplays = new();
     public readonly ConcurrentDictionary<string, string> ReadinessStates = new();
+    public readonly ConcurrentDictionary<string, int> DiagnosticRequests = new();
+    public readonly ConcurrentDictionary<string, bool> DiagnosticPending = new();
     public bool Overlapped { get; private set; }
     public bool StartupOverlapped { get; private set; }
     public bool OcclusionOverlapped { get; private set; }
@@ -58,6 +60,72 @@ internal sealed class FixtureServer : IAsyncDisposable
                 if (path == "/seen") { Tokens[Query(uri, "name")] = Query(uri, "token"); body = "ok"; type = "text/plain; charset=utf-8"; }
                 else if (path == "/submitted") { Snapshots[Query(uri, "case")] = Query(uri, "value"); body = "ok"; type = "text/plain; charset=utf-8"; }
                 else if (path == "/initial-display") { InitialDisplays[Query(uri, "name")] = Query(uri, "value"); body = "ok"; type = "text/plain; charset=utf-8"; }
+                else if (path == "/diagnostics-fetch")
+                {
+                    DiagnosticRequests.AddOrUpdate(Query(uri, "name") + ":" + Query(uri, "role"), 1, (_, count) => count + 1);
+                    headers = "X-Crer-Private: crer-diagnostics-header-secret\r\n";
+                    body = "crer-diagnostics-body-secret"; type = "text/plain; charset=utf-8";
+                }
+                else if (path == "/diagnostics-pending")
+                {
+                    DiagnosticPending[Query(uri, "name") + ":" + Query(uri, "role")] = true;
+                    // 子の fetch だけを保留し、親の load や従来の network_idle と切り分ける。
+                    await Task.Delay(Timeout.Infinite, lifetime.Token);
+                    return;
+                }
+                else if (path.StartsWith("/diagnostics-worker/"))
+                {
+                    var name = path["/diagnostics-worker/".Length..];
+                    type = "text/javascript; charset=utf-8";
+                    body = $$$"""
+                        const name='{{{name}}}';
+                        const ping=()=>fetch('/diagnostics-fetch?name='+name+'&role=worker&private=crer-diagnostics-url-secret',
+                          {headers:{'X-Crer-Private':'crer-diagnostics-header-secret'}}).then(response=>response.text()).then(()=>postMessage('ready'));
+                        ping();const timer=setInterval(ping,500);
+                        addEventListener('message',event=>{if(event.data==='pending'){
+                          clearInterval(timer);fetch('/diagnostics-pending?name='+name+'&role=worker&private=crer-diagnostics-url-secret');postMessage('pending');}});
+                        setInterval(()=>{throw new Error('crer-diagnostics-exception-secret');},3000);
+                        """;
+                }
+                else if (path.StartsWith("/diagnostics-child/"))
+                {
+                    var name = path["/diagnostics-child/".Length..];
+                    body = $$$"""
+                        <!doctype html><title>crer diagnostic child</title><input value='crer-diagnostics-input-secret'>
+                        <script>
+                        const name='{{{name}}}',worker=new Worker('/diagnostics-worker/'+name+'?private=crer-diagnostics-url-secret');
+                        const report=role=>parent.postMessage({name,role},'*');
+                        worker.onmessage=event=>{if(event.data==='ready')report('worker');};
+                        const ping=()=>fetch('/diagnostics-fetch?name='+name+'&role=iframe&private=crer-diagnostics-url-secret',
+                          {headers:{'X-Crer-Private':'crer-diagnostics-header-secret'}}).then(response=>response.text()).then(()=>report('iframe'));
+                        ping();setInterval(ping,500);
+                        addEventListener('message',event=>{if(event.data==='pending'){
+                          fetch('/diagnostics-pending?name='+name+'&role=iframe&private=crer-diagnostics-url-secret');report('pending');}});
+                        setInterval(()=>{throw new Error('crer-diagnostics-exception-secret');},3000);
+                        </script>
+                        """;
+                }
+                else if (path.StartsWith("/diagnostics/"))
+                {
+                    var name = path["/diagnostics/".Length..];
+                    var workerOnly = Query(uri, "worker") == "1";
+                    var child = workerOnly ? "" : "<iframe src='" + Base.Replace("127.0.0.1", "localhost", StringComparison.Ordinal)
+                        + "/diagnostics-child/" + name + "?private=crer-diagnostics-url-secret'></iframe>";
+                    var setup = workerOnly
+                        ? "const worker=new Worker('/diagnostics-worker/'+name+'?private=crer-diagnostics-url-secret');worker.onmessage=event=>{if(event.data==='ready')ready('worker');if(event.data==='pending')pending();};start.onclick=()=>worker.postMessage('pending');"
+                        : "addEventListener('message',event=>{if(event.data.name===name){if(event.data.role==='pending')pending();else ready(event.data.role);}});start.onclick=()=>document.querySelector('iframe').contentWindow.postMessage('pending','*');";
+                    body = $$"""
+                        <!doctype html><title>crer diagnostic parent</title>
+                        <style>body{margin:0;overflow:hidden}button{position:absolute;left:10px;top:60px;width:160px;height:30px}iframe{position:absolute;top:110px;left:0;width:400px;height:200px}</style>
+                        <input value='crer-diagnostics-input-secret'><p id='status' role='status'>waiting</p><button id='start'>Start pending</button>{{child}}
+                        <script>
+                        const name='{{name}}',status=document.getElementById('status'),start=document.getElementById('start'),seen=new Set();let holding=false;
+                        const pending=()=>{holding=true;status.textContent='pending';};
+                        const ready=role=>{seen.add(role);if(!holding&&({{(workerOnly ? "seen.has('worker')" : "seen.has('worker')&&seen.has('iframe')")}}))status.textContent='ready';};
+                        {{setup}}
+                        </script>
+                        """;
+                }
                 else if (path.StartsWith("/record-size/"))
                 {
                     var name = path["/record-size/".Length..];

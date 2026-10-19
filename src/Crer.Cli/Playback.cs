@@ -17,12 +17,16 @@ public sealed partial class Playback
     private string absoluteRunDir = "";
     private string profile = "";
     private readonly HashSet<string> requests = [];
+    private readonly HashSet<(string SessionId, string RequestId)> observedRequests = [];
     private readonly object networkLock = new();
     private int networkRequests, networkResponses, networkFinished, networkFailed, documentRequests, documentResponses;
     private string? lastNetworkError;
     private string? currentPageUrl;
     private string mainFrameId = "";
     private AsyncDiagnosticLog? networkLog;
+    private AsyncDiagnosticLog? pageStateLog;
+    private PageStateMonitor? pageStateMonitor;
+    private RelatedTargetObserver? relatedTargets;
     private long lastNetworkActivity = Environment.TickCount64;
     private double width, height;
     private readonly List<string> cleanupErrors = [];
@@ -168,6 +172,8 @@ public sealed partial class Playback
         catch (Exception e) { code = 3; failures.Add((JsonNode?)JsonValue.Create(e.Message)); }
         finally
         {
+            await StopPageStateMonitoring();
+            if (relatedTargets != null) metadata["relatedTargets"] = relatedTargets.Diagnostic();
             if (retainSession && persistent && code is 0 or 4 && cdp != null && !cdp.Disconnected.IsCompleted)
             {
                 try
@@ -185,6 +191,13 @@ public sealed partial class Playback
             {
                 await completedLog.CompleteAsync();
                 metadata["networkLog"] = completedLog.Diagnostic();
+            }
+            AsyncDiagnosticLog? completedStateLog;
+            lock (networkLock) { completedStateLog = pageStateLog; pageStateLog = null; }
+            if (completedStateLog != null)
+            {
+                await completedStateLog.CompleteAsync();
+                metadata["pageStateLog"] = completedStateLog.Diagnostic();
             }
             if (cleanupErrors.Count > 0)
             {
@@ -216,7 +229,9 @@ public sealed partial class Playback
             absoluteRunDir = directory;
             networkLog?.Complete();
             networkLog = new AsyncDiagnosticLog(Path.Combine(directory, "network.ndjson"));
-            requests.Clear(); lastNetworkActivity = Environment.TickCount64;
+            pageStateLog?.Complete();
+            pageStateLog = new AsyncDiagnosticLog(Path.Combine(directory, "page-state.ndjson"));
+            requests.Clear(); observedRequests.Clear(); lastNetworkActivity = Environment.TickCount64;
             networkRequests = networkResponses = networkFinished = networkFailed = documentRequests = documentResponses = 0;
             lastNetworkError = null;
         }
@@ -241,7 +256,8 @@ public sealed partial class Playback
             lock (networkLock)
             {
                 var network = new JsonObject { ["requests"] = networkRequests, ["responses"] = networkResponses,
-                    ["finished"] = networkFinished, ["failed"] = networkFailed, ["pending"] = requests.Count,
+                    ["finished"] = networkFinished, ["failed"] = networkFailed, ["pending"] = observedRequests.Count,
+                    ["pendingMain"] = requests.Count,
                     ["documentRequests"] = documentRequests, ["documentResponses"] = documentResponses };
                 if (lastNetworkError != null) network["lastError"] = lastNetworkError;
                 startupDiagnostic["network"] = network;
@@ -342,6 +358,7 @@ public sealed partial class Playback
         SetStartupStage("page_window");
         var window = await Call("Browser.getWindowForTarget", new() { ["targetId"] = targetId }, false);
         windowId = window["windowId"]!.GetValue<int>();
+        relatedTargets = new RelatedTargetObserver(cdp, session, DetachNetworkScope);
         cdp.Event += OnNetworkEvent;
         await ConfigurePage(s, options, retainSession, true);
     }
@@ -366,7 +383,10 @@ public sealed partial class Playback
             await Call("Page.enable");
             await Call("Runtime.enable");
             await Call("Network.enable");
+            if (relatedTargets != null) await relatedTargets.Start(token);
         }
+        if (relatedTargets != null && pageStateLog != null)
+            pageStateMonitor ??= new PageStateMonitor(cdp!, relatedTargets.SnapshotScopes, pageStateLog);
         if (s.Window["content"] is JsonObject content)
         {
             SetStartupStage("content_sizing");
@@ -492,21 +512,26 @@ public sealed partial class Playback
 
     private void OnNetworkEvent(string method, JsonObject p, string? id)
     {
-        if (id != session) return;
-        if (method == "Page.frameNavigated" && p["frame"] is JsonObject frame && frame["parentId"] == null)
+        relatedTargets?.OnEvent(method, p, id);
+        var targetType = "page";
+        if (id != session && (relatedTargets == null || !relatedTargets.TryGetScope(id, out targetType))) return;
+        if (id == null) return;
+        if (id == session && method == "Page.frameNavigated" && p["frame"] is JsonObject frame && frame["parentId"] == null)
             currentPageUrl = Json.Text(frame["url"]);
-        else if (method == "Page.navigatedWithinDocument")
+        else if (id == session && method == "Page.navigatedWithinDocument")
         {
             // 子 frame の遷移先をトップページの URL として記録しない。
             if (Json.Text(p["frameId"]) == mainFrameId) currentPageUrl = Json.Text(p["url"]);
         }
-        if (method == "Page.frameNavigated" && p["frame"] is JsonObject mainFrame && mainFrame["parentId"] == null)
+        if (id == session && method == "Page.frameNavigated" && p["frame"] is JsonObject mainFrame && mainFrame["parentId"] == null)
             mainFrameId = Json.Text(mainFrame["id"]);
         lock (networkLock)
         {
             if (method == "Network.requestWillBeSent")
             {
-                requests.Add(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64;
+                observedRequests.Add((id, Json.Text(p["requestId"])));
+                // 診断対象の拡張で、既存の main 文書に対する network_idle の意味は変えない。
+                if (id == session) { requests.Add(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64; }
                 networkRequests++;
                 if (Json.Text(p["type"]) == "Document") documentRequests++;
             }
@@ -515,16 +540,22 @@ public sealed partial class Playback
                 networkResponses++;
                 if (Json.Text(p["type"]) == "Document") documentResponses++;
             }
-            if (method is "Network.loadingFinished" or "Network.loadingFailed") { requests.Remove(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64; }
+            if (method is "Network.loadingFinished" or "Network.loadingFailed")
+            {
+                observedRequests.Remove((id, Json.Text(p["requestId"])));
+                if (id == session) { requests.Remove(Json.Text(p["requestId"])); lastNetworkActivity = Environment.TickCount64; }
+            }
             if (method == "Network.loadingFinished") networkFinished++;
             if (method == "Network.loadingFailed") networkFailed++;
             if (method is "Network.requestWillBeSent" or "Network.responseReceived" or "Network.loadingFinished" or "Network.loadingFailed")
             {
                 // URL、ヘッダー、本文を保存せず、通信の開始・応答・失敗だけを区別する。
                 var trace = new JsonObject { ["at"] = DateTime.UtcNow.ToString("O"), ["method"] = method,
-                    ["requestId"] = p["requestId"]?.DeepClone(), ["pending"] = requests.Count };
+                    ["sessionId"] = id, ["targetType"] = targetType,
+                    ["requestId"] = p["requestId"]?.DeepClone(), ["pending"] = observedRequests.Count };
                 if (p["type"] != null) trace["type"] = p["type"]!.DeepClone();
                 if (method == "Network.responseReceived") trace["status"] = p["response"]?["status"]?.DeepClone();
+                if (method == "Network.loadingFinished") trace["encodedDataLength"] = p["encodedDataLength"]?.DeepClone();
                 if (method == "Network.loadingFailed")
                 {
                     var error = Json.Text(p["errorText"]);
@@ -534,7 +565,43 @@ public sealed partial class Playback
                 }
                 networkLog?.Append(trace.ToJsonString());
             }
+            if (method is "Page.javascriptDialogOpening" or "Page.javascriptDialogClosed" or "Runtime.exceptionThrown")
+            {
+                var trace = new JsonObject { ["at"] = DateTime.UtcNow.ToString("O"), ["method"] = method,
+                    ["sessionId"] = id, ["targetType"] = targetType };
+                // ダイアログ本文、例外文、スタック、URL、入力値は保存しない。
+                if (method == "Page.javascriptDialogOpening" && Json.Text(p["type"]) is "alert" or "confirm" or "prompt" or "beforeunload")
+                    trace["dialogType"] = Json.Text(p["type"]);
+                if (method == "Page.javascriptDialogClosed" && p["result"] is JsonValue result && result.TryGetValue<bool>(out var accepted))
+                    trace["accepted"] = accepted;
+                pageStateLog?.Append(trace.ToJsonString());
+            }
         }
+    }
+
+    private void DetachNetworkScope(string detachedSession)
+    {
+        lock (networkLock)
+        {
+            var removed = observedRequests.RemoveWhere(request => request.SessionId == detachedSession);
+            networkLog?.Append(new JsonObject { ["at"] = DateTime.UtcNow.ToString("O"),
+                ["method"] = "Target.detachedFromTarget", ["sessionId"] = detachedSession,
+                ["removedPending"] = removed, ["pending"] = observedRequests.Count }.ToJsonString());
+        }
+    }
+
+    private async Task StopPageStateMonitoring()
+    {
+        var monitor = pageStateMonitor;
+        pageStateMonitor = null;
+        if (monitor == null) return;
+        try
+        {
+            await monitor.DisposeAsync();
+            metadata["pageStateMonitor"] = monitor.Diagnostic();
+        }
+        catch (Exception error)
+        { metadata["pageStateMonitor"] = new JsonObject { ["errorType"] = error.GetType().Name }; }
     }
 
     private async Task<JsonObject> ReadDisplay()
@@ -576,6 +643,7 @@ public sealed partial class Playback
     {
         try
         {
+            await StopPageStateMonitoring();
             if (windows != null)
             {
                 try { windows.Dispose(); } catch (Exception e) { cleanupErrors.Add($"window cleanup failed: {e.Message}"); }
@@ -588,8 +656,19 @@ public sealed partial class Playback
             }
             if (cdp != null)
             {
+                if (relatedTargets != null)
+                {
+                    try
+                    {
+                        await relatedTargets.DisposeAsync();
+                        metadata["relatedTargets"] = relatedTargets.Diagnostic();
+                    }
+                    catch (Exception error)
+                    { metadata["relatedTargets"] = new JsonObject { ["errorType"] = error.GetType().Name }; }
+                }
                 try { await Call("Browser.close", page: false, cancellation: CancellationToken.None, timeout: 1500); } catch { }
                 cdp.Event -= OnNetworkEvent;
+                relatedTargets = null;
                 try { await cdp.DisposeAsync(); } catch (Exception e) { cleanupErrors.Add($"CDP cleanup failed: {e.Message}"); }
             }
             var stopped = true;

@@ -69,6 +69,11 @@ Windows が取得を拒否した場合は前景未取得の診断・実 HWND/PID
 `--only template-search` は専用の headless CfT で固定した旧照合式と最適化後の式を比較する。
 同点・閾値境界・重なり除外・候補の置換・小画像・大画面の座標と類似度が一致することを確認し、
 撮影・画像デコードを除いた照合部分の時間を `template-search-parity.json` に保存する。
+`--only diagnostics` は親と異なるサイトの iframe と worker の通信・例外を検証する。
+同じ profile の再利用後も `network.ndjson` に子 session の通信が残り、`page-state.ndjson` に
+親子の可視状態とフォーカス状態が記録されることを確認する。子の長期通信を観測しても、
+ステップ実行と後始末を妨げないことも検証する。従来の main 文書に対する `network_idle` の
+集計を変更しないことは `Crer.CdpTests` で独立して検証する。
 後者は template の単/複数一致、cache、missing、画像保存方針、条件・反復・break・関数、seed/jitter を検証する。
 
 ## 手動 record → normalize → validate → play

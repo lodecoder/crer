@@ -608,6 +608,18 @@ assert の失敗、`5` 中断とする。
 - `network.ndjson` の診断ログは容量2048件の非同期キューで保存する。保存が追いつかない場合は
   記録を破棄して受信を継続し、保存失敗も CDP 通信断へ変換しない。終了時は最大1秒の保存待ちとし、
   `run.json.networkLog` に `completed`、`dropped`、保存結果が未確定の `pending`、`writeFailed`、`errorType` を残す。
+  対象ページに関連する別プロセスの iframe と worker も自動接続して観測し、`sessionId` と
+  `targetType` で親ページの通信と区別する。要求は `(sessionId, requestId)` 単位で数え、接続が外れた
+  子の未終了要求は観測集計から除く。子への接続ではスクリプトを一時停止せず、CDP 受信中に初期化の
+  応答を同期的に待たない。初期化の失敗・未対応は `run.json.relatedTargets` に型と件数だけを残す。
+  接続前の通信や親子間で移管された要求には開始・終了イベントの欠落があり得るため、未終了件数だけで
+  通信停止とは判断しない。診断範囲の追加で、従来の main 文書に対する `network_idle` 判定は変更しない。
+- `page-state.ndjson` は親ページと関連 iframe の `ready`、`visibility`、`focused`、`online` を約10秒ごとに
+  観測し、状態照会は各 session 最大1秒で打ち切る。照会のために前景・フォーカス・ページの可視状態を
+  強制せず、入力やタイマー設定も変更しない。取得不能は状態値の代わりに例外型だけを記録する。
+  JavaScript 例外の発生とダイアログの開閉も記録するが、例外文、スタック、ダイアログ本文、入力値、
+  URL、ヘッダー、通信本文は保存しない。保存には通信診断と同じ容量制限付きキューを使い、
+  `run.json.pageStateLog` と `pageStateMonitor` に保存結果と観測件数を残す。
 - `on_failure` が `abort` の失敗、または続行不能な失敗時は、以後の同一シナリオ手順を停止する。
   `continue` の失敗時も、最終スクリーンショットと診断（viewport、DPR、URL、locator hint）を
   artifacts に残して次のステップへ進む。終了時は成否を問わず CfT を graceful close する。
