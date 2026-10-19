@@ -99,12 +99,17 @@ CDP が応答しない場合に限り、実行ワーカーが起動した CfT �
 scenario の `browser.window.foreground: true` を指定できる。この場合、`Crer.Windows` は対象 CfT の
 トップレベル HWND をプロセス ID から探索し、起動直後に `SetWindowPos(HWND_TOPMOST)` で常時最前面に
 固定して `SetForegroundWindow` で前景化する。終了処理では `HWND_NOTOPMOST` へ戻してから、実行開始時の
-前景 HWND を復元する。Windows の foreground lock などで前景フォーカスだけを取得できない場合は、
-`Crer.Windows` は `AttachThreadInput` を使って再試行する。それでも拒否された場合は、topmost 化を維持したまま
+前景 HWND を復元する。前景の取得要求が成功した場合と、要求直後に実際の所有 CfT が前景だった場合を取得済みとして扱う。
+Windows の foreground lock などで前景フォーカスだけを取得できない場合は、topmost 化を維持したまま
 Win32 error code を artifacts の `foreground.json` と警告へ記録し、再生は続行する。topmost 化そのものに
-失敗した場合だけ再生を環境エラーとして終了する。起動直後と各 step の直前に HWND をプロセス ID から再探索し
+失敗した場合だけ再生を環境エラーとして終了する。前景を取得していない場合は終了時の前景復元を要求しない。
+`foregroundAcquired` は session 中の取得有無、`foregroundOwned` と `foregroundObserved` は直近の取得要求直後の実観測、
+`restorePerformed` は復元要求の実行有無を示し、復元を要求した場合だけ `restoreStatus` を保存する。
+起動直後と各 step の直前に HWND をプロセス ID から再探索し
 topmost を再適用する。探索では非表示の補助ウィンドウと owner を持つメニュー・ツールチップを除外し、
-表示中のブラウザ本体を選ぶ。`SetWindowPos` に `SWP_NOACTIVATE` を指定し、設定後の `WS_EX_TOPMOST` を検証する。
+表示中のブラウザ本体を選ぶ。`SetWindowPos` に `SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS` を指定し、
+対象 UI の処理完了を同期的に待たず、期限と取消しを適用して `WS_EX_TOPMOST` の反映を確認する。
+反映待ちの間は他のブラウザのウィンドウ操作を共通ロックで妨げない。
 `browser.window.foreground_mode` は `always | once` とし、省略時は `always`。
 `always` では単独再生・session 再利用とも 250 ms 間隔の watchdog で topmost だけを再適用し、待機中の属性解除や
 HWND の再生成に追従する。終了時には watchdog を止めてから topmost を解除する。
@@ -226,11 +231,18 @@ Per-Monitor DPI awareness を維持し、Windows によるウィンドウ全体�
 さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
 `--disable-save-password-bubble` と password manager の専用プロファイル設定により、ログイン後の
 パスワード保存・漏えい検出ポップアップも抑止する。既存の永続プロファイルには他の設定を残したまま
-この設定を反映する。プロファイルは必ず絶対パスで渡す。再生・記録ともに `--app=<URL>` を使う同じ CfT アプリ
-ウィンドウとして起動し、Chrome のタブ・アドレスバー UI をページ座標系から除外する。`--disable-infobars`
+この設定を反映する。プロファイルは必ず絶対パスで渡す。再生・記録ともに空文書を使う同じ CfT アプリ
+ウィンドウとして起動し、content の寸法を反映してから対象 URL へ遷移する。
+Chrome のタブ・アドレスバー UI はページ座標系から除外する。`--disable-infobars`
 で CfT banner の抑止を要求する。CfT のバージョンまたは UI 状態によって banner が表示される場合は、
 記録開始前にページ左上へ注入する 64×64 CSS px のマーカーを物理クリックして、DOM `clientX/clientY` と
-画面座標を対応付ける。マーカーのクリックは記録から除外する。v1 は次を再生前提とする。
+画面座標を対応付ける。マーカーのクリックは記録から除外する。
+新しい raw 記録は各イベントの取得時点の `content_rect_screen_px` を保存し、較正時にも同じ矩形を
+`marker_calibration` に保存する。録画中の移動・サイズ変更はイベントごとの矩形で補正し、
+マーカー較正による原点補正も維持する。旧形式の記録は従来の単一矩形で読み込み、
+`--client-origin` 等で sidecar の利用を明示的に無効化した場合は指定値を優先する。
+対象内で押した修飾キーの解放は、対象外へフォーカスが移った場合も記録する。
+v1 は次を再生前提とする。
 
 - Windows の表示スケーリングは任意とする。実行時に CfT の `devicePixelRatio` を検査し、strict
   の場合は想定値と異なれば失敗にする。
@@ -309,6 +321,7 @@ keydown・keyup を送信する。入力欄への空白入力と、チェック�
 `wait_for` の `playback.timeouts.action_ms`（既定10000）は、条件照会のCDP応答待ちと再照会までの待機を
 含む期限である。期限後に条件が成立しても成功にはせず、`timeout` 失敗として `on_failure.timeout` に従う。
 利用者・workerからの取消しやCDP接続断は、待機期限切れと区別して扱う。
+文書切替による実行コンテキストの破棄・未作成は、元の期限内で条件照会を再試行する。
 `sleep` 以外の各操作には任意の `delay_ms`（0 以上のミリ秒）を指定できる。成功した操作の直後に
 待機してから次のステップへ進む。`normalize` は記録された操作間隔を原則として前の操作の `delay_ms`
 へ出力する。先頭または単独の待機を表す場合だけ、`{ do: sleep, ms: ... }` を用いる。`sleep` と
@@ -470,8 +483,12 @@ scenario の最終結果は `failed`、CLI 終了コードは `4` とする。`c
 
 ## 7. 実行計画（直列・並列）
 
-`.crer.plan.yaml` はシナリオを合成する。既定では各 leaf は別 CfT プロセスなので並列枝は独立しており、
-物理マウスを奪い合わない。1 ブラウザ内での並列タブ実行は座標・フォーカスが競合するため v1
+`.crer.plan.yaml` はシナリオを合成する。既定では各 leaf は別 CfT プロセスなので並列枝は独立し、
+物理マウスを奪い合わない。
+`max_parallel` は実際に実行中の leaf 数を制限する。同じ profile のロック待ちは並列枠を消費しない。
+`fail_fast: true` はネストした直列・並列処理の leaf 完了時にも判定し、失敗したスコープの
+後続 leaf と実行中の兄弟へ取消しを伝える。外側の直列処理の続行方針は変更しない。
+1 ブラウザ内での並列タブ実行は座標・フォーカスが競合するため v1
 では禁止する。`browser_session` は `max_parallel` に関係なく指定できる。同じ永続 profile の leaf は
 profile ごとのロックで直列化し、異なる profile はそれぞれの CfT で並列実行する。
 
@@ -581,9 +598,16 @@ assert の失敗、`5` 中断とする。
   デバッグ目的で残す。`persistent:<directory>` または `--profile-dir` のプロファイルは常に残す。
 - URL は既定で `http` / `https` のみ。`file:`、拡張機能、ダウンロード、権限要求は明示フラグを
   必要とする。
-- 各ステップに時刻、実効座標、jitter offset、CDP 応答、URLをログする。スクリーンショットは明示的な
+- 各ステップに時刻、実効座標、jitter offset、CDP 応答、最後に観測したトップ文書のURLをログする。
+  URL はトップ文書の遷移イベントから更新し、遷移前の状態照会が遅れて応答しても巻き戻さない。
+  ログ保存のための追加の renderer 応答待ちは行わない。
+  利用者・workerの取消しでは同じ例外の親子ステップの画像取得を一度にまとめ、250 ms の予算で試行する。
+  環境エラーの画像取得も同じ例外では一度だけ、最大1000 msで試行する。スクリーンショットは明示的な
   screenshot step、失敗時、および設定で保存を有効にしたtemplate探索時に記録する。入力テキストの値は
   `steps.ndjson` に記録しない。
+- `network.ndjson` の診断ログは容量2048件の非同期キューで保存する。保存が追いつかない場合は
+  記録を破棄して受信を継続し、保存失敗も CDP 通信断へ変換しない。終了時は最大1秒の保存待ちとし、
+  `run.json.networkLog` に `completed`、`dropped`、保存結果が未確定の `pending`、`writeFailed`、`errorType` を残す。
 - `on_failure` が `abort` の失敗、または続行不能な失敗時は、以後の同一シナリオ手順を停止する。
   `continue` の失敗時も、最終スクリーンショットと診断（viewport、DPR、URL、locator hint）を
   artifacts に残して次のステップへ進む。終了時は成否を問わず CfT を graceful close する。

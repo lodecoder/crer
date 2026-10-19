@@ -63,6 +63,8 @@ public sealed class WindowsInput : IInputRecorder, IWindowInput
     public int SetProcessTopmost(uint pid, bool enabled) { ThrowIfDisposed(); return InputBridge.SetProcessTopmost(pid, enabled); }
     public int SetProcessTopmostOnly(uint pid, bool enabled) { ThrowIfDisposed(); return InputBridge.SetProcessTopmostOnly(pid, enabled); }
     public TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled) { ThrowIfDisposed(); return InputBridge.SetProcessTopmostDetailed(pid, enabled); }
+    public TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled, CancellationToken cancellation, TimeSpan confirmationTimeout)
+    { ThrowIfDisposed(); return InputBridge.SetProcessTopmostDetailed(pid, enabled, cancellation, confirmationTimeout); }
     public int LastForegroundStatus { get { ThrowIfDisposed(); return InputBridge.LastForegroundStatus; } }
     public int SetProcessOpacity(uint pid, uint alpha) { ThrowIfDisposed(); return InputBridge.SetProcessOpacity(pid, alpha); }
 

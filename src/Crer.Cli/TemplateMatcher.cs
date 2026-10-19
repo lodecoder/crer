@@ -38,12 +38,45 @@ public sealed class TemplateMatcher(ICdpTransport cdp, string pageSession) : IAs
                     try { await EnsureRealm(linked.Token); }
                     catch (CrerException error) when (error.Code == 4)
                     { throw new CrerException(3, $"could not initialize the hidden template matcher: {error.Message}"); }
-                    return await cdp.Call(method, parameters, session, linked.Token);
+                    return await Evaluate(parameters, linked.Token);
                 }, linked.Token);
             }
             finally { gate.Release(); }
         }
     }
+
+    private async Task<JsonObject> Evaluate(JsonObject? parameters, CancellationToken token)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(10000);
+        var contextUnavailable = false;
+        try
+        {
+            while (true)
+            {
+                // CDP要求がparamsを所有するため、再評価ごとに独立したノードを渡す。
+                try { return await cdp.Call("Runtime.evaluate", parameters?.DeepClone().AsObject(), session, deadline.Token); }
+                catch (CrerException error) when (IsContextUnavailable(error))
+                {
+                    // 非表示targetの初回遷移中は、Runtime.enable後も実行先が未作成の場合がある。
+                    // 保存済み画像から照合する評価だけを再試行し、撮影や入力は繰り返さない。
+                    contextUnavailable = true;
+                    await Task.Delay(50, deadline.Token);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            throw new CrerException(3, contextUnavailable
+                ? "hidden template matcher timed out waiting for its default execution context"
+                : "CDP call timed out: Runtime.evaluate");
+        }
+    }
+
+    private static bool IsContextUnavailable(CrerException error) => error.Code == 4 &&
+        (error.Message.Contains("Cannot find default execution context", StringComparison.OrdinalIgnoreCase) ||
+         error.Message.Contains("Execution context was destroyed", StringComparison.OrdinalIgnoreCase) ||
+         error.Message.Contains("Cannot find context with specified id", StringComparison.OrdinalIgnoreCase));
 
     private async Task EnsureRealm(CancellationToken token)
     {

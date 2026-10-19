@@ -118,6 +118,46 @@ Test("uses the event viewport after a recorded navigation", () =>
         {"qpc":"1","x":100,"y":100,"kind":2,"data":0,"css_viewport":{"x":800,"y":600}}
         {"qpc":"2","x":100,"y":100,"kind":3,"data":0,"css_viewport":{"x":800,"y":600}}
         """, new(new(0, 0), new(1000, 750), new(1000, 750)))), """[{"do":"click","at":{"x":80,"y":80}}]"""));
+Test("マーカー取得時の領域を基準にし終了後の領域に較正原点を引きずられない", () =>
+    Equal(Normalize.TransformFromRecordingMetadata(Metadata("""
+        {"content_rect_screen_px":{"x":300,"y":250,"width":1000,"height":700},"css_viewport":{"x":800,"y":600},
+         "screen_pixels_per_css_pixel":{"x":1,"y":1},"marker_calibration":{"screenClick":{"x":110,"y":210},"cssPoint":{"x":10,"y":10},
+         "content_rect_screen_px":{"x":98,"y":196,"width":800,"height":600}}}
+        """)), new(new(100, 200), new(800, 600), new(800, 600), new(1, 1))));
+Test("イベントごとの原点と領域サイズで移動中のドラッグを正規化し較正補正を維持する", () =>
+{
+    var result = Normalize.Raw("""
+        {"qpc":"1","x":200,"y":300,"kind":2,"data":0,"content_rect_screen_px":{"x":98,"y":196,"width":800,"height":600}}
+        {"qpc":"2","x":450,"y":310,"kind":1,"data":0,"content_rect_screen_px":{"x":298,"y":146,"width":1000,"height":700}}
+        {"qpc":"3","x":450,"y":310,"kind":3,"data":0,"content_rect_screen_px":{"x":298,"y":146,"width":1000,"height":700}}
+        """, Options(new(new(100, 200), new(800, 600), new(800, 600), new(1, 1))) with { RecordedContentOrigin = new(98, 196) });
+    JsonEqual(Steps(result), """[{"do":"drag","from":{"x":100,"y":100},"to":{"x":150,"y":160}}]""");
+});
+Test("sidecarがなくても取得時の領域とviewportを持つイベントはCSS座標へ戻す", () =>
+    JsonEqual(Steps(Raw("""
+        {"qpc":"1","x":-100,"y":350,"kind":2,"data":0,"content_rect_screen_px":{"x":-200,"y":250,"width":800,"height":600},"css_viewport":{"x":800,"y":600}}
+        {"qpc":"2","x":-100,"y":350,"kind":3,"data":0,"content_rect_screen_px":{"x":-200,"y":250,"width":800,"height":600},"css_viewport":{"x":800,"y":600}}
+        """)), """[{"do":"click","at":{"x":100,"y":100}}]"""));
+Test("取得領域だけで復元できるrawは初期viewportを出力し物理座標の警告を出さない", () =>
+    WithSidecar(null, path =>
+    {
+        File.WriteAllText(path, """
+            {"qpc":"1","x":200,"y":300,"kind":2,"data":0,"content_rect_screen_px":{"x":100,"y":200,"width":800,"height":600},"css_viewport":{"x":800,"y":600}}
+            {"qpc":"2","x":200,"y":300,"kind":3,"data":0,"content_rect_screen_px":{"x":100,"y":200,"width":800,"height":600},"css_viewport":{"x":800,"y":600}}
+            """);
+        var result = Normalize.FromFile(path, Options());
+        Equal(result.Warnings.Count, 0);
+        JsonEqual(result.Scenario["browser"]!["window"]!["content"], """{"width":800,"height":600}""");
+    }));
+Test("明示した座標変換は取得領域で上書きしない", () =>
+    JsonEqual(Steps(Normalize.Raw("""
+        {"qpc":"1","x":200,"y":300,"kind":2,"data":0,"content_rect_screen_px":{"x":150,"y":250,"width":800,"height":600}}
+        {"qpc":"2","x":200,"y":300,"kind":3,"data":0,"content_rect_screen_px":{"x":150,"y":250,"width":800,"height":600}}
+        """, Options(new(new(100, 200), new(800, 600), new(800, 600))) with { UseSidecar = false })), """[{"do":"click","at":{"x":100,"y":100}}]"""));
+Test("不正なイベント領域の寸法を拒否する", () =>
+    Reject(() => Raw("""
+        {"qpc":"1","x":100,"y":200,"kind":2,"data":0,"content_rect_screen_px":{"x":0,"y":0,"width":0,"height":600}}
+        """), "content_rect_screen_px"));
 Test("warns and omits an incomplete mouse click", () =>
 {
     var result = Raw(Events((2, 0, 100, 200)));

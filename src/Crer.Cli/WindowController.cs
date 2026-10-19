@@ -20,9 +20,12 @@ internal sealed class WindowController : IDisposable
     private bool startupFocusRequested, disposed;
     private TopmostResult? lastTopmostResult;
     private Timer? monitor;
+    private CancellationTokenSource? monitorCancellation;
     private readonly object gate = new();
     private int pid;
     private bool requireForeground, topmost, focusedOnce, configured, shared, everForeground;
+    private bool foregroundOwned;
+    private nint foregroundObserved;
     private string mode = "always", focusPolicy = "once", directory = "";
     private int attempts, topmostStatus, foregroundStatus, startupFocusAttempts;
     private int? lastTopmostWarning, lastOpacityWarning, restoreStatus, clearTopmostStatus;
@@ -91,7 +94,7 @@ internal sealed class WindowController : IDisposable
                 if (requireForeground)
                 {
                     topmost = true;
-                    ApplyTopmost(recordStartup: true);
+                    ApplyTopmost(recordStartup: true, cancellation: cancellation);
                     cancellation.ThrowIfCancellationRequested();
                     ThrowIfStartupFailed();
                     if (!shared || !focusedOnce)
@@ -110,7 +113,7 @@ internal sealed class WindowController : IDisposable
                 }
                 else
                 {
-                    if (topmost) { clearTopmostStatus = native.SetProcessTopmostDetailed((uint)pid, false).Status; topmost = false; }
+                    if (topmost) { clearTopmostStatus = native.SetProcessTopmostDetailed((uint)pid, false, cancellation, TimeSpan.FromSeconds(1)).Status; topmost = false; }
                     // 起動中に利用者が別のアプリへ切り替えた場合、自分のプロセスが取得した前景だけを戻す。
                     if (!configured)
                     {
@@ -129,7 +132,12 @@ internal sealed class WindowController : IDisposable
                 configured = true;
                 startupWatch.Stop();
                 WriteDiagnostic();
-                if (requireForeground && mode == "always" || alpha < 255) monitor = new Timer(_ => Tick(), null, 250, 250);
+                if (requireForeground && mode == "always" || alpha < 255)
+                {
+                    var lifetime = new CancellationTokenSource();
+                    monitorCancellation = lifetime;
+                    monitor = new Timer(_ => Tick(lifetime.Token), null, 250, 250);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -180,7 +188,7 @@ internal sealed class WindowController : IDisposable
                     cancellation.ThrowIfCancellationRequested();
                     ThrowIfStartupFailed();
                 }
-                ApplyTopmost(recordStartup: true);
+                ApplyTopmost(recordStartup: true, cancellation: cancellation);
                 cancellation.ThrowIfCancellationRequested();
                 ThrowIfStartupFailed();
                 SaveStartupDiagnostic();
@@ -203,9 +211,15 @@ internal sealed class WindowController : IDisposable
         throw new CrerException(3, $"could not make CfT topmost within {startupTimeout.TotalMilliseconds:0.###} ms ({TopmostFailure()})");
     }
 
-    private void ApplyTopmost(bool recordStartup = false)
+    private void ApplyTopmost(bool recordStartup = false, CancellationToken cancellation = default, TimeSpan? confirmationTimeout = null)
     {
-        lastTopmostResult = native.SetProcessTopmostDetailed((uint)pid, true);
+        var budget = confirmationTimeout ?? TimeSpan.FromSeconds(1);
+        if (recordStartup && mode == "once" && startupTimeout != Timeout.InfiniteTimeSpan)
+        {
+            var remaining = startupTimeout - startupWatch.Elapsed;
+            if (remaining < budget) budget = remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero;
+        }
+        lastTopmostResult = native.SetProcessTopmostDetailed((uint)pid, true, cancellation, budget);
         topmostStatus = lastTopmostResult.Status; attempts++;
         if (recordStartup)
         {
@@ -247,31 +261,36 @@ internal sealed class WindowController : IDisposable
     private void Focus(bool logFailure = true)
     {
         foregroundStatus = native.ForegroundProcessWindow((uint)pid);
-        if (foregroundStatus == 0) { focusedOnce = true; everForeground = true; }
+        foregroundObserved = native.GetForegroundWindow();
+        foregroundOwned = native.IsProcessForeground((uint)pid);
+        // 要求が拒否されても、起動時の自動前景化ですでに対象が前景の場合を区別する。
+        if (foregroundStatus == 0 || foregroundOwned) { focusedOnce = true; everForeground = true; }
         else if (logFailure) logger.Warn($"Warning: Windows did not grant CfT foreground focus (Win32 status {foregroundStatus})");
     }
 
-    public void BeforeStep()
+    public void BeforeStep(CancellationToken cancellation = default)
     {
         lock (gate)
         {
+            cancellation.ThrowIfCancellationRequested();
             if (!requireForeground || mode != "always") return;
-            ApplyTopmost();
+            ApplyTopmost(cancellation: cancellation);
             if (!shared || focusPolicy == "before-step") Focus();
             WriteDiagnostic();
             if (topmostStatus != 0) throw new CrerException(3, $"could not keep CfT topmost ({TopmostFailure()})");
         }
     }
 
-    private void Tick()
+    private void Tick(CancellationToken cancellation)
     {
         lock (gate)
         {
             try
             {
+                cancellation.ThrowIfCancellationRequested();
                 if (requireForeground && mode == "always")
                 {
-                    ApplyTopmost();
+                    ApplyTopmost(cancellation: cancellation, confirmationTimeout: TimeSpan.FromMilliseconds(250));
                     if (topmostStatus != 0 && topmostStatus != lastTopmostWarning) logger.Warn($"Warning: could not keep CfT topmost ({TopmostFailure()})");
                     lastTopmostWarning = topmostStatus;
                 }
@@ -282,6 +301,7 @@ internal sealed class WindowController : IDisposable
                     lastOpacityWarning = status;
                 }
             }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
             catch (Exception error) { logger.Warn($"Warning: could not maintain CfT window: {error.Message}"); }
         }
     }
@@ -290,8 +310,15 @@ internal sealed class WindowController : IDisposable
     {
         var old = Interlocked.Exchange(ref monitor, null);
         if (old == null) return;
-        using var stopped = new ManualResetEvent(false);
-        if (old.Dispose(stopped)) stopped.WaitOne();
+        var cancellation = Interlocked.Exchange(ref monitorCancellation, null);
+        try
+        {
+            // 監視中の属性反映待ちも先に止め、Timer の排出を無応答 UI の復帰に依存させない。
+            cancellation?.Cancel();
+            using var stopped = new ManualResetEvent(false);
+            if (old.Dispose(stopped)) stopped.WaitOne();
+        }
+        finally { cancellation?.Dispose(); }
     }
 
     public void WriteDiagnostic()
@@ -301,6 +328,7 @@ internal sealed class WindowController : IDisposable
             if (directory.Length == 0) return;
             var record = new JsonObject { ["before"] = $"0x{original:x}", ["requested"] = requireForeground, ["mode"] = mode,
                 ["pid"] = pid, ["topmostStatus"] = topmostStatus, ["foregroundStatus"] = foregroundStatus, ["topmostAttempts"] = attempts, ["sharedSession"] = shared,
+                ["foregroundAcquired"] = everForeground, ["foregroundOwned"] = foregroundOwned, ["foregroundObserved"] = $"0x{foregroundObserved:x}",
                 ["topmostStartup"] = new JsonObject { ["status"] = startupStatus,
                     ["timeoutMs"] = startupTimeout == Timeout.InfiniteTimeSpan ? null : startupTimeout.TotalMilliseconds,
                     ["timeoutMode"] = startupTimeout == Timeout.InfiniteTimeSpan ? "infinite" : "finite", ["timeoutScope"] = startupTimeoutScope,
@@ -324,7 +352,7 @@ internal sealed class WindowController : IDisposable
             disposed = true;
             try
             {
-                if (topmost) clearTopmostStatus = native.SetProcessTopmostDetailed((uint)pid, false).Status;
+                if (topmost) clearTopmostStatus = native.SetProcessTopmostDetailed((uint)pid, false, CancellationToken.None, TimeSpan.FromSeconds(1)).Status;
                 if (opacityUsed) native.SetProcessOpacity((uint)pid, 255);
                 if (everForeground) { restoreStatus = native.RestoreForegroundWindow(original); restorePerformed = true; }
                 WriteDiagnostic();

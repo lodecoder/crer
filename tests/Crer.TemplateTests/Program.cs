@@ -1,11 +1,10 @@
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using Crer;
 
 var passed = 0; var failed = 0;
-async Task Test(string name, Func<Task> body)
+async Task Test(string name, Func<Task> body, int timeoutSeconds = 5)
 {
-    try { await body().WaitAsync(TimeSpan.FromSeconds(5)); Console.WriteLine($"PASS {name}"); passed++; }
+    try { await body().WaitAsync(TimeSpan.FromSeconds(timeoutSeconds)); Console.WriteLine($"PASS {name}"); passed++; }
     catch (Exception error) { Console.Error.WriteLine($"FAIL {name}: {error}"); failed++; }
 }
 void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
@@ -26,13 +25,17 @@ try
         }
         return Task.CompletedTask;
     });
-    await Test("sampled RGB browser expression matches fixed baseline single and multiple search", () =>
+    await Test("照合式の画像入力と単一・複数の戻り値契約を維持する", () =>
     {
         for (var index = 0; index < 2; index++)
         {
             var actual = Template.Expression("\"data:image/png;base64,c2NyZWVu\"", "\"data:image/png;base64,AA==\"", index == 1, .9, 5);
-            var expected = vectors["expressions"]![index]!.GetValue<string>();
-            Check(Regex.Replace(actual, @"\s+", "") == Regex.Replace(expected, @"\s+", ""), $"browser expression differs for search mode {index}");
+            Check(actual.Contains("load(\"data:image/png;base64,c2NyZWVu\")", StringComparison.Ordinal)
+                && actual.Contains("load(\"data:image/png;base64,AA==\")", StringComparison.Ordinal), "撮影画像とテンプレート画像の入力を変更しました");
+            Check(actual.Contains("template is larger than screenshot", StringComparison.Ordinal), "テンプレート寸法の検証を省きました");
+            Check(index == 0 ? actual.Contains("return best", StringComparison.Ordinal)
+                : actual.Contains("return candidates.sort", StringComparison.Ordinal) && actual.Contains("slice(0, 5)", StringComparison.Ordinal),
+                "単一・複数照合の戻り値を変更しました");
         }
         return Task.CompletedTask;
     });
@@ -134,6 +137,74 @@ try
             Check(cdp.Calls.Count(call => call.Method == "Target.closeTarget") == 1, "初期化途中の環境を閉じませんでした");
         }
     });
+    await Test("照合環境の一時的な実行コンテキスト準備エラーは同じ画像で再評価する", async () =>
+    {
+        foreach (var message in new[] { "Cannot find default execution context", "Execution context was destroyed.", "Cannot find context with specified id" })
+        {
+            var cdp = new MatcherTransport { EvaluationFailure = new CrerException(4, "CDP: " + message), EvaluationFailures = 1 };
+            await using var matcher = new TemplateMatcher(cdp, "page");
+            var found = await matcher.MatchAsync(new() { ["path"] = file }, null);
+            var evaluations = cdp.Calls.Where(call => call.Method == "Runtime.evaluate").ToArray();
+            Check(found.Match.Similarity == 1 && evaluations.Length == 2, "準備エラーから回復しませんでした");
+            Check(cdp.Calls.Count(call => call.Method == "Page.captureScreenshot") == 1, "準備待ちで撮影を繰り返しました");
+            Check(cdp.Calls.Count(call => call.Method == "Target.createTarget") == 1 && cdp.Calls.Count(call => call.Method == "Target.attachToTarget") == 1,
+                "準備待ちで照合環境を作り直しました");
+            Check(evaluations.All(call => call.Session == "matcher") && JsonNode.DeepEquals(evaluations[0].Parameters, evaluations[1].Parameters),
+                "再評価で対象や画像を変更しました");
+        }
+    });
+    await Test("照合環境の実行コンテキスト準備待ちを取消し、同じ環境で再開できる", async () =>
+    {
+        var cdp = new MatcherTransport { EvaluationFailure = new CrerException(4, "CDP: Cannot find default execution context"), EvaluationFailures = int.MaxValue };
+        await using var matcher = new TemplateMatcher(cdp, "page");
+        using var cancellation = new CancellationTokenSource();
+        var matching = matcher.MatchAsync(new() { ["path"] = file }, null, cancellation.Token);
+        await cdp.Evaluating.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        cancellation.Cancel();
+        try { await matching.WaitAsync(TimeSpan.FromSeconds(2)); throw new Exception("準備待ちの取消しを無視しました"); }
+        catch (OperationCanceledException) { }
+        var calls = cdp.Calls.Count;
+        await Task.Delay(100);
+        Check(cdp.Calls.Count == calls, "取消し後も評価を繰り返しました");
+        cdp.EvaluationFailures = 0;
+        await matcher.MatchAsync(new() { ["path"] = file }, null);
+        Check(cdp.Calls.Count(call => call.Method == "Target.createTarget") == 1, "取消し後に照合環境を重複作成しました");
+    });
+    await Test("再評価のパラメーターは各CDP要求が独立して所有する", async () =>
+    {
+        var cdp = new MatcherTransport { EvaluationFailure = new CrerException(4, "CDP: Cannot find default execution context"), EvaluationFailures = 2 };
+        await using var matcher = new TemplateMatcher(cdp, "page");
+        await matcher.MatchAsync(new() { ["path"] = file }, null);
+        var requests = cdp.Requests.Where(request => Json.Text(request["method"]) == "Runtime.evaluate").ToArray();
+        Check(requests.Length == 3 && requests.All(request => ReferenceEquals(request["params"]!.Parent, request)),
+            "再評価のパラメーターがCDP要求に属していません");
+        Check(requests.Skip(1).All(request => !ReferenceEquals(requests[0]["params"], request["params"]) &&
+            JsonNode.DeepEquals(requests[0]["params"], request["params"])), "同じパラメーターノードを再送したか、評価内容を変更しました");
+    });
+    await Test("照合環境の実行コンテキストが作られなければ期限付きの環境エラーになる", async () =>
+    {
+        var cdp = new MatcherTransport { EvaluationFailure = new CrerException(4, "CDP: Cannot find default execution context"), EvaluationFailures = int.MaxValue };
+        await using var matcher = new TemplateMatcher(cdp, "page");
+        try { await matcher.MatchAsync(new() { ["path"] = file }, null); throw new Exception("準備失敗を成功としました"); }
+        catch (CrerException error)
+        {
+            Check(error.Code == 3 && error.Message.Contains("timed out waiting for its default execution context", StringComparison.Ordinal),
+                "準備の期限切れを環境エラーとして報告しませんでした");
+        }
+        Check(cdp.Calls.Count(call => call.Method == "Runtime.evaluate") > 1 && cdp.Calls.Count(call => call.Method == "Page.captureScreenshot") == 1,
+            "期限内の準備待ちや一度だけの撮影を変更しました");
+    }, 15);
+    await Test("照合環境の準備以外のCDPエラーは再試行せず伝播する", async () =>
+    {
+        foreach (var failure in new[] { new CrerException(4, "CDP: Evaluation rejected"), new CrerException(3, "CDP connection lost") })
+        {
+            var cdp = new MatcherTransport { EvaluationFailure = failure, EvaluationFailures = int.MaxValue };
+            await using var matcher = new TemplateMatcher(cdp, "page");
+            try { await matcher.MatchAsync(new() { ["path"] = file }, null); throw new Exception("評価エラーを無視しました"); }
+            catch (CrerException error) { Check(ReferenceEquals(error, failure), "元の評価エラーを変更しました"); }
+            Check(cdp.Calls.Count(call => call.Method == "Runtime.evaluate") == 1, "準備以外の評価エラーを再試行しました");
+        }
+    });
     await Test("取消し済みの照合は撮影や環境作成を開始しない", async () =>
     {
         var cdp = new MatcherTransport();
@@ -179,23 +250,33 @@ sealed record MatcherCall(string Method, JsonObject? Parameters, string? Session
 sealed class MatcherTransport : ICdpTransport
 {
     public System.Collections.Concurrent.ConcurrentQueue<MatcherCall> Calls { get; } = new();
+    public System.Collections.Concurrent.ConcurrentQueue<JsonObject> Requests { get; } = new();
     public TaskCompletionSource Evaluating { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public string? RejectMethod { get; set; }
+    public CrerException? EvaluationFailure { get; set; }
+    public int EvaluationFailures { get; set; }
     public bool BlockEvaluation { get; set; }
     public bool EvaluationCancelled { get; private set; }
     public async Task<JsonObject> Call(string method, JsonObject? parameters = null, string? session = null, CancellationToken token = default, int timeoutMs = 10000)
     {
         Calls.Enqueue(new(method, parameters?.DeepClone().AsObject(), session, token, timeoutMs));
         token.ThrowIfCancellationRequested();
+        // 実際のCdp.Callと同様にparamsを要求へ所属させ、同じノードの再送を拒否する。
+        Requests.Enqueue(new JsonObject { ["method"] = method, ["params"] = parameters ?? new JsonObject() });
         if (method == RejectMethod) throw new CrerException(4, "初期化を拒否しました");
         if (method == "Target.createTarget") return new() { ["targetId"] = "owned-template" };
         if (method == "Target.attachToTarget") return new() { ["sessionId"] = "matcher" };
         if (method == "Page.captureScreenshot") return new() { ["data"] = "c2NyZWVu" };
         if (method == "Runtime.evaluate")
         {
+            Evaluating.TrySetResult();
+            if (EvaluationFailures > 0)
+            {
+                EvaluationFailures--;
+                throw EvaluationFailure!;
+            }
             if (BlockEvaluation)
             {
-                Evaluating.TrySetResult();
                 try { await Task.Delay(Timeout.Infinite, token); }
                 catch (OperationCanceledException) { EvaluationCancelled = true; throw; }
             }

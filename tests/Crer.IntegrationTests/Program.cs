@@ -17,7 +17,7 @@ var exe = Path.GetFullPath(Option("--exe") ?? Environment.GetEnvironmentVariable
 var chrome = Option("--chrome") ?? Environment.GetEnvironmentVariable("CRER_TEST_CHROME");
 if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(chrome) || !File.Exists(exe) || !File.Exists(chrome))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,parallel-focus,readiness-redirect,plan,navigation,keyboard,windows,display,profiles]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only template-search,startup,parallel-focus,readiness-redirect,plan,navigation,keyboard,windows,display,profiles]");
     return 2;
 }
 if (args.Contains("--probe-hidden")) return await ProbeTools.Hidden(chrome!);
@@ -164,6 +164,8 @@ async Task Test(string key, string label, Func<Task> action)
     }
     File.WriteAllText(Path.Combine(evidence, "summary.json"), summary.ToJsonString(Json.Indented));
 }
+
+await Test("template-search", "旧式と最適化後の画像照合結果を小画像・境界・大画面で比較する", () => TemplateSearchTests.Run(chrome!, evidence));
 
 await Test("parallel-focus", "公開exeで半透明onceの3並列起動と同じprofileの再遷移を最前面属性を保って完走する", async () =>
 {
@@ -804,14 +806,26 @@ await Test("display", "public viewport mismatch strict failure and explicit igno
 
 await Test("record", "public timed recording removes inherited DPI compatibility layers", async () =>
 {
-    var raw = Path.Combine(evidence, "record-dpi.ndjson");
-    using var command = new RunningCommand(exe, ["record", raw, "--chrome", chrome!, "--url", fixture.Base + "/window", "--position", "25,12", "--content-size", "600,400", "--duration-ms", "1500"],
-        evidence, "record-dpi", new() { ["__COMPAT_LAYER"] = "DPIUNAWARE" });
-    var output = await command.Finish(); Check(output.Code == 0, "timed record DPI probe failed: " + output.Stderr);
-    var metadata = JsonNode.Parse(File.ReadAllText(raw + ".meta.json"))!;
-    Check(Json.Number(metadata["content_rect_screen_px"]!["width"]) == 600 && Json.Number(metadata["content_rect_screen_px"]!["height"]) == 400
-        && Json.Number(metadata["css_viewport"]!["x"]) == 600 && Json.Number(metadata["css_viewport"]!["y"]) == 400, "recording physical/CSS coordinate spaces diverged: " + metadata);
-    Check(metadata["incomplete"]?.GetValue<bool>() != true, "timed DPI recording was incomplete");
+    for (var attempt = 0; attempt < 3; attempt++)
+    {
+        var label = attempt == 0 ? "record-dpi" : "record-dpi-" + attempt;
+        var raw = Path.Combine(evidence, label + ".ndjson");
+        var url = attempt == 0 ? fixture.Base + "/window" : fixture.Base + "/record-size/" + label;
+        using var command = new RunningCommand(exe, ["record", raw, "--chrome", chrome!, "--url", url, "--position", "25,12", "--content-size", "600,400", "--duration-ms", "1500"],
+            evidence, label, new() { ["__COMPAT_LAYER"] = "DPIUNAWARE" });
+        var output = await command.Finish(); Check(output.Code == 0, "timed record DPI probe failed: " + output.Stderr);
+        var metadata = JsonNode.Parse(File.ReadAllText(raw + ".meta.json"))!;
+        Check(Json.Number(metadata["content_rect_screen_px"]!["width"]) == 600 && Json.Number(metadata["content_rect_screen_px"]!["height"]) == 400
+            && Json.Number(metadata["css_viewport"]!["x"]) == 600 && Json.Number(metadata["css_viewport"]!["y"]) == 400, "recording physical/CSS coordinate spaces diverged: " + metadata);
+        Check(metadata["incomplete"]?.GetValue<bool>() != true, "timed DPI recording was incomplete");
+        if (attempt > 0)
+        {
+            Check(fixture.InitialDisplays.TryGetValue(label, out var observed), "録画ページの初期寸法を観測できなかった");
+            var initial = JsonNode.Parse(observed!);
+            Check(Json.Number(initial?["width"]) == 600 && Json.Number(initial?["height"]) == 400 && Json.Number(initial?["dpr"]) == 1,
+                "録画ページの初期スクリプトが要求前の寸法を参照した: " + observed);
+        }
+    }
 });
 
 await Test("observation", "public background CDP actions preserve cursor and foreground", async () =>
@@ -923,7 +937,7 @@ if (args.Contains("--windows")) await Test("windows", "公開exeで半透明のo
     }
 });
 
-if (args.Contains("--windows")) await Test("windows", "public standalone always once opacity position merge and restore", async () =>
+if (args.Contains("--windows")) await Test("windows", "単独再生の最前面・不透明度を検証し前景の取得有無に応じて復元する", async () =>
 {
     foreach (var mode in new[] { "always", "once" })
     {
@@ -931,7 +945,9 @@ if (args.Contains("--windows")) await Test("windows", "public standalone always 
             ["bounds"] = new JsonObject { ["left"] = 30, ["top"] = 30, ["width"] = 400, ["height"] = 300 } };
         if (mode == "once") window["foreground_mode"] = mode; // Omitted mode exercises default always.
         var path = Write("standalone-" + mode, Scenario("standalone-" + mode, fixture.Base + "/window", null, window, Sleep(3000), new() { ["do"] = "wait_for", ["state"] = "complete" }));
+        await using var foregroundObservation = new ForegroundObservation();
         using var process = Start("standalone-" + mode, "play", path, "--position", "60,70"); var ready = await Ready("standalone-" + mode); await Task.Delay(200);
+        foregroundObservation.ObserveOriginal(Read(ready.Directory, "foreground.json"));
         Check(NativeWindows.Topmost(ready.Window) && NativeWindows.Alpha(ready.Window) == (mode == "once" ? 0 : 128), "standalone topmost or opacity failed for " + mode);
         var physical = NativeWindows.Measure(ready.Window);
         Check(physical.Rect.Left == 60 && physical.Rect.Top == 70 && physical.Rect.Right - physical.Rect.Left == 400 && physical.Rect.Bottom - physical.Rect.Top == 300, "play position replaced size instead of merging it");
@@ -944,14 +960,15 @@ if (args.Contains("--windows")) await Test("windows", "public standalone always 
         }
         var output = await process.Finish(); Check(output.Code == 0, "standalone public playback failed: " + output.Stderr); var result = TrailingJson(output.Stdout); Cleanup(result);
         var diagnostic = Read(RunDirectory(result), "foreground.json");
-        Check(Json.Text(diagnostic["mode"]) == mode && Json.Number(diagnostic["restoreStatus"], -1) == 0, "standalone foreground restoration failed");
+        Check(Json.Text(diagnostic["mode"]) == mode, "単独再生の前景モード診断が一致しない");
+        await foregroundObservation.CheckAndSave(Path.Combine(evidence, "standalone-" + mode + "-foreground.json"), diagnostic, (int)Json.Number(ready.Metadata["chromePid"]));
         var startupAttempts = diagnostic["topmostStartup"]!["attempts"]!.AsArray().Count;
         Check(mode == "once" ? startupAttempts > 0 && Json.Number(diagnostic["topmostAttempts"]) == startupAttempts
             : Json.Number(diagnostic["topmostAttempts"]) > 2, "単独再生の最前面属性の初期設定・維持回数が一致しない");
     }
 });
 
-if (args.Contains("--windows")) await Test("windows", "public foreground modes opacity watchdog reuse and restore", async () =>
+if (args.Contains("--windows")) await Test("windows", "共有再生の最前面・不透明度を検証し前景の取得有無に応じて復元する", async () =>
 {
     var profile = Profile("windows"); var files = new List<string>();
     var modes = new[] { ("once", true, "once", .25), ("once-again", true, "once", 1.0), ("always", true, "always", .5), ("disabled", false, "always", .4) };
@@ -962,10 +979,12 @@ if (args.Contains("--windows")) await Test("windows", "public foreground modes o
         files.Add(Write("window-" + name, scenario));
     }
     var plan = Write("window-plan", Plan(Serial(files.Select(Leaf).ToArray()))); var original = NativeWindows.GetForegroundWindow();
+    await using var foregroundObservation = new ForegroundObservation();
     using var process = Start("window-plan", "run", plan);
     foreach (var (name, enabled, mode, opacity) in modes)
     {
         var ready = await Ready("window-" + name); await Task.Delay(200);
+        foregroundObservation.ObserveOriginal(Read(ready.Directory, "foreground.json"));
         Check(NativeWindows.Topmost(ready.Window) == enabled && NativeWindows.Alpha(ready.Window) == (byte)Math.Floor(opacity * 255 + .5), "foreground/alpha mismatch for " + name);
         if (enabled && mode == "once")
         {
@@ -1017,7 +1036,8 @@ if (args.Contains("--windows")) await Test("windows", "public foreground modes o
         if (!modes[index].Item2) Check(attempts == previousAttempts, "disabled mode kept requesting topmost");
         previousAttempts = attempts;
     }
-    var final = Read(RunDirectory(results.Last()!), "foreground.json"); Check(Json.Number(final["restoreStatus"], -1) == 0, "foreground restoration failed: " + final);
+    var final = Read(RunDirectory(results.Last()!), "foreground.json");
+    await foregroundObservation.CheckAndSave(Path.Combine(evidence, "window-plan-foreground.json"), final, (int)Json.Number(Read(RunDirectory(results.Last()!), "run.json")["chromePid"]));
     File.WriteAllText(Path.Combine(evidence, "foreground-observation.json"), new JsonObject { ["before"] = "0x" + original.ToString("x"), ["after"] = "0x" + NativeWindows.GetForegroundWindow().ToString("x"), ["matches"] = original == NativeWindows.GetForegroundWindow() }.ToJsonString());
 });
 

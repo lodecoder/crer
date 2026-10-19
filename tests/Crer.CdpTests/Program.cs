@@ -298,6 +298,248 @@ await Test("concurrent repeated disposal and abort after disposal are safe", asy
     Check(fixture.Client.PendingCount == 0, "repeated disposal created pending state");
 });
 
+await Test("実行保存先の切替と受信イベントが競合しても CDP 接続と通信記録を維持する", async () =>
+{
+    var root = Path.Combine(Path.GetTempPath(), "crer-network-rollover-" + Guid.NewGuid().ToString("N"));
+    var previous = Path.Combine(root, "previous");
+    var next = Path.Combine(root, "next");
+    Directory.CreateDirectory(previous);
+    try
+    {
+        await using var fixture = await Connection.Create();
+        var playback = new Playback();
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var directoryField = typeof(Playback).GetField("absoluteRunDir", flags)!;
+        var initialize = typeof(Playback).GetMethod("InitializeRunDirectory", flags)!;
+        initialize.Invoke(playback, [previous]);
+        var logField = typeof(Playback).GetField("networkLog", flags)!;
+        var previousLog = (AsyncDiagnosticLog)logField.GetValue(playback)!;
+        typeof(Playback).GetField("session", flags)!.SetValue(playback, "network-rollover");
+        var handler = typeof(Playback).GetMethod("OnNetworkEvent", flags)!
+            .CreateDelegate<Action<string, JsonObject, string?>>(playback);
+        fixture.Client.Event += handler;
+        JsonObject Request(string id) => new() { ["requestId"] = id, ["type"] = "Document" };
+        JsonObject Event(string id) => new()
+        {
+            ["method"] = "Network.requestWillBeSent", ["params"] = Request(id), ["sessionId"] = "network-rollover",
+        };
+        handler("Network.requestWillBeSent", Request("previous"), "network-rollover");
+
+        var gate = typeof(Playback).GetField("networkLock", flags)!.GetValue(playback)!;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var release = new ManualResetEventSlim();
+        var holding = Task.Run(() =>
+        {
+            lock (gate)
+            {
+                entered.SetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(10))) throw new Exception("通信ロックの解放が期限を超えた");
+            }
+        });
+        Task? switching = null;
+        try
+        {
+            await entered.Task;
+            switching = Task.Run(() => typeof(Playback).GetMethod("InitializeRunDirectory", flags)!.Invoke(playback, [next]));
+            var deadline = Stopwatch.StartNew();
+            while (!Directory.Exists(next) && deadline.Elapsed < TimeSpan.FromSeconds(3)) await Task.Delay(10);
+            Check(Directory.Exists(next), "次の実行ディレクトリが作成されなかった");
+            // 受信側が旧保存先を使用している間は、保存先も集計値も切り替わってはいけない。
+            Check((string)directoryField.GetValue(playback)! == previous, "通信ロックの取得前に新しい保存先を公開した");
+            Check((int)typeof(Playback).GetField("networkRequests", flags)!.GetValue(playback)! == 1, "受信処理との排他前に通信集計を初期化した");
+
+            await fixture.Send(Event("handoff").ToJsonString());
+            var probe = fixture.Client.Call("Test.networkRollover");
+            await fixture.Reply(await fixture.Read(), new());
+            release.Set();
+            await Task.WhenAll(switching, holding, probe);
+
+            await fixture.Send(Event("next").ToJsonString());
+            var after = fixture.Client.Call("Test.afterNetworkRollover");
+            await fixture.Reply(await fixture.Read(), new());
+            await after;
+            Check(!fixture.Client.Disconnected.IsCompleted, "実行保存先の切替で CDP 接続が切断された");
+            await previousLog.CompleteAsync();
+            await ((AsyncDiagnosticLog)logField.GetValue(playback)!).CompleteAsync();
+            var oldRecords = File.ReadAllLines(Path.Combine(previous, "network.ndjson")).Select(line => JsonNode.Parse(line)!).ToArray();
+            var newRecords = File.ReadAllLines(Path.Combine(next, "network.ndjson")).Select(line => JsonNode.Parse(line)!).ToArray();
+            var ids = oldRecords.Concat(newRecords).Select(record => Json.Text(record["requestId"])).Order().ToArray();
+            Check(ids.SequenceEqual(new[] { "handoff", "next", "previous" }), "切替中の通信イベントが欠落または重複した");
+            Check(Json.Text(newRecords[^1]["requestId"]) == "next", "切替後の通信記録が旧保存先へ書き込まれた");
+            Check((int)typeof(Playback).GetField("networkRequests", flags)!.GetValue(playback)! == newRecords.Length, "通信記録と実行ごとの集計が一致しない");
+        }
+        finally
+        {
+            release.Set();
+            await holding;
+            if (switching != null) await switching;
+            fixture.Client.Event -= handler;
+        }
+    }
+    finally { Directory.Delete(root, recursive: true); }
+});
+
+await Test("通信ログの保存失敗でも正常な CDP 応答を受信できる", async () =>
+{
+    var directory = Path.Combine(Path.GetTempPath(), "crer-network-log-failure-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    try
+    {
+        await using var fixture = await Connection.Create();
+        var playback = new Playback();
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        typeof(Playback).GetMethod("InitializeRunDirectory", flags)!.Invoke(playback, [directory]);
+        typeof(Playback).GetField("session", flags)!.SetValue(playback, "logging-test");
+        var log = (AsyncDiagnosticLog)typeof(Playback).GetField("networkLog", flags)!.GetValue(playback)!;
+        using var locked = new FileStream(Path.Combine(directory, "network.ndjson"), FileMode.Create, FileAccess.Write, FileShare.None);
+        var handler = typeof(Playback).GetMethod("OnNetworkEvent", flags)!.CreateDelegate<Action<string, JsonObject, string?>>(playback);
+        fixture.Client.Event += handler;
+        await fixture.Send(new JsonObject { ["method"] = "Network.requestWillBeSent", ["sessionId"] = "logging-test",
+            ["params"] = new JsonObject { ["requestId"] = "locked-log", ["type"] = "Document" } }.ToJsonString());
+        var response = fixture.Client.Call("Test.afterLogFailure");
+        await fixture.Reply(await fixture.Read(), new() { ["ok"] = true });
+        Check((await response)["ok"]!.GetValue<bool>() && !fixture.Client.Disconnected.IsCompleted, "診断ログの障害で通信を切断した");
+        await log.CompleteAsync();
+        Check(log.Diagnostic()["writeFailed"]!.GetValue<bool>(), "保存失敗の診断を残さなかった");
+        fixture.Client.Event -= handler;
+    }
+    finally { Directory.Delete(directory, true); }
+});
+
+await Test("遅い通信ログの保存は受信処理を待たせずキュー容量も制限する", async () =>
+{
+    using var opened = new ManualResetEventSlim();
+    using var release = new ManualResetEventSlim();
+    var log = new AsyncDiagnosticLog("unused", () =>
+    {
+        opened.Set();
+        if (!release.Wait(TimeSpan.FromSeconds(5))) throw new IOException("テスト用保存先の待機期限");
+        return new MemoryStream();
+    });
+    try
+    {
+        log.Append("first");
+        Check(opened.Wait(TimeSpan.FromSeconds(2)), "ログ保存を開始しなかった");
+        var watch = Stopwatch.StartNew();
+        for (var index = 0; index < 5000; index++) log.Append("queued");
+        Check(watch.Elapsed < TimeSpan.FromSeconds(1), "受信側が保存待ちになった");
+        Check(Json.Number(log.Diagnostic()["dropped"]) > 0, "容量上限を超えた通信記録を無制限に保持した");
+    }
+    finally { release.Set(); await log.CompleteAsync(); }
+});
+
+await Test("通信ログの保存先が停止していても終了待ちは一秒の予算で戻る", async () =>
+{
+    using var opened = new ManualResetEventSlim();
+    using var release = new ManualResetEventSlim();
+    var log = new AsyncDiagnosticLog("unused", () =>
+    {
+        opened.Set();
+        if (!release.Wait(TimeSpan.FromSeconds(5))) throw new IOException("テスト用保存先の待機期限");
+        return new MemoryStream();
+    });
+    try
+    {
+        log.Append("pending");
+        Check(opened.Wait(TimeSpan.FromSeconds(2)), "保存処理を開始しなかった");
+        var watch = Stopwatch.StartNew();
+        await log.CompleteAsync();
+        Check(watch.Elapsed < TimeSpan.FromSeconds(1.5) && !log.Diagnostic()["completed"]!.GetValue<bool>() && Json.Number(log.Diagnostic()["pending"]) == 1,
+            "終了時に無応答の保存先を無期限に待った");
+    }
+    finally { release.Set(); await log.CompleteAsync(); }
+});
+
+await Test("flush 前に保存が失敗した行も破棄件数へ含める", async () =>
+{
+    var log = new AsyncDiagnosticLog("unused", () => new FailingFlushStream());
+    log.Append("not-confirmed");
+    await log.CompleteAsync();
+    var diagnostic = log.Diagnostic();
+    Check(diagnostic["writeFailed"]!.GetValue<bool>() && Json.Number(diagnostic["dropped"]) == 1 && Json.Number(diagnostic["pending"]) == 0,
+        "キューから取り出した未保存行を保存成功として扱った");
+});
+
+await Test("非表示照合環境の文脈待ちでは実 CDP に評価パラメーターを再送できる", async () =>
+{
+    var directory = Path.Combine(Path.GetTempPath(), "crer-matcher-context-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(directory);
+    var template = Path.Combine(directory, "pixel.png");
+    await File.WriteAllBytesAsync(template, [0]);
+    try
+    {
+        await using var fixture = await Connection.Create();
+        var methods = new List<string>();
+        var expected = new TemplateMatch(10, 20, 30, 40, .99);
+        JsonObject? firstEvaluation = null;
+        var evaluations = 0;
+        async Task Serve()
+        {
+            while (true)
+            {
+                var request = await fixture.Read();
+                var method = Json.Text(request["method"]);
+                var session = Json.Text(request["sessionId"]);
+                methods.Add(method);
+                switch (method)
+                {
+                    case "Page.captureScreenshot":
+                        Check(session == "page-context-test", "対象ページ以外からスクリーンショットを取得した");
+                        await fixture.Reply(request, new() { ["data"] = "c2NyZWVu" });
+                        break;
+                    case "Target.createTarget":
+                        Check(session == "" && request["params"]!["hidden"]!.GetValue<bool>() && request["params"]!["background"]!.GetValue<bool>(), "非表示の照合環境を作成しなかった");
+                        await fixture.Reply(request, new() { ["targetId"] = "owned-matcher-context" });
+                        break;
+                    case "Target.attachToTarget":
+                        Check(session == "" && Json.Text(request["params"]?["targetId"]) == "owned-matcher-context", "別の照合環境へ接続した");
+                        await fixture.Reply(request, new() { ["sessionId"] = "matcher-context-test" });
+                        break;
+                    case "Runtime.enable":
+                        Check(session == "matcher-context-test", "対象ページ側の Runtime を有効にした");
+                        await fixture.Reply(request, new());
+                        break;
+                    case "Runtime.evaluate":
+                        Check(session == "matcher-context-test", "対象ページ内でテンプレート照合を評価した");
+                        evaluations++;
+                        if (evaluations == 1)
+                        {
+                            firstEvaluation = request["params"]!.DeepClone().AsObject();
+                            await fixture.Send(new JsonObject
+                            {
+                                ["id"] = request["id"]!.DeepClone(),
+                                ["error"] = new JsonObject { ["code"] = -32000, ["message"] = "Cannot find default execution context" },
+                            }.ToJsonString());
+                        }
+                        else
+                        {
+                            Check(evaluations == 2 && JsonNode.DeepEquals(firstEvaluation, request["params"]), "再試行で評価内容が変わったか評価回数が増えた");
+                            await fixture.Reply(request, new() { ["result"] = new JsonObject { ["value"] = expected.ToJson() } });
+                        }
+                        break;
+                    case "Target.closeTarget":
+                        Check(session == "" && Json.Text(request["params"]?["targetId"]) == "owned-matcher-context", "所有していない target を閉じた");
+                        await fixture.Reply(request, new() { ["success"] = true });
+                        return;
+                    default: throw new Exception("非表示照合環境が想定外の操作を要求した: " + method);
+                }
+            }
+        }
+        async Task MatchAndClose()
+        {
+            await using var matcher = new TemplateMatcher(fixture.Client, "page-context-test");
+            var result = await matcher.MatchAsync(new() { ["path"] = template }, null);
+            Check(result.Match == expected && result.Screenshot == "c2NyZWVu", "文脈待ちの再試行で照合結果または取得済み画像を失った");
+        }
+        // 実 CDP は最初の送信時に params を所有するため、同じ JsonObject の再利用では次の送信が失敗する。
+        await Task.WhenAll(MatchAndClose(), Serve());
+        Check(methods.SequenceEqual(new[] { "Page.captureScreenshot", "Target.createTarget", "Target.attachToTarget", "Runtime.enable", "Runtime.evaluate", "Runtime.evaluate", "Target.closeTarget" }),
+            "文脈待ちで撮影や環境作成を繰り返したか、評価または所有 target の終了を省略した");
+        Check(fixture.Client.PendingCount == 0 && !fixture.Client.Disconnected.IsCompleted, "照合の再試行で CDP 要求が残るか接続を破棄した");
+    }
+    finally { Directory.Delete(directory, recursive: true); }
+});
+
 async Task InitialViewportFinalCheck(bool contextDestroyed)
 {
     var directory = Path.Combine(Path.GetTempPath(), "crer-initial-viewport-" + Guid.NewGuid().ToString("N"));
@@ -397,6 +639,67 @@ async Task InitialViewportFinalCheck(bool contextDestroyed)
 await Test("viewport診断保存後にloadingへ戻っても文書準備とサイズ測定をやり直す", () => InitialViewportFinalCheck(false));
 await Test("viewport診断保存後に実行コンテキストが破棄されても文書準備とサイズ測定をやり直す", () => InitialViewportFinalCheck(true));
 
+async Task RecordingContentSize(bool scrollbar, bool neverResizes)
+{
+    await using var fixture = await Connection.Create();
+    var browser = new RecordingBrowser("unused", "unused");
+    var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+    typeof(RecordingBrowser).GetField("cdp", flags)!.SetValue(browser, fixture.Client);
+    typeof(RecordingBrowser).GetField("session", flags)!.SetValue(browser, "recording-size");
+    typeof(RecordingBrowser).GetField("windowId", flags)!.SetValue(browser, 7);
+    var captures = 0; var measurements = 0;
+    var sizing = browser.SynchronizeContent(new(600, 400), default, TimeSpan.FromSeconds(neverResizes ? .6 : 5));
+    async Task Serve()
+    {
+        try
+        {
+            while (true)
+            {
+                var request = await fixture.Read();
+                var method = Json.Text(request["method"]);
+                var resized = !neverResizes && captures > 0;
+                var width = resized ? scrollbar ? 585 : 600 : 1889;
+                var height = resized ? 400 : 2005;
+                if (method == "Browser.setContentsSize")
+                {
+                    Check(Json.Number(request["params"]?["width"]) == 600 && Json.Number(request["params"]?["height"]) == 400,
+                        "記録用ウィンドウへ要求寸法を適用しなかった");
+                    await fixture.Reply(request, new());
+                }
+                else if (method == "Page.captureScreenshot") { captures++; await fixture.Reply(request, new()); }
+                else if (method == "Page.getLayoutMetrics")
+                {
+                    measurements++;
+                    await fixture.Reply(request, new() { ["cssVisualViewport"] = new JsonObject { ["clientWidth"] = width, ["clientHeight"] = height } });
+                }
+                else
+                {
+                    Check(method == "Runtime.evaluate", "記録の寸法待機中に想定外の操作を行った: " + method);
+                    await fixture.Reply(request, new() { ["result"] = new JsonObject { ["value"] = new JsonObject
+                    {
+                        ["dpr"] = 1, ["scale"] = 1, ["innerWidth"] = resized ? 600 : 1889, ["innerHeight"] = resized ? 400 : 2005,
+                        ["width"] = width, ["height"] = height,
+                    } } });
+                }
+            }
+        }
+        catch (Exception) when (sizing.IsCompleted) { }
+    }
+    var serving = Serve();
+    try
+    {
+        if (neverResizes) await ErrorCode(sizing, 3, "did not synchronize");
+        else Check(await sizing == new NormalizePoint(scrollbar ? 585 : 600, 400), "実際の viewport を取得しなかった");
+        Check(captures > 0 && measurements > 1, "古い巨大 viewport を同期せずスクロールバーとして受理した");
+        Check(fixture.Client.PendingCount == 0, "記録寸法の待機後に未完了 CDP 要求が残った");
+    }
+    finally { fixture.Server.Abort(); await serving; }
+}
+
+await Test("記録開始前に古い巨大viewportをcaptureで同期し要求contentの反映を待つ", () => RecordingContentSize(false, false));
+await Test("記録開始前の真のスクロールバー縮小はDOMと一致すれば許可する", () => RecordingContentSize(true, false));
+await Test("記録のviewportが要求contentへ反映されなければ期限内に明示的に失敗する", () => RecordingContentSize(false, true));
+
 Console.WriteLine($"{passed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
 
@@ -490,6 +793,11 @@ sealed class Connection(Cdp client, TcpClient tcp, WebSocket server) : IAsyncDis
 // Windows loopback buffering can accept a large SendAsync even if its peer stops
 // reading. This transport deterministically holds the actual send phase so its
 // cancellation and disposal contracts are verified without enormous payloads.
+sealed class FailingFlushStream : MemoryStream
+{
+    public override Task FlushAsync(CancellationToken token) => Task.FromException(new IOException("テスト用の flush 失敗"));
+}
+
 sealed class BlockedSendSocket : WebSocket
 {
     private readonly CancellationTokenSource aborted = new();

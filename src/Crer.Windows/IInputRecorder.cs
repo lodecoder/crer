@@ -8,6 +8,9 @@ public struct InputEvent
     public ulong Qpc;
     public int X, Y;
     public uint Kind, Data;
+    /// <summary>取得時点のページ領域。キューの読み出しまでにウィンドウが移動しても座標を復元できる。</summary>
+    public bool HasContentBounds;
+    public int ContentX, ContentY, ContentWidth, ContentHeight;
 }
 
 public struct ContentRect

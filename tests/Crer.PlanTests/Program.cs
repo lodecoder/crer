@@ -329,6 +329,70 @@ try
         var result = await PlanRunner.Run(ValidPlan(Parallel(false, Leaf(persistentFile), Leaf(persistentNextFile), Leaf(otherFile)), reuse: true, maximum: 3), Options(), "fake", default, () => new FakePlayback(Play));
         Check(peak == 1 && otherRanConcurrently && result.Results.Count == 3, "profile queue blocked unrelated work or allowed overlap");
     });
+    await Test("同じ profile の待機中も別 profile を空いている並列枠で開始する", async () =>
+    {
+        var firstStarted = Signal(); var otherStarted = Signal(); var firstActive = false; var overlapped = false;
+        var active = 0; var peak = 0;
+        async Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+        {
+            var running = Interlocked.Increment(ref active);
+            int observed;
+            do { observed = Volatile.Read(ref peak); } while (running > observed && Interlocked.CompareExchange(ref peak, running, observed) != observed);
+            try
+            {
+                if (scenario.Name == "persistent")
+                {
+                    firstActive = true; firstStarted.TrySetResult();
+                    await otherStarted.Task.WaitAsync(TimeSpan.FromSeconds(2), token);
+                    firstActive = false;
+                }
+                else if (scenario.Name == "other")
+                {
+                    await firstStarted.Task.WaitAsync(token);
+                    overlapped = firstActive; otherStarted.TrySetResult();
+                }
+                return Result();
+            }
+            finally { Interlocked.Decrement(ref active); }
+        }
+        var result = await PlanRunner.Run(ValidPlan(Parallel(false, Leaf(persistentFile), Leaf(persistentNextFile), Leaf(otherFile)), reuse: true, maximum: 2),
+            Options(), "fake", default, () => new FakePlayback(Play));
+        Check(overlapped && peak == 2 && result.Code == 0, "同じ profile の待機が別 profile の開始を塞いだか、並列上限を超えた");
+        Check(result.Results.Count == 3, "待機中の同一 profile の結果が欠けた");
+    });
+    await Test("ネストした serial の失敗にも fail_fast を適用し、そのスコープ外は続行する", async () =>
+    {
+        var continuationFile = ScenarioFile("afterGroup");
+        var siblingStarted = Signal(); var nestedNextStarted = false; var siblingDrained = false; var continued = false;
+        var started = new ConcurrentQueue<string>();
+        async Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+        {
+            started.Enqueue(scenario.Name);
+            if (scenario.Name == "failure") { await siblingStarted.Task; return Result(4, "failed"); }
+            if (scenario.Name == "success") { nestedNextStarted = true; return Result(); }
+            if (scenario.Name == "afterGroup") { continued = siblingDrained && !token.IsCancellationRequested; return Result(); }
+            siblingStarted.TrySetResult();
+            try { await Task.Delay(Timeout.Infinite, token); } catch (OperationCanceledException) { }
+            siblingDrained = true; return Result(5, "cancelled");
+        }
+        var result = await PlanRunner.Run(ValidPlan(Serial(Parallel(true, Serial(Leaf(failureFile), Leaf(successFile)), Leaf(otherFile)), Leaf(continuationFile)),
+            new() { ["default"] = "continue" }, maximum: 2), Options(), "fake", default, () => new FakePlayback(Play));
+        Check(!nestedNextStarted && siblingDrained && continued, "fail_fast がネスト内に伝播しなかったか、スコープ外まで取消された");
+        Same(result.Results.OfType<JsonObject>().Select(item => Json.Number(item["code"])), 4d, 4d, 0d);
+        Same(started.OrderBy(name => name), "afterGroup", "failure", "other");
+    });
+    await Test("fail_fast で開始しない待機中の不正 scenario は先行する失敗を上書きしない", async () =>
+    {
+        var started = new List<string>();
+        Task<JsonObject> Play(Scenario scenario, CliOptions _, CancellationToken token, bool retain)
+        {
+            started.Add(scenario.Name); return Task.FromResult(Result(4, "failed"));
+        }
+        var result = await PlanRunner.Run(ValidPlan(Parallel(true, Leaf(failureFile), Leaf("missing.crer.yaml")),
+            new() { ["default"] = "continue" }, maximum: 1), Options(), "fake", default, () => new FakePlayback(Play));
+        Same(started, "failure");
+        Check(result.Code == 4 && result.Results.Count == 1, "取消された葉の設定エラーが先行する失敗を上書きした");
+    });
     await Test("parallel fail-fast drains running workers before closing shared sessions", async () =>
     {
         var otherStarted = Signal(); var drained = false; var instances = new List<FakePlayback>(); var started = new ConcurrentQueue<string>();

@@ -489,6 +489,83 @@ await Test("once成功後はstep開始と不透明度監視で最前面化やフ
     Check(Json.Text(Startup(directory)["status"]) == "succeeded" && Attempts(directory).Count == 1, "後始末で起動成功の診断が変わりました");
 });
 
+await Test("前景要求が拒否され取得していないときは終了時に他アプリの前景を変更しない", async () =>
+{
+    var directory = DirectoryFor("focus-denied-no-restore");
+    var fake = new FakeWindowInput { FocusResultFactory = _ => 5 };
+    var controller = new WindowController(fake);
+    await Configure(controller, directory);
+    controller.Dispose();
+    var diagnostic = Foreground(directory);
+    Check(fake.RestoredWindows.Count == 0 && diagnostic["restorePerformed"]!.GetValue<bool>() == false
+        && diagnostic["foregroundAcquired"]!.GetValue<bool>() == false && diagnostic["foregroundOwned"]!.GetValue<bool>() == false
+        && diagnostic["restoreStatus"] is null && Json.Number(diagnostic["foregroundStatus"]) == 5,
+        "未取得の前景を取得済みとして復元したか、許可拒否と復元不要の診断を失った");
+});
+
+await Test("要求が拒否されても既に対象が実際の前景なら取得済みとして復元する", async () =>
+{
+    var directory = DirectoryFor("already-focused-restore");
+    var fake = new FakeWindowInput { FocusResultFactory = _ => 5 };
+    var controller = new WindowController(fake);
+    fake.ProcessForegroundOverride = true;
+    await Configure(controller, directory, shared: true);
+    await Configure(controller, directory, shared: true);
+    controller.Dispose();
+    var diagnostic = Foreground(directory);
+    Check(fake.FocusCalls == 1 && diagnostic["foregroundAcquired"]!.GetValue<bool>()
+        && fake.RestoredWindows.SequenceEqual(new nint[] { FakeWindowInput.OriginalWindow })
+        && diagnostic["restorePerformed"]!.GetValue<bool>() && Json.Number(diagnostic["restoreStatus"], -1) == 0,
+        "実際の所有前景を認識せず要求を繰り返したか、終了時の復元を省いた");
+});
+
+await Test("監視中の属性反映待ちをPauseで取り消して排出する", async () =>
+{
+    var fake = new FakeWindowInput();
+    var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var enabled = 0;
+    fake.ConfirmationFactory = (value, cancellation, budget) =>
+    {
+        if (value && Interlocked.Increment(ref enabled) > 1)
+        {
+            Check(budget <= TimeSpan.FromMilliseconds(250), "監視一回の反映確認が有限の短い予算にならない");
+            waiting.SetResult();
+            cancellation.WaitHandle.WaitOne(TimeSpan.FromSeconds(3));
+            cancellation.ThrowIfCancellationRequested();
+            throw new Exception("Pauseが監視の属性反映待ちを取り消さない");
+        }
+        return fake.SetProcessTopmostDetailed(42, value);
+    };
+    using var controller = new WindowController(fake);
+    var settings = Window(); settings["foreground_mode"] = "always";
+    await Configure(controller, DirectoryFor("cancel-monitor-confirmation"), settings);
+    await waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    await Task.Run(controller.Pause).WaitAsync(TimeSpan.FromSeconds(1));
+});
+
+await Test("ステップ前の属性反映待ちへ利用者の取消しを渡す", async () =>
+{
+    var fake = new FakeWindowInput();
+    using var controller = new WindowController(fake);
+    var settings = Window(); settings["foreground_mode"] = "always";
+    await Configure(controller, DirectoryFor("cancel-step-confirmation"), settings);
+    controller.Pause();
+    var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    fake.ConfirmationFactory = (enabled, cancellation, budget) =>
+    {
+        if (!enabled) return fake.SetProcessTopmostDetailed(42, false);
+        waiting.SetResult();
+        cancellation.WaitHandle.WaitOne(TimeSpan.FromSeconds(3));
+        cancellation.ThrowIfCancellationRequested();
+        throw new Exception("ステップ前の反映待ちが取消しを無視した");
+    };
+    using var cancellation = new CancellationTokenSource();
+    var step = Task.Run(() => controller.BeforeStep(cancellation.Token));
+    await waiting.Task.WaitAsync(TimeSpan.FromSeconds(1));
+    cancellation.Cancel();
+    await Cancelled(() => step.WaitAsync(TimeSpan.FromSeconds(1)), cancellation.Token);
+});
+
 Console.WriteLine($"{passed} passed, {failed} failed; evidence: {root}");
 return failed == 0 ? 0 : 1;
 
@@ -509,9 +586,12 @@ sealed class FakeWindowInput(params TopmostResult[] results) : IWindowInput
     private readonly List<uint> opacity = [];
     private readonly List<nint> restored = [];
     private int focusCalls, disposeCalls;
+    private bool processForeground;
+    public bool? ProcessForegroundOverride { get; set; }
     public TopmostResult DefaultResult { get; init; } = Outcomes.Success();
     public Func<int, TopmostResult>? ResultFactory { get; init; }
     public Func<int, int>? FocusResultFactory { get; init; }
+    public Func<bool, CancellationToken, TimeSpan, TopmostResult>? ConfirmationFactory { get; set; }
     public TaskCompletionSource FirstTopmost { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource TopmostRetried { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource OpacityMaintenance { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -521,10 +601,19 @@ sealed class FakeWindowInput(params TopmostResult[] results) : IWindowInput
     public int DisposeCalls { get { lock (gate) return disposeCalls; } }
     public IReadOnlyList<uint> Opacities { get { lock (gate) return opacity.ToArray(); } }
     public IReadOnlyList<nint> RestoredWindows { get { lock (gate) return restored.ToArray(); } }
-    public nint GetForegroundWindow() => OriginalWindow;
-    public bool IsProcessForeground(uint pid) => true;
-    public int RestoreForegroundWindow(nint window) { lock (gate) restored.Add(window); return 0; }
-    public int ForegroundProcessWindow(uint pid) { lock (gate) { focusCalls++; return FocusResultFactory?.Invoke(focusCalls) ?? 0; } }
+    public nint GetForegroundWindow() { lock (gate) return (ProcessForegroundOverride ?? processForeground) ? 0x222 : OriginalWindow; }
+    public bool IsProcessForeground(uint pid) { lock (gate) return ProcessForegroundOverride ?? processForeground; }
+    public int RestoreForegroundWindow(nint window) { lock (gate) { restored.Add(window); processForeground = false; ProcessForegroundOverride = null; } return 0; }
+    public int ForegroundProcessWindow(uint pid)
+    {
+        lock (gate)
+        {
+            focusCalls++;
+            var result = FocusResultFactory?.Invoke(focusCalls) ?? 0;
+            if (result == 0) processForeground = true;
+            return result;
+        }
+    }
     public TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled)
     {
         lock (gate)
@@ -537,6 +626,11 @@ sealed class FakeWindowInput(params TopmostResult[] results) : IWindowInput
             if (attempt > 1) TopmostRetried.TrySetResult();
             return result;
         }
+    }
+    public TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled, CancellationToken cancellation, TimeSpan confirmationTimeout)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        return ConfirmationFactory?.Invoke(enabled, cancellation, confirmationTimeout) ?? SetProcessTopmostDetailed(pid, enabled);
     }
     public int SetProcessOpacity(uint pid, uint alpha)
     {

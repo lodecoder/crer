@@ -122,6 +122,12 @@ internal static class InputRegressionTests
             Empty("タイトルバーのドラッグを記録しない");
             Click(Center(tools)); Empty("DevTools のクリックを記録しない");
             Click(Center(content)); Pair("ページのクリックは down/up を一組だけ記録する");
+            Require(GetWindowRect(content, out var originalContentRect) && events[0].HasContentBounds
+                && events[0].ContentX == originalContentRect.Left && events[0].ContentY == originalContentRect.Top
+                && events[0].ContentWidth == originalContentRect.Right - originalContentRect.Left
+                && events[0].ContentHeight == originalContentRect.Bottom - originalContentRect.Top,
+                "入力イベントに採取時点のページ原点と寸法を保存する");
+            var beforeMove = events[0];
             Click(Center(child)); Pair("ページ内の子 HWND でもクリックを記録する");
             var page = Center(content);
             InputBridge.TestMouseAt(1, title.X, title.Y); InputBridge.TestMouseAt(2, page.X, page.Y);
@@ -130,6 +136,18 @@ internal static class InputRegressionTests
             SetFocus(content); Require(GetFocus() == content, "ページへスレッド内フォーカスを設定できる");
             Key(0x41, true, browser); Key(0x41, false, browser);
             Require(recorder.Read(events) == 2 && events[0].Kind == 9 && events[1].Kind == 8, "ページの文字とキー解放を記録する");
+
+            foreach (var modifier in new uint[] { 0x10, 0x11, 0x12, 0x5B, 0xA0, 0xA2, 0xA4 })
+            {
+                Key(modifier, true, browser);
+                Key(modifier, false);
+                Key(0x41, true, browser); Key(0x41, false, browser);
+                Require(recorder.Read(events) == 4 && events[0].Kind == 7 && events[1].Kind == 8
+                    && events[1].Data >> 16 == modifier && events[2].Kind == 9 && events[3].Kind == 8,
+                    "対象内で受理した修飾キーの対象外解放を保持し、次の文字に押下状態を残さない");
+                Key(modifier, true); Key(modifier, false); Key(modifier, false);
+                Empty("対象外で始まった修飾キーや重複解放は記録しない");
+            }
             SetFocus(tools); Require(GetFocus() == tools, "DevTools へスレッド内フォーカスを設定できる");
             Key(0x41, true, browser); Key(0x41, false, browser);
             Empty("同じプロセスの DevTools へフォーカスしたキーを記録しない");
@@ -169,6 +187,12 @@ internal static class InputRegressionTests
             content = CreateWindowExW(0, contentName, "再生成ページ", 0x50000000, 0, 0, 200, 180, browser, 0, 0, 0);
             Require(content != 0 && recorder.GetContentRect().Status == 0, "移動後の同じ領域で再生成されたページを再取得する");
             Click(Center(content)); Pair("再生成されたページのクリックを採用する");
+            Require(GetWindowRect(content, out var movedContentRect) && events[0].HasContentBounds
+                && events[0].ContentX == movedContentRect.Left && events[0].ContentY == movedContentRect.Top
+                && events[0].ContentWidth == 200 && events[0].ContentHeight == 180
+                && events[0].ContentX - beforeMove.ContentX == 30 && events[0].ContentY - beforeMove.ContentY == 30
+                && beforeMove.ContentX == originalContentRect.Left && beforeMove.ContentY == originalContentRect.Top,
+                "ウィンドウの移動・ページの再生成後も各イベントの取得時原点を保持する");
             SetFocus(content); Key(0x41, true, browser); Key(0x41, false, browser);
             Require(recorder.Read(events) == 2 && events[0].Kind == 9 && events[1].Kind == 8, "再生成されたページのキーを採用する");
             DestroyWindow(browser); browser = content = tools = 0;

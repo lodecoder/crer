@@ -5,4 +5,5 @@
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="..\..\src\Crer.Cli\Crer.Cli.csproj" /></ItemGroup>
+  <ItemGroup><None Include="..\Crer.TemplateTests\baseline-template-vectors.json" Link="template-search-baseline.json" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

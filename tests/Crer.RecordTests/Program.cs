@@ -29,6 +29,12 @@ async Task Temp(Func<string, Task> action)
 }
 RecordRawOptions Options() => new() { PollInterval = TimeSpan.FromMilliseconds(1), Output = new StringWriter(), Error = new StringWriter() };
 InputEvent Event(uint kind, uint data = 0, int x = 100, int y = 200, ulong qpc = 1) => new() { Kind = kind, Data = data, X = x, Y = y, Qpc = qpc };
+InputEvent WithBounds(InputEvent input, int x, int y, int width = 800, int height = 600)
+{
+    input.HasContentBounds = true;
+    input.ContentX = x; input.ContentY = y; input.ContentWidth = width; input.ContentHeight = height;
+    return input;
+}
 JsonObject Metadata(string path) => JsonNode.Parse(File.ReadAllText(path + ".meta.json"))!.AsObject();
 JsonArray Events(string path) => new(File.ReadAllLines(path).Where(line => line.Length != 0).Select(line => JsonNode.Parse(line)).ToArray());
 
@@ -341,6 +347,54 @@ await Test("recorded packets normalize and validate with physical CSS calibratio
     var scenario = Scenario.Parse(Normalize.ToYaml(normalized.Scenario));
     Equal(Json.Number(scenario.Steps[0]!["at"]!["x"]), 204);
     Equal(Json.Number(scenario.Steps[0]!["at"]!["y"]), 208);
+}));
+await Test("録画中に移動した各イベントの領域を保存し較正補正を保って同じCSS座標へ戻す", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    // キュー回収時にはブラウザーが閉じていても、入力取得時の領域とマーカーの補正差を保持する。
+    var fake = new FakeRecorder(stop,
+        [WithBounds(Event(2, x: 110, y: 210, qpc: 1), 98, 196), WithBounds(Event(3, x: 110, y: 210, qpc: 2), 98, 196),
+         WithBounds(Event(2, x: 200, y: 300, qpc: 3), 98, 196), WithBounds(Event(3, x: 200, y: 300, qpc: 4), 98, 196)],
+        [WithBounds(Event(2, x: 400, y: 250, qpc: 5), 298, 146, 1000, 700), WithBounds(Event(3, x: 400, y: 250, qpc: 6), 298, 146, 1000, 700)])
+    { Bounds = new(1169, default) };
+    var options = Options() with
+    {
+        Viewport = new(800, 600), RequestedContent = new(800, 600), IsTargetAlive = () => false,
+        MarkerClick = _ => Task.FromResult<NormalizePoint?>(new(10, 10)),
+    };
+    await Recorder.RecordRaw(fake, 42, path, options, stop.Token);
+    Equal(Events(path).Count, 4);
+    Equal(Events(path)[2]!["content_rect_screen_px"]!["x"]!.GetValue<int>(), 298);
+    Equal(Events(path)[2]!["content_rect_screen_px"]!["width"]!.GetValue<int>(), 1000);
+    Equal(Events(path)[2]!["css_viewport"]!["x"]!.GetValue<double>(), 800d);
+    Equal(Metadata(path)["marker_calibration"]!["content_rect_screen_px"]!["x"]!.GetValue<int>(), 98);
+    var normalized = Normalize.FromFile(path, new() { Url = "http://127.0.0.1/" });
+    Equal(normalized.Warnings.Count, 0);
+    var scenario = Scenario.Parse(Normalize.ToYaml(normalized.Scenario));
+    Equal(scenario.Steps.Count, 2);
+    foreach (var step in scenario.Steps)
+    {
+        Equal(Json.Number(step!["at"]!["x"]), 100);
+        Equal(Json.Number(step!["at"]!["y"]), 100);
+    }
+    Equal(options.Output.ToString()!.Split("click: { x: 100, y: 100 }", StringSplitOptions.None).Length, 3);
+}));
+await Test("マーカーなしの録画でも移動前後の取得領域を使い終了時の領域で上書きしない", () => Temp(async path =>
+{
+    using var stop = new CancellationTokenSource();
+    var fake = new FakeRecorder(stop,
+        [WithBounds(Event(2, x: 200, y: 300, qpc: 1), 100, 200), WithBounds(Event(3, x: 200, y: 300, qpc: 2), 100, 200),
+         WithBounds(Event(2, x: -100, y: 350, qpc: 3), -200, 250), WithBounds(Event(3, x: -100, y: 350, qpc: 4), -200, 250)])
+    { Bounds = new(0, new() { X = 500, Y = 500, Width = 800, Height = 600 }) };
+    await Recorder.RecordRaw(fake, 42, path, Options() with { Viewport = new(800, 600) }, stop.Token);
+    Equal(Metadata(path)["content_rect_screen_px"]!["x"]!.GetValue<int>(), 100);
+    var normalized = Normalize.FromFile(path, new() { Url = "http://127.0.0.1/" });
+    Equal(normalized.Warnings.Count, 0);
+    foreach (var step in normalized.Scenario["steps"]!.AsArray())
+    {
+        Equal(Json.Number(step!["at"]!["x"]), 100);
+        Equal(Json.Number(step!["at"]!["y"]), 100);
+    }
 }));
 await Test("duration timer retains Deno truncation and signed 32-bit overflow behavior", () =>
 {

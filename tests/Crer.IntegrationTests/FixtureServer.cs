@@ -58,6 +58,13 @@ internal sealed class FixtureServer : IAsyncDisposable
                 if (path == "/seen") { Tokens[Query(uri, "name")] = Query(uri, "token"); body = "ok"; type = "text/plain; charset=utf-8"; }
                 else if (path == "/submitted") { Snapshots[Query(uri, "case")] = Query(uri, "value"); body = "ok"; type = "text/plain; charset=utf-8"; }
                 else if (path == "/initial-display") { InitialDisplays[Query(uri, "name")] = Query(uri, "value"); body = "ok"; type = "text/plain; charset=utf-8"; }
+                else if (path.StartsWith("/record-size/"))
+                {
+                    var name = path["/record-size/".Length..];
+                    body = "<!doctype html><title>crer recording size</title><style>body{margin:0;overflow:hidden}</style>"
+                        + "<script>const initial={width:innerWidth,height:innerHeight,dpr:devicePixelRatio};"
+                        + "fetch('/initial-display?name=" + name + "&value='+encodeURIComponent(JSON.stringify(initial)));</script><p>ready</p>";
+                }
                 else if (path == "/occlusion-barrier")
                 {
                     occlusionArrived[Query(uri, "name")] = true;

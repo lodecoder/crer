@@ -40,7 +40,8 @@ public sealed partial class Playback
             JsonObject Record(string status) => new() { ["index"] = index, ["do"] = action, ["startedAt"] = started, ["completedAt"] = Timestamp(), ["status"] = status };
             async Task Write(JsonObject record)
             {
-                try { record["url"] = await Evaluate("location.href", CancellationToken.None); } catch { }
+                // 診断のために無応答の renderer を待たず、最後に観測した遷移先を使う。
+                if (currentPageUrl is { } url) record["url"] = url;
                 await File.AppendAllTextAsync(Path.Combine(absoluteRunDir, "steps.ndjson"), record.ToJsonString(Json.Compact) + "\n");
             }
             JsonObject WithCoordinates(JsonObject record)
@@ -243,7 +244,7 @@ public sealed partial class Playback
                 var record = WithCoordinates(Record("failed")); record["kind"] = "interrupted"; record["error"] = interrupted.Message;
                 if (InputGuard.CleanupErrors(interrupted) is { } cleanup) record["cleanupErrors"] = new JsonArray(cleanup.Select(value => (JsonNode)JsonValue.Create(value)!).ToArray());
                 await Write(record);
-                try { await Capture($"failure-{index}", CancellationToken.None); } catch { }
+                await CaptureFailure(interrupted, index);
                 throw;
             }
             catch (CrerException environment) when (environment.Code == 3)
@@ -251,7 +252,7 @@ public sealed partial class Playback
                 var record = WithCoordinates(Record("failed")); record["kind"] = "environment"; record["error"] = environment.Message;
                 if (InputGuard.CleanupErrors(environment) is { } cleanup) record["cleanupErrors"] = new JsonArray(cleanup.Select(value => (JsonNode)JsonValue.Create(value)!).ToArray());
                 await Write(record);
-                try { await Capture($"failure-{index}", CancellationToken.None); } catch { }
+                await CaptureFailure(environment, index);
                 throw;
             }
             catch (Exception error)
@@ -310,7 +311,7 @@ public sealed partial class Playback
         public string ErrorName { get; } = name;
     }
 
-    private async Task<JsonObject> ReadActionState(JsonObject step, CancellationToken? cancellation = null)
+    private async Task<JsonObject> ReadActionState(JsonObject step, CancellationToken? cancellation = null, int timeout = 10000)
     {
         var hint = step["locator_hint"]?.ToJsonString() ?? "{}";
         var url = step["url"]?.ToJsonString() ?? "null";
@@ -338,7 +339,7 @@ public sealed partial class Playback
           return { url: location.href, state: document.readyState, found, urlMatches };
         })()
         """;
-        var state = (await Evaluate(expression, cancellation))?.AsObject() ?? new();
+        var state = (await Evaluate(expression, cancellation, timeout))?.AsObject() ?? new();
         if (state["urlError"] != null) throw new JavaScriptActionException(Json.Text(state["urlErrorName"], "SyntaxError"), Json.Text(state["urlError"]));
         return state;
     }
@@ -366,7 +367,13 @@ public sealed partial class Playback
                 if (remaining <= 0) break;
                 // 大きな有限数も受理し、残り期限がタイマー上限内に入った時点で有効にする。
                 if (remaining <= uint.MaxValue - 1d) waiting.CancelAfter(TimeSpan.FromMilliseconds(remaining));
-                var matched = await WaitCondition(step, waiting.Token);
+                bool matched;
+                try { matched = await WaitCondition(step, waiting.Token); }
+                catch (CrerException error) when (IsChangingDocument(error))
+                {
+                    // 文書が切り替わる短い間も、元の条件待ちの期限と取消しを維持する。
+                    matched = false;
+                }
                 waiting.Token.ThrowIfCancellationRequested();
                 remaining = limit - watch.Elapsed.TotalMilliseconds;
                 // タイマーと応答が競合しても、期限後の成立を成功として受け入れない。
@@ -389,11 +396,22 @@ public sealed partial class Playback
 
     private async Task<bool> WaitCondition(JsonObject step, CancellationToken cancellation)
     {
-        var state = await ReadActionState(step, cancellation);
+        // 条件照会の応答待ちも、CDP の既定10秒ではなく action_ms の残り期限で制御する。
+        var state = await ReadActionState(step, cancellation, Timeout.Infinite);
         var desired = Json.Text(step["state"]);
         var stateMatches = desired is "visible" or "" || Json.Text(state["state"]) == "complete";
         if (desired == "network_idle") lock (networkLock)
             stateMatches = Json.Text(state["state"]) == "complete" && requests.Count == 0 && Environment.TickCount64 - lastNetworkActivity >= 500;
         return state["urlMatches"]?.GetValue<bool>() == true && stateMatches && state["found"]?.GetValue<bool>() == true;
+    }
+
+    private async Task CaptureFailure(Exception error, string index)
+    {
+        const string captured = "crer.failureCaptured";
+        // 同じ例外が親の制御ステップへ戻っても、画像取得と待機予算を繰り返さない。
+        if (error.Data.Contains(captured)) return;
+        error.Data[captured] = true;
+        using var deadline = new CancellationTokenSource(error is OperationCanceledException ? 250 : 1000);
+        try { await Capture($"failure-{index}", deadline.Token); } catch { }
     }
 }

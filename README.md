@@ -78,12 +78,14 @@ plan 全体の不透明度は `run` 専用の `--plan-window-opacity-override` �
 プロセス・ウィンドウ・CDP session を再利用できます。scenario ごとの URL、ウィンドウ bounds、content は
 切替時に再適用し、viewport / DPR / zoom は再検証します。同じ profile の scenario は順番に実行し、
 異なる profile は `max_parallel` の範囲で並列実行できます。保持した CfT は plan 終了時に閉じます。
+同じ profile の待機は並列枠を消費しないため、別 profile の処理は空いている枠で開始します。
 別の profile や ephemeral scenario を挟んでも保持します。ephemeral scenario 自体は再利用しません。
 タイムアウト・続行不能エラー時は対象 profile の CfT を閉じ、同じ profile の次の実行時に起動し直します。
 
 plan の `on_failure.environment: continue` は、環境エラーになった scenario の終了と後始末を待ち、
 後続 scenario と他の並列 job を続行します。最終終了コードは `3` です。
 省略時は `on_failure.default`（既定 `abort`）に従い、`fail_fast: true` は `continue` より優先します。
+ネストした job の途中で scenario が失敗した場合も、その時点で該当の並列スコープを取り消します。
 
 初回・再利用時のページ準備は既定60秒まで待機します。応答の遅いページでは scenario に
 `playback.timeouts.startup_ms` を指定できます。`0` は無制限で、中断と plan の worker timeout は有効です。

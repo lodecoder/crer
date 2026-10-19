@@ -61,8 +61,14 @@ dotnet run --project tests/Crer.ControlIntegrationTests -c Release -- `
 前者は plan の並列性・profile 分離・再利用・worker timeout・fail_fast、
 Tab と Space の旧記録、DPI・viewport、profile 排他、非干渉観測を検証する。
 Windows グループは foreground always/once の優先順位、sleep 中の topmost watchdog、opacity と
-再利用時の変更・解除、終了時の復元を実際の HWND で検証する。
+再利用時の変更・解除を実際の HWND で検証する。前景の取得が確認できた場合は終了時の復元要求と結果を検証し、
+Windows が取得を拒否した場合は前景未取得の診断・実 HWND/PID の観測・不要な復元を行わない動作を照合する。
+元の HWND の生存と所有者、実行中の前景 HWND/PID は証跡へ保存する。取得成功・拒否・既に対象が前景の場合の
+分岐は WindowController の回帰テストでも検証する。
 選択例は `--only plan`、`--only keyboard,display,profiles`、`--only windows --windows`。
+`--only template-search` は専用の headless CfT で固定した旧照合式と最適化後の式を比較する。
+同点・閾値境界・重なり除外・候補の置換・小画像・大画面の座標と類似度が一致することを確認し、
+撮影・画像デコードを除いた照合部分の時間を `template-search-parity.json` に保存する。
 後者は template の単/複数一致、cache、missing、画像保存方針、条件・反復・break・関数、seed/jitter を検証する。
 
 ## 手動 record → normalize → validate → play

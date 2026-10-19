@@ -49,19 +49,29 @@ public static partial class Recorder
             started = true;
             options.Error.WriteLine($"Recording target Chrome process: {pid}");
             JsonObject? calibration = null;
+            ContentRect? initialContentRect = null;
             var activeViewport = options.Viewport;
             var nextViewportCheck = 0L;
             NormalizePoint? mouseDown = null;
             var mouseMoved = false;
-            void LogClick(NormalizePoint point)
+            void LogClick(InputEvent input)
             {
-                var bounds = native.GetContentRect();
+                var point = new NormalizePoint(input.X, input.Y);
+                var captured = CapturedRect(input);
+                var bounds = captured is { } rect ? new ContentBounds(0, rect) : native.GetContentRect();
                 if (calibration is not null && activeViewport is not null && bounds.Status == 0 && bounds.Rect.Width >= 32 && bounds.Rect.Height >= 32)
                 {
                     var screen = calibration["screenClick"]!;
                     var css = calibration["cssPoint"]!;
-                    var x = Round(point.X - (Json.Number(screen["x"]) - Json.Number(css["x"])));
-                    var y = Round(point.Y - (Json.Number(screen["y"]) - Json.Number(css["y"])));
+                    var originX = Json.Number(screen["x"]) - Json.Number(css["x"]);
+                    var originY = Json.Number(screen["y"]) - Json.Number(css["y"]);
+                    if (captured is { } current && calibration["content_rect_screen_px"] is JsonObject reference)
+                    {
+                        originX += current.X - Json.Number(reference["x"]);
+                        originY += current.Y - Json.Number(reference["y"]);
+                    }
+                    var x = Round(point.X - originX);
+                    var y = Round(point.Y - originY);
                     options.Output.WriteLine($"[crer] click: {{ x: {x.ToString(CultureInfo.InvariantCulture)}, y: {y.ToString(CultureInfo.InvariantCulture)} }}");
                 }
                 else options.Output.WriteLine($"[crer] click screen_px: {{ x: {point.X.ToString(CultureInfo.InvariantCulture)}, y: {point.Y.ToString(CultureInfo.InvariantCulture)} }}");
@@ -70,11 +80,9 @@ public static partial class Recorder
             {
                 var bounds = native.GetContentRect();
                 var metadata = new JsonObject { ["qpc_frequency_hz"] = frequency };
+                if (initialContentRect is { } firstRect) bounds = new(0, firstRect);
                 if (bounds.Status == 0 && bounds.Rect.Width >= 32 && bounds.Rect.Height >= 32)
-                    metadata["content_rect_screen_px"] = new JsonObject
-                    {
-                        ["x"] = bounds.Rect.X, ["y"] = bounds.Rect.Y, ["width"] = bounds.Rect.Width, ["height"] = bounds.Rect.Height,
-                    };
+                    metadata["content_rect_screen_px"] = Rect(bounds.Rect);
                 if (options.Viewport is { } initialViewport)
                 {
                     metadata["css_viewport"] = Point(initialViewport);
@@ -103,6 +111,12 @@ public static partial class Recorder
                         ["qpc"] = input.Qpc.ToString(CultureInfo.InvariantCulture), ["x"] = input.X, ["y"] = input.Y,
                         ["kind"] = input.Kind, ["data"] = input.Data,
                     };
+                    if (CapturedRect(input) is { } contentRect)
+                    {
+                        initialContentRect ??= contentRect;
+                        item["content_rect_screen_px"] = Rect(contentRect);
+                        if (activeViewport is not null) item["css_viewport"] = Point(activeViewport);
+                    }
                     if (activeViewport is not null && options.Viewport is not null && activeViewport != options.Viewport)
                         item["css_viewport"] = Point(activeViewport);
                     if (calibration is null && options.MarkerClick is not null && options.Viewport is not null)
@@ -116,6 +130,7 @@ public static partial class Recorder
                                 if (await options.MarkerClick(eventToken) is { } css)
                                 {
                                     calibration = new JsonObject { ["screenClick"] = new JsonObject { ["x"] = input.X, ["y"] = input.Y }, ["cssPoint"] = Point(css) };
+                                    if (CapturedRect(input) is { } markerRect) calibration["content_rect_screen_px"] = Rect(markerRect);
                                     options.Error.WriteLine("Calibration complete. Recording browser interactions now.");
                                 }
                             }
@@ -128,7 +143,7 @@ public static partial class Recorder
                     else if (input.Kind == 1 && mouseDown is not null && (input.X != mouseDown.X || input.Y != mouseDown.Y)) mouseMoved = true;
                     else if (input.Kind == 3)
                     {
-                        if (mouseDown is not null && !mouseMoved) LogClick(new(input.X, input.Y));
+                        if (mouseDown is not null && !mouseMoved) LogClick(input);
                         mouseDown = null;
                         mouseMoved = false;
                     }
@@ -235,5 +250,8 @@ public static partial class Recorder
     }
 
     private static JsonObject Point(NormalizePoint point) => new() { ["x"] = point.X, ["y"] = point.Y };
+    private static ContentRect? CapturedRect(InputEvent input) => input.HasContentBounds && input.ContentWidth >= 32 && input.ContentHeight >= 32
+        ? new ContentRect { X = input.ContentX, Y = input.ContentY, Width = input.ContentWidth, Height = input.ContentHeight } : null;
+    private static JsonObject Rect(ContentRect rect) => new() { ["x"] = rect.X, ["y"] = rect.Y, ["width"] = rect.Width, ["height"] = rect.Height };
     private static double Round(double value) { var floor = Math.Floor(value); return value - floor >= 0.5 ? floor + 1 : floor; }
 }

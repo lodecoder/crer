@@ -105,6 +105,7 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
     private string? session;
     private int windowId;
     private int port;
+    private string initialUrl = "about:blank";
     private Task? stdout, stderr;
     public NormalizePoint Viewport { get; private set; } = new(0, 0);
     public NormalizeWindowBounds? WindowBounds { get; private set; }
@@ -113,6 +114,7 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
 
     public void Start(string url)
     {
+        initialUrl = url;
         var path = Path.GetFullPath(chrome);
         if (!File.Exists(path)) throw new CrerException(3, $"Chrome for Testing does not exist: {path}");
         var reservation = new TcpListener(IPAddress.Loopback, 0);
@@ -124,7 +126,8 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
         {
             $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check", "--disable-sync", "--disable-infobars", "--disable-save-password-bubble",
-            "--force-device-scale-factor=1", "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding", $"--app={url}",
+            "--force-device-scale-factor=1", "--disable-backgrounding-occluded-windows",
+            "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding", "--app=data:text/html,",
         }) start.ArgumentList.Add(argument);
         ChromeEnvironment.Apply(start);
         try
@@ -148,7 +151,7 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
     public async Task SetupPage(NormalizePoint content, NormalizeWindowBounds? position, CancellationToken token)
     {
         var watch = Stopwatch.StartNew();
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        using var http = new HttpClient(new HttpClientHandler { UseProxy = false }) { Timeout = TimeSpan.FromSeconds(2) };
         var endpoint = $"http://127.0.0.1:{port}";
         JsonArray? targets = null;
         string? browserUrl = null;
@@ -180,35 +183,28 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
         var bounds = (await BrowserCall("Browser.getWindowBounds", new() { ["windowId"] = windowId }, token))["bounds"]!;
         await SetBounds(new() { ["windowState"] = "normal", ["width"] = bounds["width"]!.DeepClone(), ["height"] = bounds["height"]!.DeepClone() }, token);
         if (position is not null) await SetBounds(new() { ["left"] = position.Left, ["top"] = position.Top }, token);
-        await SetContent(content, token);
         await PageCall("Page.enable", new(), token);
+        await PageCall("Runtime.enable", new(), token);
+        // サイトが初期サイズを参照する前に、空文書で実ウィンドウと renderer の寸法を揃える。
+        await SynchronizeContent(content, token);
+        var navigation = await PageCall("Page.navigate", new() { ["url"] = initialUrl }, token, 10000);
+        if (Json.Text(navigation["errorText"]) is { Length: > 0 } navigationError)
+            throw new CrerException(3, $"recording navigation failed: {navigationError}");
         watch.Restart();
-        while (Json.Text(await Evaluate("document.readyState", token)) == "loading")
+        while (true)
         {
+            token.ThrowIfCancellationRequested();
+            try
+            {
+                var state = await Evaluate("({url:location.href,state:document.readyState})", token);
+                if ((initialUrl == "data:text/html," || Json.Text(state?["url"]) != "data:text/html,")
+                    && Json.Text(state?["state"]) is "interactive" or "complete") break;
+            }
+            catch (CrerException error) when (ChangingDocument(error)) { }
             if (watch.Elapsed >= TimeSpan.FromSeconds(10)) throw new CrerException(3, "CfT page did not finish loading");
             await Task.Delay(50, token);
         }
-        var previous = await ReadViewport(token);
-        var stableSince = Stopwatch.StartNew();
-        watch.Restart();
-        while (watch.Elapsed < TimeSpan.FromSeconds(10))
-        {
-            await Task.Delay(100, token);
-            var current = await ReadViewport(token);
-            if (current == previous)
-            {
-                if (stableSince.Elapsed >= TimeSpan.FromSeconds(1)) break;
-            }
-            else { previous = current; stableSince.Restart(); }
-        }
-        if (stableSince.Elapsed < TimeSpan.FromSeconds(1)) throw new CrerException(3, "CfT recording viewport did not stabilize before calibration");
-        for (var attempt = 0; attempt < 10; attempt++)
-        {
-            await SetContent(content, token);
-            await Task.Delay(100, token);
-            Viewport = await ReadViewport(token);
-            if (Viewport == content) break;
-        }
+        Viewport = await SynchronizeContent(content, token);
         if (Viewport != content) Console.Error.WriteLine($"Note: page scrollbar reduced the CSS viewport to {Viewport.X}x{Viewport.Y}; recording that effective coordinate space.");
         var currentBounds = (await BrowserCall("Browser.getWindowBounds", new() { ["windowId"] = windowId }, token))["bounds"]!;
         WindowBounds = new(Json.Number(currentBounds["left"]), Json.Number(currentBounds["top"]));
@@ -216,9 +212,12 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
     }
 
     public async Task<NormalizePoint> ReadViewport(CancellationToken token)
+        => (await ReadViewportMeasurement(token)).Viewport;
+
+    private async Task<(NormalizePoint Viewport, NormalizePoint Content, NormalizePoint Visual)> ReadViewportMeasurement(CancellationToken token)
     {
         var metricsTask = PageCall("Page.getLayoutMetrics", new(), token);
-        var displayTask = Evaluate("({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1})", token);
+        var displayTask = Evaluate("({dpr:devicePixelRatio,scale:visualViewport?.scale ?? 1,innerWidth,innerHeight,width:visualViewport?.width ?? innerWidth,height:visualViewport?.height ?? innerHeight})", token);
         await Task.WhenAll(metricsTask, displayTask);
         var display = await displayTask;
         var dpr = Json.Number(display?["dpr"]);
@@ -229,8 +228,52 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
         var width = Json.Number(viewport?["clientWidth"]);
         var height = Json.Number(viewport?["clientHeight"]);
         if (width <= 0 || height <= 0) throw new CrerException(3, "CfT recording viewport was unavailable");
-        return new(width, height);
+        return (new(width, height), new(Json.Number(display?["innerWidth"]), Json.Number(display?["innerHeight"])),
+            new(Json.Number(display?["width"]), Json.Number(display?["height"])));
     }
+
+    internal async Task<NormalizePoint> SynchronizeContent(NormalizePoint content, CancellationToken token, TimeSpan? timeout = null)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(10));
+        NormalizePoint? previous = null;
+        var stable = Stopwatch.StartNew();
+        try
+        {
+            while (true)
+            {
+                deadline.Token.ThrowIfCancellationRequested();
+                await SetContent(content, deadline.Token);
+                await Task.Delay(100, deadline.Token);
+                try
+                {
+                    var measured = await ReadViewportMeasurement(deadline.Token);
+                    // スクロールバーによる縮小だけを許可し、起動時の古い巨大 viewport を受理しない。
+                    var aligned = measured.Content == content && measured.Viewport == measured.Visual
+                        && measured.Viewport.X <= content.X && measured.Viewport.Y <= content.Y;
+                    if (aligned)
+                    {
+                        if (previous == measured.Viewport)
+                        {
+                            if (stable.Elapsed >= TimeSpan.FromSeconds(1)) return measured.Viewport;
+                        }
+                        else { previous = measured.Viewport; stable.Restart(); }
+                    }
+                    else { previous = null; stable.Restart(); }
+                    // 背面の renderer で遅延した resize を compositor の読取同期でも進める。
+                    if (!aligned) await PageCall("Page.captureScreenshot", new() { ["format"] = "png" }, deadline.Token);
+                }
+                catch (CrerException error) when (ChangingDocument(error)) { previous = null; stable.Restart(); }
+            }
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested && deadline.IsCancellationRequested)
+        { throw new CrerException(3, $"CfT recording content size did not synchronize to {content.X}x{content.Y} before calibration"); }
+    }
+
+    private static bool ChangingDocument(CrerException error) => error.Code == 4 &&
+        (error.Message.Contains("Execution context was destroyed", StringComparison.OrdinalIgnoreCase)
+         || error.Message.Contains("Cannot find default execution context", StringComparison.OrdinalIgnoreCase)
+         || error.Message.Contains("Cannot find context with specified id", StringComparison.OrdinalIgnoreCase));
 
     public async Task<NormalizePoint?> MarkerClick(CancellationToken token)
     {
@@ -242,7 +285,7 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
     private Task<JsonObject> SetBounds(JsonObject bounds, CancellationToken token) => BrowserCall("Browser.setWindowBounds", new() { ["windowId"] = windowId, ["bounds"] = bounds }, token);
     private Task<JsonObject> SetContent(NormalizePoint content, CancellationToken token) => BrowserCall("Browser.setContentsSize", new() { ["windowId"] = windowId, ["width"] = content.X, ["height"] = content.Y }, token);
     private Task<JsonObject> BrowserCall(string method, JsonObject parameters, CancellationToken token) => cdp!.Call(method, parameters, token: token, timeoutMs: 2000);
-    private Task<JsonObject> PageCall(string method, JsonObject parameters, CancellationToken token) => cdp!.Call(method, parameters, session, token, 2000);
+    private Task<JsonObject> PageCall(string method, JsonObject parameters, CancellationToken token, int timeout = 2000) => cdp!.Call(method, parameters, session, token, timeout);
     private async Task<JsonNode?> Evaluate(string expression, CancellationToken token)
     {
         var result = await PageCall("Runtime.evaluate", new() { ["expression"] = expression, ["returnByValue"] = true }, token);

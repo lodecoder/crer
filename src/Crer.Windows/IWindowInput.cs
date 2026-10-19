@@ -29,5 +29,10 @@ public interface IWindowInput : IDisposable
     int RestoreForegroundWindow(nint window);
     int ForegroundProcessWindow(uint pid);
     TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled);
+    TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled, CancellationToken cancellation, TimeSpan confirmationTimeout)
+    {
+        cancellation.ThrowIfCancellationRequested();
+        return SetProcessTopmostDetailed(pid, enabled);
+    }
     int SetProcessOpacity(uint pid, uint alpha);
 }

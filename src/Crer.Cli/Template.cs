@@ -62,8 +62,8 @@ public static class Template
         return (result["result"]?["value"]?.DeepClone(), screenshot);
     }
 
-    // This is the legacy sampled RGB search, including row-major tie breaking,
-    // sample locations, overlap suppression and candidate replacement order.
+    // 旧方式のサンプル位置、同点時の走査順、重なり除外、候補置換順を維持する。
+    // 候補ごとに変わらない座標と RGB は先に求め、画面全体の照合での再計算を避ける。
     public static string Expression(string screenshotUrl, string sourceUrl, bool many, double threshold, double maxMatches)
     {
         var start = $$"""
@@ -80,8 +80,15 @@ public static class Template
           canvas.width = source.width; canvas.height = source.height;
           context.drawImage(source, 0, 0);
           const pattern = context.getImageData(0, 0, source.width, source.height).data;
-          const samples = [];
-          for (let gy = 0; gy < Math.min(8, source.height); gy++) for (let gx = 0; gx < Math.min(8, source.width); gx++) samples.push([Math.floor((gx + 0.5) * source.width / Math.min(8, source.width)), Math.floor((gy + 0.5) * source.height / Math.min(8, source.height))]);
+          const columns = Math.min(8, source.width), rows = Math.min(8, source.height), sampleCount = columns * rows;
+          const sampleOffsets = [], sampleRed = new Uint8Array(sampleCount), sampleGreen = new Uint8Array(sampleCount), sampleBlue = new Uint8Array(sampleCount);
+          for (let gy = 0, index = 0; gy < rows; gy++) for (let gx = 0; gx < columns; gx++, index++) {
+            const sx = Math.floor((gx + 0.5) * source.width / columns), sy = Math.floor((gy + 0.5) * source.height / rows);
+            const patternOffset = (sy * source.width + sx) * 4;
+            sampleOffsets[index] = (sy * screen.width + sx) * 4;
+            sampleRed[index] = pattern[patternOffset]; sampleGreen[index] = pattern[patternOffset + 1]; sampleBlue[index] = pattern[patternOffset + 2];
+          }
+          const maximumDifference = sampleCount * 255 * 3;
         """;
         if (!many) return start + """
 
@@ -89,13 +96,16 @@ public static class Template
           let bestDifference = Number.POSITIVE_INFINITY;
           for (let y = 0; y <= screen.height - source.height; y++) for (let x = 0; x <= screen.width - source.width; x++) {
             let difference = 0;
-            for (const [sx, sy] of samples) {
-              const patternOffset = (sy * source.width + sx) * 4;
-              const screenOffset = ((y + sy) * screen.width + x + sx) * 4;
-              difference += Math.abs(pattern[patternOffset] - pixels[screenOffset]) + Math.abs(pattern[patternOffset + 1] - pixels[screenOffset + 1]) + Math.abs(pattern[patternOffset + 2] - pixels[screenOffset + 2]);
+            const base = (y * screen.width + x) * 4;
+            for (let index = 0; index < sampleCount; index++) {
+              const screenOffset = base + sampleOffsets[index];
+              difference += Math.abs(sampleRed[index] - pixels[screenOffset]) + Math.abs(sampleGreen[index] - pixels[screenOffset + 1]) + Math.abs(sampleBlue[index] - pixels[screenOffset + 2]);
               if (difference >= bestDifference) break;
             }
-            if (difference < bestDifference) { bestDifference = difference; best = { x, y, width: source.width, height: source.height, similarity: 1 - difference / (samples.length * 255 * 3) }; }
+            if (difference < bestDifference) {
+              bestDifference = difference; best = { x, y, width: source.width, height: source.height, similarity: 1 - difference / maximumDifference };
+              if (difference === 0) return best;
+            }
           }
           return best;
         })()
@@ -113,15 +123,16 @@ public static class Template
             return union ? intersection / union : 0;
           };
           const candidateLimit = Math.max({{limit}} * 20, {{limit}});
+          const allowedDifference = (1 - {{similarity}}) * sampleCount * 255 * 3;
           for (let y = 0; y <= screen.height - source.height; y++) for (let x = 0; x <= screen.width - source.width; x++) {
             let difference = 0;
-            for (const [sx, sy] of samples) {
-              const patternOffset = (sy * source.width + sx) * 4;
-              const screenOffset = ((y + sy) * screen.width + x + sx) * 4;
-              difference += Math.abs(pattern[patternOffset] - pixels[screenOffset]) + Math.abs(pattern[patternOffset + 1] - pixels[screenOffset + 1]) + Math.abs(pattern[patternOffset + 2] - pixels[screenOffset + 2]);
-              if (difference > (1 - {{similarity}}) * samples.length * 255 * 3) break;
+            const base = (y * screen.width + x) * 4;
+            for (let index = 0; index < sampleCount; index++) {
+              const screenOffset = base + sampleOffsets[index];
+              difference += Math.abs(sampleRed[index] - pixels[screenOffset]) + Math.abs(sampleGreen[index] - pixels[screenOffset + 1]) + Math.abs(sampleBlue[index] - pixels[screenOffset + 2]);
+              if (difference > allowedDifference) break;
             }
-            const similarity = 1 - difference / (samples.length * 255 * 3);
+            const similarity = 1 - difference / maximumDifference;
             if (similarity < {{similarity}}) continue;
             const candidate = { x, y, width: source.width, height: source.height, similarity };
             const duplicate = candidates.findIndex((existing) => overlap(existing, candidate) >= 0.5);

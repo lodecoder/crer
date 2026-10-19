@@ -33,6 +33,7 @@ if (!OperatingSystem.IsWindows())
 }
 
 using var recorder = new WindowsInput();
+await TopmostResponsivenessTests.Run();
 IInputRecorder input = recorder;
 if (input.QpcFrequencyHz == 0) throw new Exception("QPC frequency must be positive");
 Equal(87, recorder.SetProcessOpacity(0, 128), "opacity rejects missing process");

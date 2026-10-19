@@ -1,6 +1,7 @@
 using System;
 using System.Threading;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -16,6 +17,7 @@ internal static class InputBridge
     private static readonly object WindowGate = new();
     private static readonly AutoResetEvent Stopped = new(false);
     private static readonly byte[] KeyboardState = new byte[256];
+    private static readonly bool[] AcceptedModifiers = new bool[256];
     private static bool _leftButtonAccepted;
     private static Rect? _contentRelativeRect;
     private static Thread? _thread; private static volatile bool _running; private static uint _pid; private static volatile int _error; private static IntPtr _target, _content, _mouseHook, _keyboardHook; private static uint _threadId;
@@ -233,7 +235,24 @@ internal static class InputBridge
         _running = false;
         if (_threadId != 0) PostThreadMessageW(_threadId, 0x0012, UIntPtr.Zero, IntPtr.Zero);
     }
-    private static void Push(uint kind,uint data=0,Point? eventPoint=null){ if(Queue.Count>=8192){Fail(111);return;} QueryPerformanceCounter(out var q); var p=eventPoint??GetPoint(); Queue.Enqueue(new(){Qpc=(ulong)q,X=p.X,Y=p.Y,Kind=kind,Data=data}); }
+    private static void Push(uint kind, uint data = 0, Point? eventPoint = null)
+    {
+        if (Queue.Count >= 8192) { Fail(111); return; }
+        QueryPerformanceCounter(out var q);
+        var point = eventPoint ?? GetPoint();
+        var input = new InputEvent { Qpc = (ulong)q, X = point.X, Y = point.Y, Kind = kind, Data = data };
+        lock (WindowGate)
+        {
+            // キューの読取り前に窓が移動しても、採取時点のページ原点から座標を変換できるようにする。
+            if (_target != IntPtr.Zero && TryContentRect(out var content))
+            {
+                input.HasContentBounds = true;
+                input.ContentX = content.Left; input.ContentY = content.Top;
+                input.ContentWidth = content.Right - content.Left; input.ContentHeight = content.Bottom - content.Top;
+            }
+        }
+        Queue.Enqueue(input);
+    }
     private static IntPtr MouseHook(int code, UIntPtr w, IntPtr l)
     {
         if (code >= 0) {
@@ -259,10 +278,20 @@ internal static class InputBridge
         if (!down && message is not (0x0101 or 0x0105)) return;
         // 別アプリでの Caps Lock 切替や修飾キーの解放も追跡し、対象へ戻った際の状態を保つ。
         UpdateKeyboardState(input.VKey, down);
+        var modifier = input.VKey is 0x10 or 0x11 or 0x12 or 0x5B or 0x5C or >= 0xA0 and <= 0xA5;
+        // 対象内で受理した修飾キーだけは、別アプリへ移った後の解放も対として残す。
+        // 対象外で始まった入力は記録せず、再訪時に以前の修飾キーが押下中として残ることを防ぐ。
+        if (!down && modifier && AcceptedModifiers[input.VKey])
+        {
+            AcceptedModifiers[input.VKey] = false;
+            Push(8, (input.VKey << 16) | input.ScanCode);
+            return;
+        }
         bool active;
         if (foreground is { } window) { lock (WindowGate) active = ActiveWindow(false, window, default); }
         else active = Active(false);
         if (!active) return;
+        if (down && modifier) AcceptedModifiers[input.VKey] = true;
         if (!down) Push(8, (input.VKey << 16) | input.ScanCode);
         else if (TryCharacter(input, out var character)) Push(9, character);
         else Push(7, (input.VKey << 16) | input.ScanCode);
@@ -299,6 +328,7 @@ internal static class InputBridge
     private static void InitializeKeyboardState(short capsState, short capsAsyncState)
     {
         Array.Clear(KeyboardState);
+        Array.Clear(AcceptedModifiers);
         KeyboardState[0x14] = (byte)((capsState & 1) | (capsAsyncState < 0 ? 0x80 : 0));
         foreach (var key in new[] { 0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 })
             KeyboardState[key] = (byte)(GetAsyncKeyState(key) < 0 ? 0x80 : 0);
@@ -443,88 +473,107 @@ internal static class InputBridge
     }
     internal static int SetProcessTopmost(uint pid, bool enabled)
     {
-        lock (WindowGate)
-        {
-            _lastForegroundStatus = 0;
-            var status = SetProcessTopmostCore(pid, enabled).Status;
-            if (status != 0 || !enabled) return status;
-            _lastForegroundStatus = TryBringToForeground(_foregroundTarget);
-            return 0;
-        }
+        var result = SetProcessTopmostDetailed(pid, enabled);
+        lock (WindowGate) _lastForegroundStatus = 0;
+        if (result.Status != 0 || !enabled) return result.Status;
+        var foreground = TryBringToForeground(result.Window);
+        lock (WindowGate) _lastForegroundStatus = foreground;
+        return 0;
     }
     internal static int SetProcessTopmostOnly(uint pid, bool enabled)
     {
         return SetProcessTopmostDetailed(pid, enabled).Status;
     }
     internal static TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled)
+        => SetProcessTopmostDetailed(pid, enabled, CancellationToken.None, TimeSpan.FromSeconds(1));
+
+    internal static TopmostResult SetProcessTopmostDetailed(uint pid, bool enabled, CancellationToken cancellation, TimeSpan confirmationTimeout)
     {
-        lock (WindowGate) return SetProcessTopmostCore(pid, enabled);
-    }
-    private static TopmostResult SetProcessTopmostCore(uint pid, bool enabled)
-    {
+        cancellation.ThrowIfCancellationRequested();
+        if (confirmationTimeout < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(confirmationTimeout));
         if (pid == 0) return new(87, "invalid_process", 0, null, 0, null, 0);
-        _foregroundPid = pid;
-        _foregroundTarget = IntPtr.Zero;
-        EnumWindows(FindForeground, IntPtr.Zero);
-        if (_foregroundTarget == IntPtr.Zero) return new(1168, "window_not_found", 0, null, 0, null, 0);
-        // 所有する CfT へ前景化の許可を渡せる場合に渡し、成否は診断として保持する。
-        // 許可の移譲が拒否されても最前面設定の実 API 結果と属性で成功を判定する。
+        nint window;
+        lock (WindowGate)
+        {
+            _foregroundPid = pid;
+            _foregroundTarget = IntPtr.Zero;
+            EnumWindows(FindForeground, IntPtr.Zero);
+            window = _foregroundTarget;
+        }
+        if (window == IntPtr.Zero) return new(1168, "window_not_found", 0, null, 0, null, 0);
+        // HWND の探索だけを共通ロック内で行い、対象 UI の反映待ちを別 profile へ伝播させない。
         bool? permissionGranted = enabled ? AllowSetForegroundWindow(pid) : null;
         var permissionError = permissionGranted == false ? Marshal.GetLastWin32Error() : 0;
-        return ApplyTopmost(_foregroundTarget, enabled) with
+        return ApplyTopmost(window, enabled, cancellation, confirmationTimeout) with
         {
             ForegroundPermissionGranted = permissionGranted,
             ForegroundPermissionError = permissionError,
         };
     }
     internal static TopmostResult ApplyTopmost(nint window, bool enabled)
+        => ApplyTopmost(window, enabled, CancellationToken.None, TimeSpan.FromSeconds(1));
+
+    internal static TopmostResult ApplyTopmost(nint window, bool enabled, CancellationToken cancellation, TimeSpan confirmationTimeout)
     {
-        lock (WindowGate) return ApplyTopmostCore(window, enabled);
-    }
-    private static TopmostResult ApplyTopmostCore(nint window, bool enabled)
-    {
-        var initial = ApplyTopmostRequest(window, enabled);
-        if (!enabled || initial.FailureStage != "style_mismatch") return initial;
+        cancellation.ThrowIfCancellationRequested();
+        if (confirmationTimeout < TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(confirmationTimeout));
+        var watch = Stopwatch.StartNew();
+        TimeSpan Remaining() => TimeSpan.FromTicks(Math.Max(0, (confirmationTimeout - watch.Elapsed).Ticks));
+        var firstBudget = enabled && confirmationTimeout > TimeSpan.FromMilliseconds(250)
+            ? TimeSpan.FromMilliseconds(250) : confirmationTimeout;
+        var initial = ApplyTopmostRequest(window, enabled, cancellation, firstBudget);
+        if (!enabled || initial.FailureStage is not ("style_mismatch" or "confirmation_timeout") || Remaining() <= TimeSpan.Zero) return initial;
 
         // API が成功しても最前面属性が反映されない状態だけ、一度解除してから設定し直す。
-        // 前景フォーカスや入力キューは変更せず、回復処理は一回に限定する。
-        var resetSucceeded = SetWindowPos(window, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
-        var resetError = Marshal.GetLastWin32Error();
-        if (!resetSucceeded)
+        // 初回・解除・再設定は同じ有限予算を共有し、取消し後は追加の要求を送らない。
+        var reset = ApplyTopmostRequest(window, false, cancellation, Remaining());
+        if (reset.Status != 0)
             return initial with
             {
-                Status = resetError == 0 ? 5 : resetError, FailureStage = "reset_topmost",
+                Status = reset.Status, FailureStage = "reset_topmost",
                 RecoveryAttempted = true, RecoveryInitialStyle = initial.ExtendedStyle,
-                RecoveryResetSucceeded = false, RecoveryResetError = resetError,
+                RecoveryResetSucceeded = reset.SetWindowPosSucceeded, RecoveryResetError = reset.SetWindowPosError,
             };
 
-        var reapplied = ApplyTopmostRequest(window, true);
+        var reapplied = ApplyTopmostRequest(window, true, cancellation, Remaining());
         return reapplied with
         {
             RecoveryAttempted = true, RecoveryInitialStyle = initial.ExtendedStyle,
-            RecoveryResetSucceeded = true, RecoveryResetError = resetError,
+            RecoveryResetSucceeded = reset.SetWindowPosSucceeded, RecoveryResetError = reset.SetWindowPosError,
             RecoveryReapplySucceeded = reapplied.SetWindowPosSucceeded,
             RecoveryReapplyError = reapplied.SetWindowPosError,
         };
     }
-    private static TopmostResult ApplyTopmostRequest(nint window, bool enabled)
+    private static TopmostResult ApplyTopmostRequest(nint window, bool enabled, CancellationToken cancellation, TimeSpan confirmationTimeout)
     {
+        cancellation.ThrowIfCancellationRequested();
+        if (confirmationTimeout <= TimeSpan.Zero) return new(1460, "confirmation_timeout", window, null, 0, null, 0);
+        var watch = Stopwatch.StartNew();
         var insertAfter = enabled ? new IntPtr(-1) : new IntPtr(-2); // HWND_TOPMOST / HWND_NOTOPMOST
-        // SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE。フォーカスは変更しない。
-        var succeeded = SetWindowPos(window, insertAfter, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
+        // 別 UI スレッドへは要求を非同期送信し、呼び出し側を無応答ウィンドウへ接続しない。
+        var succeeded = SetWindowPos(window, insertAfter, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x4000);
         var setError = Marshal.GetLastWin32Error();
         if (!succeeded)
             return new(setError == 0 ? 5 : setError, "set_window_pos", window, false, setError, null, 0);
 
-        var style = GetWindowLongPtrW(window, -20).ToInt64(); // GWL_EXSTYLE
-        var readError = Marshal.GetLastWin32Error();
-        // 拡張スタイル 0 は正常値にもなるため、実エラーがある場合だけ取得失敗とする。
-        if (style == 0 && readError != 0)
-            return new(readError, "read_style", window, true, setError, null, readError);
-        var isTopmost = (style & 8) != 0; // WS_EX_TOPMOST
-        if (isTopmost != enabled)
-            return new(5, "style_mismatch", window, true, setError, style, 0);
-        return new(0, "none", window, true, setError, style, 0);
+        var sameThread = GetWindowThreadProcessId(window, out _) == GetCurrentThreadId();
+        while (true)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var style = GetWindowLongPtrW(window, -20).ToInt64(); // GWL_EXSTYLE
+            var readError = Marshal.GetLastWin32Error();
+            if (style == 0 && readError != 0)
+                return new(readError, "read_style", window, true, setError, null, readError);
+            if (((style & 8) != 0) == enabled)
+                return watch.Elapsed <= confirmationTimeout ? new(0, "none", window, true, setError, style, 0)
+                    : new(1460, "confirmation_timeout", window, true, setError, style, 0);
+            if (sameThread) return new(5, "style_mismatch", window, true, setError, style, 0);
+            var remaining = confirmationTimeout - watch.Elapsed;
+            if (remaining <= TimeSpan.Zero) return new(1460, "confirmation_timeout", window, true, setError, style, 0);
+            // 属性の反映前に成功・不一致を確定せず、短い待機にも取消しを適用する。
+            if (cancellation.WaitHandle.WaitOne(remaining < TimeSpan.FromMilliseconds(5) ? remaining : TimeSpan.FromMilliseconds(5)))
+                cancellation.ThrowIfCancellationRequested();
+        }
     }
     internal static int LastForegroundStatus { get { lock (WindowGate) return _lastForegroundStatus; } }
     internal static int SetProcessOpacity(uint pid, uint alpha)

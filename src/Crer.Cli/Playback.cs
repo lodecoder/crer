@@ -20,6 +20,9 @@ public sealed partial class Playback
     private readonly object networkLock = new();
     private int networkRequests, networkResponses, networkFinished, networkFailed, documentRequests, documentResponses;
     private string? lastNetworkError;
+    private string? currentPageUrl;
+    private string mainFrameId = "";
+    private AsyncDiagnosticLog? networkLog;
     private long lastNetworkActivity = Environment.TickCount64;
     private double width, height;
     private readonly List<string> cleanupErrors = [];
@@ -66,9 +69,9 @@ public sealed partial class Playback
         return result;
     }
 
-    private async Task<JsonNode?> Evaluate(string expression, CancellationToken? cancellation = null)
+    private async Task<JsonNode?> Evaluate(string expression, CancellationToken? cancellation = null, int timeout = 10000)
     {
-        var reply = await Call("Runtime.evaluate", new() { ["expression"] = expression, ["returnByValue"] = true }, cancellation: cancellation);
+        var reply = await Call("Runtime.evaluate", new() { ["expression"] = expression, ["returnByValue"] = true }, cancellation: cancellation, timeout: timeout);
         if (reply["exceptionDetails"] != null) throw new CrerException(4, "page state evaluation failed");
         return reply["result"]?["value"]?.DeepClone();
     }
@@ -80,14 +83,15 @@ public sealed partial class Playback
         logger = new(s.Name, Json.Text(s.Playback["log_color"], "default"));
         var reused = cdp != null && !cdp.Disconnected.IsCompleted && process is { HasExited: false };
         if (!reused && (cdp != null || process != null)) await CloseSession();
+        if (!reused) { currentPageUrl = null; mainFrameId = ""; }
         runDir = $".crer/runs/{RunArtifacts.CreateRunId(s.Name)}";
-        absoluteRunDir = Path.GetFullPath(runDir);
+        var nextAbsoluteRunDir = Path.GetFullPath(runDir);
         var configuredProfile = Profiles.Configured(s, options);
         persistent = configuredProfile != null;
-        var requestedProfile = persistent ? Profiles.PersistentDirectory(configuredProfile!) : Path.Combine(absoluteRunDir, "profile");
+        var requestedProfile = persistent ? Profiles.PersistentDirectory(configuredProfile!) : Path.Combine(nextAbsoluteRunDir, "profile");
         if (reused && !string.Equals(profile, requestedProfile, StringComparison.OrdinalIgnoreCase)) throw new CrerException(3, "a browser session cannot be reused with a different profile");
         profile = requestedProfile;
-        Directory.CreateDirectory(absoluteRunDir);
+        InitializeRunDirectory(nextAbsoluteRunDir);
         var failures = new JsonArray();
         var code = 0;
         var seed = options.Seed?.ToString(CultureInfo.InvariantCulture) ?? Json.Text(s.Playback["seed"], RandomSeed());
@@ -99,12 +103,6 @@ public sealed partial class Playback
         if (options.OpacityOverride != null) metadata["windowOpacityOverride"] = options.OpacityOverride;
         Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
         File.WriteAllText(Path.Combine(absoluteRunDir, "steps.ndjson"), "");
-        lock (networkLock)
-        {
-            requests.Clear(); lastNetworkActivity = Environment.TickCount64;
-            networkRequests = networkResponses = networkFinished = networkFailed = documentRequests = documentResponses = 0;
-            lastNetworkError = null;
-        }
         startupWatch.Restart();
         var startupMs = (int)Json.Number(s.Playback["timeouts"]?["startup_ms"], 60000);
         startupTimeoutMs = startupMs;
@@ -131,7 +129,7 @@ public sealed partial class Playback
                         await ConfigurePage(s, options, retainSession);
                     }
                     else await Launch(s, options, chrome, retainSession);
-                    beforeStep = _ => { windows!.BeforeStep(); return Task.CompletedTask; };
+                    beforeStep = _ => { windows!.BeforeStep(token); return Task.CompletedTask; };
                     startupDiagnostic["status"] = "ready";
                     SetStartupStage("ready");
                 }
@@ -181,6 +179,13 @@ public sealed partial class Playback
                 catch (Exception e) { cleanupErrors.Add($"session diagnostics failed: {e.Message}"); await Cleanup(options.KeepArtifacts); }
             }
             else await Cleanup(options.KeepArtifacts);
+            AsyncDiagnosticLog? completedLog;
+            lock (networkLock) { completedLog = networkLog; networkLog = null; }
+            if (completedLog != null)
+            {
+                await completedLog.CompleteAsync();
+                metadata["networkLog"] = completedLog.Diagnostic();
+            }
             if (cleanupErrors.Count > 0)
             {
                 if (code == 0) code = 3;
@@ -201,6 +206,21 @@ public sealed partial class Playback
     }
 
     private static string RandomSeed() => BitConverter.ToUInt64(RandomNumberGenerator.GetBytes(8)).ToString(CultureInfo.InvariantCulture);
+
+    private void InitializeRunDirectory(string directory)
+    {
+        Directory.CreateDirectory(directory);
+        lock (networkLock)
+        {
+            // 再利用中の CDP 受信処理には、作成済みの保存先と新しい集計値を同時に公開する。
+            absoluteRunDir = directory;
+            networkLog?.Complete();
+            networkLog = new AsyncDiagnosticLog(Path.Combine(directory, "network.ndjson"));
+            requests.Clear(); lastNetworkActivity = Environment.TickCount64;
+            networkRequests = networkResponses = networkFinished = networkFailed = documentRequests = documentResponses = 0;
+            lastNetworkError = null;
+        }
+    }
 
     private void SetStartupStage(string stage)
     {
@@ -467,11 +487,21 @@ public sealed partial class Playback
 
     private static bool IsChangingDocument(CrerException error) => error.Code == 4 &&
         (error.Message.Contains("Execution context was destroyed", StringComparison.OrdinalIgnoreCase) ||
+         error.Message.Contains("Cannot find default execution context", StringComparison.OrdinalIgnoreCase) ||
          error.Message.Contains("Cannot find context with specified id", StringComparison.OrdinalIgnoreCase));
 
     private void OnNetworkEvent(string method, JsonObject p, string? id)
     {
         if (id != session) return;
+        if (method == "Page.frameNavigated" && p["frame"] is JsonObject frame && frame["parentId"] == null)
+            currentPageUrl = Json.Text(frame["url"]);
+        else if (method == "Page.navigatedWithinDocument")
+        {
+            // 子 frame の遷移先をトップページの URL として記録しない。
+            if (Json.Text(p["frameId"]) == mainFrameId) currentPageUrl = Json.Text(p["url"]);
+        }
+        if (method == "Page.frameNavigated" && p["frame"] is JsonObject mainFrame && mainFrame["parentId"] == null)
+            mainFrameId = Json.Text(mainFrame["id"]);
         lock (networkLock)
         {
             if (method == "Network.requestWillBeSent")
@@ -502,7 +532,7 @@ public sealed partial class Playback
                         trace["errorText"] = lastNetworkError = error;
                     trace["canceled"] = p["canceled"]?.DeepClone();
                 }
-                File.AppendAllText(Path.Combine(absoluteRunDir, "network.ndjson"), trace.ToJsonString() + "\n");
+                networkLog?.Append(trace.ToJsonString());
             }
         }
     }

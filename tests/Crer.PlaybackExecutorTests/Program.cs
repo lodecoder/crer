@@ -11,9 +11,9 @@ var failed = 0;
 var evidence = Path.GetFullPath(Path.Combine(".crer", "playback-executor-tests", Guid.NewGuid().ToString("N")));
 Directory.CreateDirectory(evidence);
 void Check(bool condition, string message) { if (!condition) throw new Exception(message); }
-async Task Test(string name, Func<Task> body)
+async Task Test(string name, Func<Task> body, int timeoutSeconds = 5)
 {
-    try { await body().WaitAsync(TimeSpan.FromSeconds(5)); passed++; Console.WriteLine($"PASS {name}"); }
+    try { await body().WaitAsync(TimeSpan.FromSeconds(timeoutSeconds)); passed++; Console.WriteLine($"PASS {name}"); }
     catch (Exception error) { failed++; Console.Error.WriteLine($"FAIL {name}: {error}"); }
 }
 async Task Cancelled(Task<int> task, CancellationToken expected)
@@ -125,6 +125,73 @@ await Test("条件照会中の CDP 接続断は環境エラーのまま伝播す
     Check(run.Records.Any(record => Json.Text(record["kind"]) == "environment") && run.Cdp.PendingCount == 0, "接続断の診断または後始末がありません");
 });
 
+await Test("文書切替中の一時的な評価エラーを待機期限内で再試行する", async () =>
+{
+    foreach (var message in new[] { "Execution context was destroyed.", "Cannot find context with specified id", "Cannot find default execution context" })
+    {
+        var socket = new ControlledSocket { ContextError = message, ContextFailures = 1 };
+        await using var run = await ExecutorRun.Create(evidence, socket);
+        Check(await run.Execute(ScenarioFor(new JsonArray(Wait()), 1000), default) == 0, "文書切替中の待機を失敗にした");
+        Check(socket.ConditionCalls == 2 && run.Failures.Count == 0, "遷移後に条件を確認しなかった");
+    }
+});
+
+await Test("文書切替が続いても元の待機期限で失敗し続行方針を保つ", async () =>
+{
+    var socket = new ControlledSocket { ContextError = "Execution context was destroyed.", ContextFailures = int.MaxValue };
+    await using var run = await ExecutorRun.Create(evidence, socket);
+    Check(await run.Execute(ScenarioFor(new JsonArray(Wait(), Log("after-changing-document")), 80, true), default) == 4,
+        "一時エラーの再試行で期限を延長した");
+    Check(run.Failures.Any(item => Json.Text(item).Contains(":timeout:")) && run.Records.Any(record => Json.Text(record["message"]) == "after-changing-document"),
+        "一時エラーを timeout と区別してしまった");
+});
+
+await Test("十秒を超える条件応答も指定した action_ms の期限内なら成立を受け入れる", async () =>
+{
+    var socket = new ControlledSocket { ConditionDelay = TimeSpan.FromMilliseconds(10300) };
+    await using var run = await ExecutorRun.Create(evidence, socket);
+    Check(await run.Execute(ScenarioFor(new JsonArray(Wait()), 15000), default) == 0, "CDP の既定十秒で待機を中止した");
+    Check(socket.ConditionCalls == 1 && run.Failures.Count == 0, "期限内の条件成立を失敗として扱った");
+}, 18);
+
+await Test("深い制御ステップの中断でも診断は一度だけ短い予算で終える", async () =>
+{
+    var socket = new ControlledSocket { ConditionDelay = TimeSpan.FromSeconds(3), ScreenshotDelay = TimeSpan.FromSeconds(3), UrlDelay = TimeSpan.FromSeconds(3) };
+    await using var run = await ExecutorRun.Create(evidence, socket);
+    using var cancellation = new CancellationTokenSource();
+    JsonObject Repeat(JsonObject child) => new() { ["do"] = "repeat", ["count"] = 1, ["steps"] = new JsonArray(child) };
+    var task = run.Execute(ScenarioFor(new JsonArray(Repeat(Repeat(Wait())), Log("unreachable"))), cancellation.Token);
+    await socket.ConditionRequested.Task.WaitAsync(TimeSpan.FromSeconds(1));
+    var watch = Stopwatch.StartNew(); cancellation.Cancel();
+    await Cancelled(task, cancellation.Token);
+    Check(watch.Elapsed < TimeSpan.FromSeconds(1), "無応答の renderer の診断で中断を待たせた");
+    Check(socket.ScreenshotCalls == 1 && socket.UrlCalls == 0, "親ごとに画像取得や URL 照会を繰り返した");
+    Check(run.Records.Count(record => Json.Text(record["kind"]) == "interrupted") == 3, "親子の中断記録が欠落した");
+});
+
+await Test("ステップの URL はトップ文書の最後の遷移を使い診断の CDP 照会を行わない", async () =>
+{
+    var socket = new ControlledSocket();
+    await using var run = await ExecutorRun.Create(evidence, socket);
+    void Navigation(string id, string url, string? parent = null)
+    {
+        var frame = new JsonObject { ["id"] = id, ["url"] = url };
+        if (parent != null) frame["parentId"] = parent;
+        run.Observe("Page.frameNavigated", new JsonObject { ["frame"] = frame });
+    }
+    Navigation("main", "http://127.0.0.1/first");
+    Navigation("child", "http://127.0.0.1/child", "main");
+    // 遷移前の文書を見た状態応答が遅れて到着しても、遷移イベントの URL を優先する。
+    await run.Execute(ScenarioFor(new JsonArray(Wait(), Log("first"))), default);
+    run.Observe("Page.navigatedWithinDocument", new JsonObject { ["frameId"] = "child", ["url"] = "http://127.0.0.1/wrong" });
+    run.Observe("Page.navigatedWithinDocument", new JsonObject { ["frameId"] = "main", ["url"] = "http://127.0.0.1/first#next" });
+    await run.Execute(ScenarioFor(new JsonArray(Log("second"))), default);
+    Check(Json.Text(run.Records.Single(record => Json.Text(record["message"]) == "first")["url"]) == "http://127.0.0.1/first"
+        && Json.Text(run.Records.Single(record => Json.Text(record["message"]) == "second")["url"]) == "http://127.0.0.1/first#next",
+        "子 frame や古い状態応答と主文書の URL を混同した");
+    Check(socket.UrlCalls == 0, "診断ごとに renderer の応答を待った");
+});
+
 Console.WriteLine($"{passed} passed, {failed} failed; evidence: {evidence}");
 return failed == 0 ? 0 : 1;
 
@@ -152,6 +219,8 @@ sealed class ExecutorRun : IAsyncDisposable
     }
     private void Set(string field, object value) => typeof(Playback).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(playback, value);
     public void BeforeStep(Func<string, Task> callback) => Set("beforeStep", callback);
+    public void Observe(string method, JsonObject parameters) => typeof(Playback).GetMethod("OnNetworkEvent", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .Invoke(playback, [method, parameters, "page"]);
     public Task<int> Execute(Scenario scenario, CancellationToken token)
     {
         Set("token", token);
@@ -169,6 +238,11 @@ sealed class ControlledSocket : WebSocket
     private int conditionCalls;
     public TimeSpan ConditionDelay { get; init; }
     public bool DisconnectCondition { get; init; }
+    public string? ContextError { get; init; }
+    public int ContextFailures { get; init; }
+    public TimeSpan ScreenshotDelay { get; init; }
+    public TimeSpan UrlDelay { get; init; }
+    public int ScreenshotCalls, UrlCalls;
     public int ConditionCalls => Volatile.Read(ref conditionCalls);
     public TaskCompletionSource ConditionRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ConditionReplied { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -204,15 +278,26 @@ sealed class ControlledSocket : WebSocket
                 return;
             }
             if (condition) await Task.Delay(ConditionDelay, token);
+            if (condition && ConditionCalls <= ContextFailures)
+            {
+                await replies.Writer.WriteAsync((Encoding.UTF8.GetBytes(new JsonObject { ["id"] = request["id"]!.DeepClone(),
+                    ["error"] = new JsonObject { ["message"] = ContextError } }.ToJsonString()), WebSocketMessageType.Text), token);
+                return;
+            }
             var method = Json.Text(request["method"]);
             JsonObject result;
             if (method == "Runtime.evaluate")
             {
+                if (!condition) { Interlocked.Increment(ref UrlCalls); await Task.Delay(UrlDelay, token); }
                 JsonNode value = condition ? new JsonObject { ["url"] = "http://127.0.0.1/", ["state"] = "complete", ["found"] = true, ["urlMatches"] = true }
                     : JsonValue.Create("http://127.0.0.1/")!;
                 result = new JsonObject { ["result"] = new JsonObject { ["value"] = value } };
             }
-            else if (method == "Page.captureScreenshot") result = new JsonObject { ["data"] = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==" };
+            else if (method == "Page.captureScreenshot")
+            {
+                Interlocked.Increment(ref ScreenshotCalls); await Task.Delay(ScreenshotDelay, token);
+                result = new JsonObject { ["data"] = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==" };
+            }
             else result = new JsonObject { ["method"] = method };
             var bytes = Encoding.UTF8.GetBytes(new JsonObject { ["id"] = request["id"]!.DeepClone(), ["result"] = result }.ToJsonString());
             await replies.Writer.WriteAsync((bytes, WebSocketMessageType.Text), token);

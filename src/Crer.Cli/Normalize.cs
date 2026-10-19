@@ -26,6 +26,8 @@ public sealed record NormalizeOptions
     public NormalizeSize? RequestedContent { get; init; }
     public string? ProfileDir { get; init; }
     public NormalizeWindowBounds? WindowBounds { get; init; }
+    /// <summary>較正原点との差を各イベントのページ領域へ適用するための基準位置。</summary>
+    public NormalizePoint? RecordedContentOrigin { get; init; }
     // The original CLI ignores all sidecar fields when --client-origin is explicit.
     public bool UseSidecar { get; init; } = true;
 }
@@ -42,16 +44,17 @@ public sealed record NormalizeResult(JsonObject Scenario, IReadOnlyList<string> 
 public static class Normalize
 {
     public const string MissingMetadataWarning = "recording metadata is unavailable; output coordinates remain physical screen pixels.";
+    private sealed record ContentGeometry(NormalizePoint Origin, NormalizePoint Size);
 
     public static CoordinateTransform? TransformFromRecordingMetadata(JsonObject metadata)
     {
-        var rect = metadata["content_rect_screen_px"] as JsonObject;
+        var geometry = RecordingGeometry(metadata);
         var viewport = Point(metadata["css_viewport"]);
-        if (rect is null || viewport is null || !Number(rect["width"], out var width)
-            || !Number(rect["height"], out var height) || width < 32 || height < 32
-            || viewport.X <= 0 || viewport.Y <= 0) return null;
+        if (geometry is null || viewport is null || viewport.X <= 0 || viewport.Y <= 0) return null;
 
-        var origin = new NormalizePoint(Value(rect["x"]), Value(rect["y"]));
+        var origin = geometry.Origin;
+        var width = geometry.Size.X;
+        var height = geometry.Size.Y;
         var scale = Point(metadata["screen_pixels_per_css_pixel"]);
         if (scale is not { X: > 0, Y: > 0 }) scale = null;
         if (scale is null && RequestedContentFromRecordingMetadata(metadata) is { } requested)
@@ -138,11 +141,12 @@ public static class Normalize
     public static NormalizeResult FromFile(string rawPath, NormalizeOptions options)
     {
         var warnings = new List<string>();
+        var missingTransform = false;
         if (options.UseSidecar && options.Transform is null)
         {
             var metadata = ReadSidecar(rawPath);
             var transform = metadata is null ? null : TransformFromRecordingMetadata(metadata);
-            if (transform is null) warnings.Add(MissingMetadataWarning);
+            missingTransform = transform is null;
             if (metadata is not null)
             {
                 if (RecordingWarningFromRecordingMetadata(metadata) is { } warning) warnings.Add(warning);
@@ -153,6 +157,7 @@ public static class Normalize
                     RequestedContent = options.RequestedContent ?? RequestedContentFromRecordingMetadata(metadata),
                     ProfileDir = options.ProfileDir ?? ProfileDirFromRecordingMetadata(metadata),
                     WindowBounds = options.WindowBounds ?? WindowBoundsFromRecordingMetadata(metadata),
+                    RecordedContentOrigin = options.RecordedContentOrigin ?? RecordingGeometry(metadata)?.Origin,
                 };
             }
         }
@@ -161,6 +166,7 @@ public static class Normalize
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         { throw new CrerException(2, $"could not read raw recording '{rawPath}': {error.Message}"); }
         var result = Raw(raw, options);
+        if (missingTransform && result.Scenario["browser"]?["window"]?["content"] is null) warnings.Insert(0, MissingMetadataWarning);
         warnings.AddRange(result.Warnings);
         return result with { Warnings = warnings };
     }
@@ -169,6 +175,7 @@ public static class Normalize
     {
         var steps = new JsonArray();
         var warnings = new List<string>();
+        var outputTransform = options.Transform;
         NormalizePoint? mouseDown = null, mouseLast = null;
         var text = new StringBuilder();
         var textQpc = BigInteger.Zero;
@@ -225,6 +232,24 @@ public static class Normalize
                 var data = Value(input["data"]);
                 var transform = options.Transform;
                 if (transform is not null && Point(input["css_viewport"]) is { } viewport) transform = transform with { Viewport = viewport };
+                if (options.UseSidecar && input["content_rect_screen_px"] is { } eventRect)
+                {
+                    var geometry = Geometry(eventRect) ?? throw new FormatException("content_rect_screen_px must contain finite coordinates and dimensions of at least 32 pixels");
+                    if (transform is not null)
+                    {
+                        // マーカーで補正した HWND 原点との差は残し、取得時点の移動量だけを反映する。
+                        var reference = options.RecordedContentOrigin ?? transform.ClientOrigin;
+                        transform = transform with
+                        {
+                            ClientOrigin = new(geometry.Origin.X + transform.ClientOrigin.X - reference.X,
+                                geometry.Origin.Y + transform.ClientOrigin.Y - reference.Y),
+                            ClientSize = geometry.Size,
+                        };
+                    }
+                    else if (Point(input["css_viewport"]) is { X: > 0, Y: > 0 } eventViewport)
+                        transform = new(geometry.Origin, geometry.Size, eventViewport, new(1, 1));
+                }
+                outputTransform ??= transform;
                 var point = new NormalizePoint(Value(input["x"]), Value(input["y"]));
                 if (transform is not null) point = ScreenToCss(point, transform);
                 if (kind == 9)
@@ -306,7 +331,7 @@ public static class Normalize
             ["profile"] = string.IsNullOrEmpty(options.ProfileDir) ? "ephemeral" : $"persistent:{options.ProfileDir}",
             ["initial_url"] = options.Url,
         };
-        if (options.Transform is { } outputTransform)
+        if (outputTransform is not null)
         {
             var window = new JsonObject
             {
@@ -389,6 +414,12 @@ public static class Normalize
     private static JsonObject JsonSize(NormalizeSize size) => new() { ["width"] = size.Width, ["height"] = size.Height };
     private static NormalizePoint? Point(JsonNode? node) => node is JsonObject point
         && Number(point["x"], out var x) && Number(point["y"], out var y) ? new NormalizePoint(x, y) : null;
+    private static ContentGeometry? RecordingGeometry(JsonObject metadata) => Geometry((metadata["marker_calibration"] as JsonObject)?["content_rect_screen_px"])
+        ?? Geometry(metadata["content_rect_screen_px"]);
+    private static ContentGeometry? Geometry(JsonNode? node) => node is JsonObject rect
+        && Number(rect["x"], out var x) && Number(rect["y"], out var y)
+        && Number(rect["width"], out var width) && Number(rect["height"], out var height) && width >= 32 && height >= 32
+        ? new(new(x, y), new(width, height)) : null;
     private static bool Number(JsonNode? node, out double number)
     {
         number = 0;

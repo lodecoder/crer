@@ -119,20 +119,30 @@ public sealed class PlanRunner
         }
     }
 
-    private async Task<List<JsonObject>> RunNode(JsonObject node, WorkGate gate, CancellationToken signal)
+    private async Task<List<JsonObject>> RunNode(JsonObject node, WorkGate gate, CancellationToken signal,
+        Func<JsonObject, Task>? leafCompleted = null)
     {
         if (node.ContainsKey("scenario"))
         {
-            var path = Path.GetFullPath(Path.Combine(directory, Json.Text(node["scenario"])));
-            Scenario scenario;
-            try { scenario = Scenario.Load(path); }
-            catch (CrerException error) { throw new CrerException(2, $"invalid scenario {path}: {error.Message}"); }
-            var configuredProfile = Profiles.Configured(scenario, options);
-            var persistentProfile = configuredProfile == null ? null : Profiles.PersistentDirectory(configuredProfile);
+            var path = "";
+            Scenario? scenario = null;
+            string? persistentProfile = null;
+            Exception? setupError = null;
+            try
+            {
+                path = Path.GetFullPath(Path.Combine(directory, Json.Text(node["scenario"])));
+                try { scenario = Scenario.Load(path); }
+                catch (CrerException error) { throw new CrerException(2, $"invalid scenario {path}: {error.Message}"); }
+                var configuredProfile = Profiles.Configured(scenario, options);
+                persistentProfile = configuredProfile == null ? null : Profiles.PersistentDirectory(configuredProfile);
+            }
+            catch (Exception error) { setupError = error; }
             async Task<List<JsonObject>> RunLeaf()
             {
                 return await gate.Run(async () =>
                 {
+                    // 取消で開始されない葉の設定エラーは、先行する失敗より優先させない。
+                    if (setupError != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(setupError).Throw();
                     var retain = reuse && persistentProfile != null;
                     var playback = retain ? ForProfile(persistentProfile!) : createPlayback();
                     using var worker = CancellationTokenSource.CreateLinkedTokenSource(signal);
@@ -143,7 +153,7 @@ public sealed class PlanRunner
                         try { worker.Cancel(); } catch (ObjectDisposedException) { }
                     }, null, TimeSpan.FromMilliseconds(workerMs > int.MaxValue ? 1 : Math.Truncate(workerMs)), Timeout.InfiniteTimeSpan) : null;
                     var leafOptions = options with { Command = "run", File = path, Position = null, KeepArtifacts = false, Seed = null, StepDelay = null };
-                    var result = await playback.RunScenario(scenario, leafOptions, chrome, worker.Token, retain);
+                    var result = await playback.RunScenario(scenario!, leafOptions, chrome, worker.Token, retain);
                     if (timer != null) await timer.DisposeAsync();
                     if (!userCancellation.IsCancellationRequested && worker.IsCancellationRequested && Json.Number(result["code"]) == 5)
                         result["code"] = 4;
@@ -155,6 +165,8 @@ public sealed class PlanRunner
                         if (failures == null) { failures = new(); result["failures"] = failures; }
                         failures.Add((JsonNode?)JsonValue.Create("plan:timeout:worker_ms"));
                     }
+                    // ゲートを解放する前に祖先へ通知し、失敗後の待機中シナリオを開始させない。
+                    if (leafCompleted != null) await leafCompleted(result);
                     return new List<JsonObject> { result };
                 }, signal) ?? [];
             }
@@ -165,7 +177,7 @@ public sealed class PlanRunner
             List<JsonObject> output = [];
             foreach (var child in serial)
             {
-                var results = await RunNode(child!.AsObject(), gate, signal);
+                var results = await RunNode(child!.AsObject(), gate, signal, leafCompleted);
                 output.AddRange(results);
                 if (signal.IsCancellationRequested || PlanPolicy.ShouldAbort(results, onFailure)) break;
             }
@@ -174,9 +186,20 @@ public sealed class PlanRunner
         var parallel = node["parallel"]!.AsObject();
         var children = parallel["jobs"]!.AsArray().Select(child => child!.AsObject()).ToArray();
         var failFast = parallel["fail_fast"]?.GetValue<bool>() == true;
-        var groups = await Scheduler.MapWithCancellation(children, maximum,
-            (child, groupSignal) => RunNode(child, gate, groupSignal),
-            results => failFast ? results.Any(run => Json.Number(run["code"]) != 0) : PlanPolicy.ShouldAbort(results, onFailure), signal);
+        using var group = CancellationTokenSource.CreateLinkedTokenSource(signal);
+        var initialized = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task Completed(JsonObject result)
+        {
+            // 同期完了した最初の葉も、兄弟の初期投入が終わるまでは取消を発火させない。
+            await initialized.Task;
+            if (failFast ? Json.Number(result["code"]) != 0 : PlanPolicy.ShouldAbort([result], onFailure)) group.Cancel();
+            if (leafCompleted != null) await leafCompleted(result);
+        }
+        // 同時実行数は共有する葉ゲートだけで制限する。profile 待ちの job で別 profile を塞がない。
+        var pending = Scheduler.MapWithConcurrency(children, children.Length,
+            child => RunNode(child, gate, group.Token, Completed), _ => group.IsCancellationRequested, () => group.Cancel());
+        initialized.SetResult();
+        var groups = await pending;
         return groups.SelectMany(group => group).ToList();
     }
 }
