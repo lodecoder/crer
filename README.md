@@ -77,9 +77,11 @@ plan 全体の不透明度は `run` 専用の `--plan-window-opacity-override` �
 同じ永続プロファイルを使う scenario では、plan に `browser_session` を指定すると profile ごとに一つの CfT
 プロセス・ウィンドウ・CDP session を再利用できます。scenario ごとの URL、ウィンドウ bounds、content は
 切替時に再適用し、viewport / DPR / zoom は再検証します。同じ profile の scenario は順番に実行し、
-異なる profile は `max_parallel` の範囲で並列実行できます。保持した CfT は plan 終了時に閉じます。
+異なる profile は `max_parallel` の範囲で並列実行できます。保持した CfT は、その profile を使う最後の
+scenario の終了時に閉じます。他の profile の再生が続いていても、使い終わったウィンドウは閉じます。
 同じ profile の待機は並列枠を消費しないため、別 profile の処理は空いている枠で開始します。
-別の profile や ephemeral scenario を挟んでも保持します。ephemeral scenario 自体は再利用しません。
+同じ profile を後続の scenario で使う場合は、別の profile や ephemeral scenario を挟んでも保持します。
+別の並列 job や外側の serial で使う場合も同様です。ephemeral scenario 自体は再利用しません。
 タイムアウト・続行不能エラー時は対象 profile の CfT を閉じ、同じ profile の次の実行時に起動し直します。
 
 plan の `on_failure.environment: continue` は、環境エラーになった scenario の終了と後始末を待ち、

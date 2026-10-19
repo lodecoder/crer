@@ -91,8 +91,9 @@ localhost のみで待受け、ポート番号や WebSocket URL はログに秘�
 plan 全体の `max_parallel` 上限まで並列実行できる。通常は CfT プロセスを scenario の成功・失敗・中断のいずれでも、
 終了処理で CDP `Browser.close` による graceful close を要求して閉じる。plan で
 `browser_session.reuse: same-profile` が有効な場合だけ、永続 profile ごとに CfT プロセス・ウィンドウ・CDP
-session を維持する。別 profile や ephemeral scenario を挟んでも保持し、続行不能エラー・worker timeout では
-対象 session を、plan 終了時には全 session を閉じる。
+session を維持する。後続に同じ profile を使う scenario があれば、別 profile や ephemeral scenario を挟んでも
+保持する。その profile の最後の scenario が終了するか、残りがすべて中断により未実行となった時点で閉じる。
+続行不能エラー・worker timeout では対象 session を、plan 終了時には保持中の全 session を閉じる。
 CDP が応答しない場合に限り、実行ワーカーが起動した CfT 子プロセスだけをタイムアウト後に終了する。
 
 通常の再生は利用者の前景ウィンドウへ干渉しない。Web アプリケーションが前景状態を要求する場合だけ、
@@ -545,7 +546,9 @@ browser_session:
 接続を再利用する。各 scenario の開始時に `initial_url` へ遷移し、`window.bounds`（run 専用 override を含む）、
 `window.content` を再適用し、実効 viewport、DPR、browser zoom を再検証する。profile のキーは実体パスを解決し、
 大文字小文字を区別しない。profile 未指定・ephemeral の scenario は独立した CfT を使用する。
-続行不能エラー・worker timeout は対象 session だけを破棄する。plan 終了・中断時は全実行 worker の終了を待ち、
+同じ profile を使う未完了の leaf を plan 全体で追跡し、別の並列 job や外側の serial に後続利用がある間は保持する。
+最後の利用が完了した profile の CfT は、他の profile の再生終了を待たずに閉じる。中断で未開始となった leaf も
+利用予定から除く。続行不能エラー・worker timeout は対象 session だけを破棄する。plan 終了・中断時は全実行 worker の終了を待ち、
 保持中の全 CfT を graceful close する。`max_parallel` は実行中 leaf の上限であり、保持中ウィンドウ数の上限ではない。
 `focus: once` は session 中に最初の `browser.window.foreground: true` を処理する時だけ前景化を試みる。
 `focus: before-step` は該当 scenario の各 step の直前にも前景化する。ただし scenario の
@@ -639,7 +642,8 @@ assert の失敗、`5` 中断とする。
 8. `on_failure.<kind>: continue` を指定した続行可能な失敗では、失敗が記録されつつ後続ステップ
    または後続 job が実行される。CDP 接続喪失など続行不能な失敗では実行されない。
 9. `browser_session.reuse: same-profile` の plan では、同一永続 profile の scenario が一つの CfT
-   ウィンドウを再利用し、異なる profile は並列実行できる。plan 終了時に保持中の全 CfT が graceful close される。
+   ウィンドウを再利用し、異なる profile は並列実行できる。各 profile の最後の利用後に、他の profile の終了を
+   待たず CfT が graceful close される。plan 終了・中断時には保持中の全 CfT も閉じる。
 10. `template_screenshots: failure-only` では成功したtemplate探索画像をディスクへ保存せず、template失敗時に
     照合で使用した画像だけを `failure-*.png` として保存する。
 11. `do: fail` は `playback.on_failure` が `continue` でも同一 scenario の後続ステップを実行せず、失敗 artifact

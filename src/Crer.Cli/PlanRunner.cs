@@ -39,9 +39,20 @@ public static class PlanPolicy
     }
 }
 
-/// <summary>Owns the complete plan lifetime, including profile serialization and shared browser teardown.</summary>
+/// <summary>profile の直列化と最終利用後の共有ブラウザーの終了を管理する。</summary>
 public sealed class PlanRunner
 {
+    private sealed class PlanNode(JsonObject definition)
+    {
+        public JsonObject Definition { get; } = definition;
+        public PlanNode[] Children { get; set; } = [];
+        public string Path { get; set; } = "";
+        public Scenario? Scenario { get; set; }
+        public string? PersistentProfile { get; set; }
+        public Exception? SetupError { get; set; }
+        public bool Released { get; set; }
+    }
+
     private sealed class BrowserPlayback(CancellationToken userCancellation) : IPlanPlayback
     {
         private readonly Playback playback = new() { UserCancellation = userCancellation };
@@ -56,6 +67,7 @@ public sealed class PlanRunner
     private readonly string chrome;
     private readonly Func<IPlanPlayback> createPlayback;
     private readonly Dictionary<string, IPlanPlayback> sessions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> remainingProfiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<IPlanPlayback> acquiredSessions = [];
     private readonly object sessionState = new();
     private readonly KeyedWorkLock profileLocks = new();
@@ -88,26 +100,90 @@ public sealed class PlanRunner
     {
         userCancellation = token;
         using var gate = new WorkGate(maximum);
+        var root = Prepare(plan["run"]!.AsObject());
         List<JsonObject> results;
-        try { results = await RunNode(plan["run"]!.AsObject(), gate, token); }
+        try { results = await RunNode(root, gate, token); }
         finally
         {
-            List<Exception> errors = [];
-            foreach (var playback in acquiredSessions.AsEnumerable().Reverse())
-                try { await playback.CloseSession(); }
-                catch (Exception error) { errors.Add(error); }
-            sessions.Clear();
-            acquiredSessions.Clear();
-            if (errors.Count > 0) throw new CrerException(3, "Could not close plan browser sessions: " + string.Join("; ", errors.Select(error => error.Message)));
+            try { await CloseSessions(acquiredSessions.AsEnumerable().Reverse().ToArray()); }
+            finally { sessions.Clear(); acquiredSessions.Clear(); }
         }
         var array = new JsonArray(results.Select(result => (JsonNode)result).ToArray());
         return new(array, token.IsCancellationRequested ? 5 : PlanPolicy.AggregateExitCode(results));
     }
 
+    private PlanNode Prepare(JsonObject definition)
+    {
+        var node = new PlanNode(definition);
+        if (definition.ContainsKey("scenario"))
+        {
+            if (reuse)
+            {
+                // 別列や外側の serial に残る利用も含め、開始前に profile の利用予定を確定する。
+                LoadScenario(node);
+                if (node.PersistentProfile is string profile)
+                    remainingProfiles[profile] = remainingProfiles.GetValueOrDefault(profile) + 1;
+            }
+        }
+        else
+        {
+            var children = definition["serial"] as JsonArray ?? definition["parallel"]!["jobs"]!.AsArray();
+            node.Children = children.Select(child => Prepare(child!.AsObject())).ToArray();
+        }
+        return node;
+    }
+
+    private void LoadScenario(PlanNode node)
+    {
+        try
+        {
+            node.Path = Path.GetFullPath(Path.Combine(directory, Json.Text(node.Definition["scenario"])));
+            try { node.Scenario = Scenario.Load(node.Path); }
+            catch (CrerException error) { throw new CrerException(2, $"invalid scenario {node.Path}: {error.Message}"); }
+            var configuredProfile = Profiles.Configured(node.Scenario, options);
+            node.PersistentProfile = configuredProfile == null ? null : Profiles.PersistentDirectory(configuredProfile);
+        }
+        // 未開始の葉の設定エラーは、取消しの原因になった先行の失敗を上書きしない。
+        catch (Exception error) { node.SetupError = error; }
+    }
+
+    private void Release(PlanNode node)
+    {
+        if (node.Released) return;
+        node.Released = true;
+        if (reuse && node.PersistentProfile is string profile) remainingProfiles[profile]--;
+        // serial の中断で開始されなかった葉も、今後の利用予定から除く。
+        foreach (var child in node.Children) Release(child);
+    }
+
+    private async Task CloseUnusedSessions()
+    {
+        List<IPlanPlayback> unused = [];
+        lock (sessionState)
+        {
+            foreach (var (profile, playback) in sessions.ToArray())
+            {
+                if (remainingProfiles[profile] != 0) continue;
+                sessions.Remove(profile);
+                acquiredSessions.Remove(playback);
+                unused.Add(playback);
+            }
+        }
+        await CloseSessions(unused);
+    }
+
+    private static async Task CloseSessions(IEnumerable<IPlanPlayback> playbacks)
+    {
+        List<Exception> errors = [];
+        foreach (var playback in playbacks)
+            try { await playback.CloseSession(); }
+            catch (Exception error) { errors.Add(error); }
+        if (errors.Count > 0) throw new CrerException(3, "Could not close plan browser sessions: " + string.Join("; ", errors.Select(error => error.Message)));
+    }
+
     private IPlanPlayback ForProfile(string profile)
     {
-        // The caller already owns this profile's execution lock. The short dictionary
-        // lock also protects simultaneous acquisition of distinct profiles.
+        // 呼び出し元は profile の実行ロックを取得済み。別 profile の同時取得も辞書のロックで保護する。
         lock (sessionState)
         {
             if (sessions.TryGetValue(profile, out var session)) return session;
@@ -119,30 +195,32 @@ public sealed class PlanRunner
         }
     }
 
-    private async Task<List<JsonObject>> RunNode(JsonObject node, WorkGate gate, CancellationToken signal,
+    private async Task<List<JsonObject>> RunNode(PlanNode node, WorkGate gate, CancellationToken signal,
         Func<JsonObject, Task>? leafCompleted = null)
     {
+        try { return await ExecuteNode(node, gate, signal, leafCompleted); }
+        finally
+        {
+            lock (sessionState) Release(node);
+            // 取消し中の葉からは早期終了を要求せず、親スコープの後始末へ委ねる。
+            if (!signal.IsCancellationRequested) await CloseUnusedSessions();
+        }
+    }
+
+    private async Task<List<JsonObject>> ExecuteNode(PlanNode prepared, WorkGate gate, CancellationToken signal,
+        Func<JsonObject, Task>? leafCompleted = null)
+    {
+        var node = prepared.Definition;
         if (node.ContainsKey("scenario"))
         {
-            var path = "";
-            Scenario? scenario = null;
-            string? persistentProfile = null;
-            Exception? setupError = null;
-            try
-            {
-                path = Path.GetFullPath(Path.Combine(directory, Json.Text(node["scenario"])));
-                try { scenario = Scenario.Load(path); }
-                catch (CrerException error) { throw new CrerException(2, $"invalid scenario {path}: {error.Message}"); }
-                var configuredProfile = Profiles.Configured(scenario, options);
-                persistentProfile = configuredProfile == null ? null : Profiles.PersistentDirectory(configuredProfile);
-            }
-            catch (Exception error) { setupError = error; }
+            if (!reuse) LoadScenario(prepared);
+            var persistentProfile = prepared.PersistentProfile;
             async Task<List<JsonObject>> RunLeaf()
             {
                 return await gate.Run(async () =>
                 {
                     // 取消で開始されない葉の設定エラーは、先行する失敗より優先させない。
-                    if (setupError != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(setupError).Throw();
+                    if (prepared.SetupError != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(prepared.SetupError).Throw();
                     var retain = reuse && persistentProfile != null;
                     var playback = retain ? ForProfile(persistentProfile!) : createPlayback();
                     using var worker = CancellationTokenSource.CreateLinkedTokenSource(signal);
@@ -152,8 +230,8 @@ public sealed class PlanRunner
                         Interlocked.Exchange(ref timedOut, 1);
                         try { worker.Cancel(); } catch (ObjectDisposedException) { }
                     }, null, TimeSpan.FromMilliseconds(workerMs > int.MaxValue ? 1 : Math.Truncate(workerMs)), Timeout.InfiniteTimeSpan) : null;
-                    var leafOptions = options with { Command = "run", File = path, Position = null, KeepArtifacts = false, Seed = null, StepDelay = null };
-                    var result = await playback.RunScenario(scenario!, leafOptions, chrome, worker.Token, retain);
+                    var leafOptions = options with { Command = "run", File = prepared.Path, Position = null, KeepArtifacts = false, Seed = null, StepDelay = null };
+                    var result = await playback.RunScenario(prepared.Scenario!, leafOptions, chrome, worker.Token, retain);
                     if (timer != null) await timer.DisposeAsync();
                     if (!userCancellation.IsCancellationRequested && worker.IsCancellationRequested && Json.Number(result["code"]) == 5)
                         result["code"] = 4;
@@ -172,19 +250,19 @@ public sealed class PlanRunner
             }
             return persistentProfile == null ? await RunLeaf() : await profileLocks.Run(persistentProfile, RunLeaf, signal) ?? [];
         }
-        if (node["serial"] is JsonArray serial)
+        if (node.ContainsKey("serial"))
         {
             List<JsonObject> output = [];
-            foreach (var child in serial)
+            foreach (var child in prepared.Children)
             {
-                var results = await RunNode(child!.AsObject(), gate, signal, leafCompleted);
+                var results = await RunNode(child, gate, signal, leafCompleted);
                 output.AddRange(results);
                 if (signal.IsCancellationRequested || PlanPolicy.ShouldAbort(results, onFailure)) break;
             }
             return output;
         }
         var parallel = node["parallel"]!.AsObject();
-        var children = parallel["jobs"]!.AsArray().Select(child => child!.AsObject()).ToArray();
+        var children = prepared.Children;
         var failFast = parallel["fail_fast"]?.GetValue<bool>() == true;
         using var group = CancellationTokenSource.CreateLinkedTokenSource(signal);
         var initialized = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -17,7 +17,7 @@ var exe = Path.GetFullPath(Option("--exe") ?? Environment.GetEnvironmentVariable
 var chrome = Option("--chrome") ?? Environment.GetEnvironmentVariable("CRER_TEST_CHROME");
 if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(chrome) || !File.Exists(exe) || !File.Exists(chrome))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only diagnostics,template-search,startup,parallel-focus,readiness-redirect,plan,navigation,keyboard,windows,display,profiles]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only diagnostics,template-search,startup,parallel-focus,readiness-redirect,plan-lifecycle,plan,navigation,keyboard,windows,display,profiles]");
     return 2;
 }
 if (args.Contains("--probe-hidden")) return await ProbeTools.Hidden(chrome!);
@@ -646,6 +646,93 @@ await Test("readiness-redirect", "無期限起動の追加遷移もworker期限�
     Check(continued["browserSession"]!["reused"]!.GetValue<bool>() == false && Json.Number(cancelled["chromePid"]) != Json.Number(continued["chromePid"]),
         "追加遷移中に取消されたブラウザーを再利用した");
     Cleanup(results[0]!); Cleanup(results[1]!);
+});
+
+await Test("plan-lifecycle", "並列上限2と3で最終利用を終えたCfTだけを他のworker実行中に閉じる", async () =>
+{
+    bool Exited(int pid)
+    {
+        try { using var process = Process.GetProcessById(pid); return process.HasExited; }
+        catch (ArgumentException) { return true; }
+    }
+    async Task Release((string Directory, JsonObject Metadata, JsonObject Launch, nint Window) ready)
+    {
+        await using var observer = await ObserveCdp(ready.Metadata);
+        var attached = await observer.Call("Target.attachToTarget", new() { ["targetId"] = ready.Launch["targetId"]!.DeepClone(), ["flatten"] = true });
+        var result = await observer.Call("Runtime.evaluate", new()
+        {
+            ["expression"] = "document.querySelector('[role=status]').textContent='lifecycle-release'", ["returnByValue"] = true,
+        }, Json.Text(attached["sessionId"]));
+        Check(result["exceptionDetails"] == null, "再生の完了ゲートを解放できない: " + ready.Directory);
+    }
+    foreach (var maximum in new[] { 2, 3 })
+    {
+        var label = "plan-lifecycle-" + maximum;
+        var fastProfile = Profile(label + "-fast"); var slowProfile = Profile(label + "-slow");
+        string Gated(string name, string profile)
+        {
+            // 完了時刻の差を固定sleepに依存させず、観測側から各再生を解放する。
+            var scenario = Scenario(name, fixture.Base + "/reuse/" + name, profile, null, Wait("lifecycle-release"), Idle());
+            scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["action_ms"] = 90000 } };
+            return Write(name, scenario);
+        }
+        var first = Gated(label + "-first", fastProfile); var second = Gated(label + "-second", fastProfile);
+        var slowFile = Gated(label + "-slow", slowProfile);
+        var plan = Plan(Parallel(false, Serial(Leaf(first), Leaf(second)), Leaf(slowFile)), maximum: maximum);
+        plan["browser_session"]!["focus"] = "once";
+        var path = Write(label + "-plan", plan);
+        using var command = Start(label, "run", path, "--mute-audio", "--ignore-viewport-mismatch", "--template-screenshots", "failure-only");
+        var initial = await Ready(label + "-first"); var slow = await Ready(label + "-slow");
+        try
+        {
+            await Release(initial);
+            var reused = await Ready(label + "-second");
+            Check(initial.Window == reused.Window && Json.Number(initial.Metadata["chromePid"]) == Json.Number(reused.Metadata["chromePid"])
+                && Json.Text(initial.Metadata["cdpEndpoint"]) == Json.Text(reused.Metadata["cdpEndpoint"])
+                && Json.Text(initial.Launch["targetId"]) == Json.Text(reused.Launch["targetId"])
+                && Json.Text(initial.Launch["sessionId"]) == Json.Text(reused.Launch["sessionId"])
+                && initial.Metadata["browserSession"]!["reused"]!.GetValue<bool>() == false
+                && reused.Metadata["browserSession"]!["reused"]!.GetValue<bool>(), "同じprofileの最後の再生までCfTを再利用していない");
+            var retained = Read(initial.Directory, "cleanup.json");
+            Check(retained["sessionRetained"]?.GetValue<bool>() == true && retained["chromeExited"]?.GetValue<bool>() == false,
+                "同じprofileの後続再生が残る初回完了時にCfTを閉じた");
+            await Release(reused);
+            var fastPid = (int)Json.Number(reused.Metadata["chromePid"]); var slowPid = (int)Json.Number(slow.Metadata["chromePid"]);
+            var until = DateTime.UtcNow.AddSeconds(20); var closed = false;
+            while (DateTime.UtcNow < until)
+            {
+                Check(!command.Process.HasExited, "遅いworkerの完了ゲートを解放する前にplanが終了した");
+                try
+                {
+                    var cleanup = Read(reused.Directory, "cleanup.json");
+                    closed = cleanup["chromeExited"]?.GetValue<bool>() == true && Exited(fastPid) && !NativeWindows.IsWindow(reused.Window);
+                    if (closed) break;
+                }
+                catch (Exception error) when (error is IOException or System.Text.Json.JsonException) { }
+                await Task.Delay(50);
+            }
+            Check(closed, "最終利用を終えたCfTのPID/HWNDが他のworkerの終了待ちで残った");
+            Check(!command.Process.HasExited && !Exited(slowPid) && NativeWindows.IsWindow(slow.Window),
+                "完了したprofileの後始末が稼働中の別profileを閉じた");
+            Cleanup(new JsonObject { ["runDir"] = reused.Directory });
+            Check(fixture.Tokens.TryGetValue(label + "-first", out var token)
+                && fixture.Tokens.TryGetValue(label + "-second", out var reusedToken) && token == reusedToken,
+                "最後の再生へsessionStorageを引き継げない");
+            File.WriteAllText(Path.Combine(evidence, label + "-early-close.json"), new JsonObject
+            {
+                ["maximum"] = maximum, ["completedPid"] = fastPid, ["completedWindow"] = "0x" + reused.Window.ToString("x"),
+                ["completedProcessExited"] = true, ["completedWindowClosed"] = true,
+                ["runningPid"] = slowPid, ["runningWindow"] = "0x" + slow.Window.ToString("x"), ["runningProcessAlive"] = true,
+            }.ToJsonString(Json.Indented));
+        }
+        finally { if (!command.Process.HasExited && !Exited((int)Json.Number(slow.Metadata["chromePid"]))) await Release(slow); }
+        var output = await command.Finish();
+        Check(output.Code == 0, "profileごとの早期終了を含むplanが失敗した: " + output.Stderr);
+        var results = TrailingJson(output.Stdout).AsArray();
+        Check(results.Count == 3 && results.All(result => Json.Number(result!["code"]) == 0), "早期終了により再生結果が欠けたか失敗した");
+        Cleanup(results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(label + "-second"))!);
+        Cleanup(results.Single(result => Json.Text(Read(RunDirectory(result!), "run.json")["scenario"]) == Name(label + "-slow"))!);
+    }
 });
 
 await Test("plan", "public plan parallel profile reuse and isolated worker timeout", async () =>

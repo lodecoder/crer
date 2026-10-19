@@ -98,7 +98,8 @@ templateのデコードと照合は、専用CfT内に遅延作成する非表示
 ページ遷移や同じbrowser sessionの後続探索で照合環境を再利用して、終了時に閉じる。
 
 plan は共通の同時実行上限、profile ごとの排他、協調停止を持つ。
-same-profile reuse では URL・window・display を再適用し、plan の最後に全 CfT を閉じる。
+same-profile reuse では URL・window・display を再適用し、各 profile の最後の利用後に CfT を閉じる。
+後続の別 job や外側の serial で使う profile は保持し、plan の終了・中断時には残る全 CfT を閉じる。
 初回・再利用時のページ遷移と初期文書の準備待ちは、起動処理全体の期限（既定60秒）を共有する。
 scenario の `playback.timeouts.startup_ms` で変更できる。値は0〜2147483647の整数ミリ秒で、
 `0` は無制限。利用者の中断と plan の `worker_ms` はこの設定にかかわらず有効で、

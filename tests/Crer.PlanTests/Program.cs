@@ -166,10 +166,10 @@ var testId = Guid.NewGuid().ToString("N");
 var directory = Path.GetFullPath(Path.Combine(".crer", "plan-unit", testId));
 var profile = Path.GetFullPath(Path.Combine(".crer", "profiles", "plan-unit", testId));
 Directory.CreateDirectory(directory);
-string ScenarioFile(string name, bool persistent = false)
+string ScenarioFile(string name, bool persistent = false, string? persistentProfile = null)
 {
     var path = Path.Combine(directory, name + ".crer.yaml");
-    File.WriteAllText(path, $"version: 1\nname: {name}\nbrowser:\n  initial_url: https://example.test/{name}\n" + (persistent ? $"  profile: 'persistent:{profile}'\n" : "") + "steps: []\n");
+    File.WriteAllText(path, $"version: 1\nname: {name}\nbrowser:\n  initial_url: https://example.test/{name}\n" + (persistent ? $"  profile: 'persistent:{persistentProfile ?? profile}'\n" : "") + "steps: []\n");
     return Path.GetFileName(path);
 }
 var successFile = ScenarioFile("success"); var failureFile = ScenarioFile("failure"); var otherFile = ScenarioFile("other");
@@ -299,6 +299,164 @@ try
         FakePlayback Factory() { var item = new FakePlayback(Play); instances.Add(item); return item; }
         var result = await PlanRunner.Run(ValidPlan(Serial(Leaf(persistentFile), Leaf(persistentNextFile)), reuse: true), Options(), "fake", default, Factory);
         Same(calls, "persistent", "persistentNext"); Check(result.Code == 0 && instances.Count == 1 && instances[0].Closes == 1 && instances[0].FocusPolicy == "before-step", "session reuse/lifetime/focus failed");
+    });
+    await Test("並列の別 profile が実行中でも利用を終えた serial の session を閉じる", async () =>
+    {
+        var longFile = ScenarioFile("longPersistent", true, Path.Combine(profile, "long"));
+        var longStarted = Signal(); var shortClosed = Signal(); var releaseLong = Signal();
+        var longDrained = false; var shortCloses = 0;
+        FakePlayback Factory()
+        {
+            string? owner = null;
+            return new FakePlayback(async (scenario, _, token, retain) =>
+            {
+                owner ??= scenario.Name;
+                Check(retain, "永続 profile の session が保持されなかった");
+                if (scenario.Name == "longPersistent")
+                {
+                    longStarted.TrySetResult();
+                    await releaseLong.Task.WaitAsync(token);
+                    longDrained = true;
+                }
+                else await longStarted.Task.WaitAsync(token);
+                return Result();
+            }, () =>
+            {
+                if (owner != "persistent") return;
+                Interlocked.Increment(ref shortCloses); shortClosed.TrySetResult();
+            });
+        }
+        var run = PlanRunner.Run(ValidPlan(Parallel(false, Serial(Leaf(persistentFile), Leaf(persistentNextFile)), Leaf(longFile)),
+            reuse: true, maximum: 2), Options(), "fake", default, Factory);
+        try
+        {
+            await shortClosed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Check(!longDrained && !run.IsCompleted, "短い serial の session 解放が別 profile の終了まで遅延した");
+        }
+        finally { releaseLong.TrySetResult(); }
+        var result = await run;
+        Check(result.Code == 0 && result.Results.Count == 3 && shortCloses == 1, "早期解放後の結果または session の解放回数が正しくない");
+    });
+    await Test("同じ profile を別列と外側の後続 serial で使い終わるまで保持する", async () =>
+    {
+        var otherColumnFile = ScenarioFile("persistentOtherColumn", true);
+        var afterParallelFile = ScenarioFile("persistentAfterParallel", true);
+        var markerFile = ScenarioFile("profileMarker"); var afterLifetimeFile = ScenarioFile("afterProfileLifetime");
+        var otherStarted = Signal(); var firstColumnFinished = Signal();
+        var factoryCount = 0; var profileOwner = 0; var profileCloses = 0;
+        var profileCalls = new ConcurrentQueue<string>();
+        FakePlayback Factory()
+        {
+            var instance = Interlocked.Increment(ref factoryCount); var ownsProfile = false;
+            return new FakePlayback(async (scenario, _, token, retain) =>
+            {
+                if (retain)
+                {
+                    ownsProfile = true;
+                    var previousOwner = Interlocked.CompareExchange(ref profileOwner, instance, 0);
+                    Check(previousOwner == 0 || previousOwner == instance, "同じ profile に新しい session が作られた");
+                    Check(Volatile.Read(ref profileCloses) == 0, "後続利用のある profile が先に閉じられた");
+                    profileCalls.Enqueue(scenario.Name);
+                    if (scenario.Name == "persistent") await otherStarted.Task.WaitAsync(token);
+                }
+                else if (scenario.Name == "other")
+                {
+                    otherStarted.TrySetResult(); await firstColumnFinished.Task.WaitAsync(token);
+                }
+                else if (scenario.Name == "profileMarker")
+                {
+                    Check(Volatile.Read(ref profileCloses) == 0, "別列で利用予定の profile が serial の終了時に閉じられた");
+                    firstColumnFinished.TrySetResult();
+                }
+                else if (scenario.Name == "afterProfileLifetime")
+                    Check(Volatile.Read(ref profileCloses) == 1, "最後の profile 利用後も session が保持された");
+                return Result();
+            }, () => { if (ownsProfile) Interlocked.Increment(ref profileCloses); });
+        }
+        var result = await PlanRunner.Run(ValidPlan(Serial(Parallel(false,
+                Serial(Leaf(persistentFile), Leaf(persistentNextFile), Leaf(markerFile)),
+                Serial(Leaf(otherFile), Leaf(otherColumnFile))), Leaf(afterParallelFile), Leaf(afterLifetimeFile)),
+            reuse: true, maximum: 2), Options(), "fake", default, Factory);
+        Same(profileCalls, "persistent", "persistentNext", "persistentOtherColumn", "persistentAfterParallel");
+        Check(result.Code == 0 && profileCloses == 1, "複数スコープで共有する profile の解放回数が正しくない");
+    });
+    await Test("fail_fast で最後の利用予定が skip された profile をスコープ外の worker の終了前に閉じる", async () =>
+    {
+        var longFile = ScenarioFile("longAfterAbort", true, Path.Combine(profile, "abort-long"));
+        var longStarted = Signal(); var shortClosed = Signal(); var releaseLong = Signal();
+        var started = new ConcurrentQueue<string>(); var longDrained = false; var shortCloses = 0;
+        FakePlayback Factory()
+        {
+            string? owner = null;
+            return new FakePlayback(async (scenario, _, token, _) =>
+            {
+                owner ??= scenario.Name; started.Enqueue(scenario.Name);
+                if (scenario.Name == "longAfterAbort")
+                {
+                    longStarted.TrySetResult(); await releaseLong.Task.WaitAsync(token); longDrained = true;
+                }
+                else if (scenario.Name == "persistent") await longStarted.Task.WaitAsync(token);
+                return scenario.Name == "failure" ? Result(4, "failed") : Result();
+            }, () =>
+            {
+                if (owner != "persistent") return;
+                Interlocked.Increment(ref shortCloses); shortClosed.TrySetResult();
+            });
+        }
+        var run = PlanRunner.Run(ValidPlan(Parallel(false,
+                Parallel(true, Serial(Leaf(persistentFile), Leaf(failureFile), Leaf(persistentNextFile))), Leaf(longFile)),
+            new() { ["default"] = "continue" }, reuse: true, maximum: 2), Options(), "fake", default, Factory);
+        try
+        {
+            await shortClosed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Check(!longDrained && !run.IsCompleted, "skip された profile の参照が別 worker の終了まで残った");
+        }
+        finally { releaseLong.TrySetResult(); }
+        var result = await run;
+        Same(started.OrderBy(name => name), "failure", "longAfterAbort", "persistent");
+        Check(result.Code == 4 && result.Results.Count == 3 && shortCloses == 1, "skip 後の結果または session の解放回数が正しくない");
+    });
+    await Test("session の早期解放失敗を code 3 にし他 worker の drain を待つ", async () =>
+    {
+        var longFile = ScenarioFile("longOnCleanupFailure", true, Path.Combine(profile, "cleanup-long"));
+        using var cancel = new CancellationTokenSource();
+        var longStarted = Signal(); var cleanupAttempted = Signal(); var cancellationObserved = Signal(); var releaseDrain = Signal();
+        var longDrained = false; var shortCloses = 0;
+        FakePlayback Factory()
+        {
+            string? owner = null;
+            return new FakePlayback(async (scenario, _, token, _) =>
+            {
+                owner ??= scenario.Name;
+                if (scenario.Name == "persistent")
+                {
+                    await longStarted.Task.WaitAsync(token); return Result();
+                }
+                longStarted.TrySetResult();
+                try { await Task.Delay(Timeout.Infinite, token); } catch (OperationCanceledException) { cancellationObserved.TrySetResult(); }
+                await releaseDrain.Task; longDrained = true; return Result(5, "cancelled");
+            }, () =>
+            {
+                if (owner != "persistent") return;
+                Interlocked.Increment(ref shortCloses); cleanupAttempted.TrySetResult(); throw new IOException("早期 cleanup 失敗");
+            });
+        }
+        var run = PlanRunner.Run(ValidPlan(Parallel(false, Leaf(persistentFile), Leaf(longFile)), reuse: true, maximum: 2),
+            Options(), "fake", cancel.Token, Factory);
+        try
+        {
+            await cleanupAttempted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await cancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Check(!longDrained && !run.IsCompleted, "解放失敗が他 worker の drain 前に返された");
+        }
+        catch { cancel.Cancel(); throw; }
+        finally { releaseDrain.TrySetResult(); }
+        try
+        {
+            await run; throw new Exception("早期解放失敗が無視された");
+        }
+        catch (CrerException error) when (error.Code == 3 && error.Message.Contains("早期 cleanup 失敗")) { }
+        Check(longDrained && shortCloses == 1, "早期解放失敗後の drain または解放回数が正しくない");
     });
     await Test("same-profile playback owner executes the next leaf after a continued environment failure", async () =>
     {
