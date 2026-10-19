@@ -17,8 +17,6 @@ internal sealed class FixtureServer : IAsyncDisposable
     private Task? accept;
     public readonly ConcurrentQueue<string> Requests = [];
     public readonly ConcurrentQueue<(string Path, string Phase)> Exchanges = [];
-    public readonly ConcurrentQueue<(string Case, string Path)> BlockRequests = [];
-    private string blockCase = "";
     public readonly ConcurrentDictionary<string, string> Tokens = new();
     public readonly ConcurrentDictionary<string, string> Snapshots = new();
     public readonly ConcurrentDictionary<string, string> InitialDisplays = new();
@@ -55,8 +53,6 @@ internal sealed class FixtureServer : IAsyncDisposable
                 while (!string.IsNullOrEmpty(await reader.ReadLineAsync(lifetime.Token))) { }
                 var uri = new Uri(Base + parts[1]); var path = uri.AbsolutePath; Requests.Enqueue(path);
                 Exchanges.Enqueue((path, "request"));
-                if (path == "/block") blockCase = Query(uri, "case");
-                BlockRequests.Enqueue((blockCase, path));
                 var status = "200 OK"; var headers = ""; var type = "text/html; charset=utf-8";
                 string body;
                 if (path == "/seen") { Tokens[Query(uri, "name")] = Query(uri, "token"); body = "ok"; type = "text/plain; charset=utf-8"; }
@@ -72,7 +68,6 @@ internal sealed class FixtureServer : IAsyncDisposable
                     await Task.Delay(1500, lifetime.Token);
                     body = "ok"; type = "text/plain; charset=utf-8";
                 }
-                else if (path == "/redirect") { status = "302 Found"; headers = "Location: " + Base + "/ad.svg?redirected=1\r\n"; body = "redirect"; }
                 else if (path.StartsWith("/startup-hang/"))
                 {
                     // 応答ヘッダーを送らず、初期遷移が起動期限まで待機する状態を再現する。
@@ -132,7 +127,7 @@ internal sealed class FixtureServer : IAsyncDisposable
                         + "const loaded=new Promise(resolve=>addEventListener('DOMContentLoaded',resolve,{once:true}));"
                         + "Promise.all([reported,painted,loaded]).then(()=>document.getElementById('status').textContent='ready');</script>"
                         + "<title>crer initial viewport</title><style>body{margin:0;overflow:hidden}</style></head>"
-                        + "<body><p id='status' role='status'>waiting</p><img src='/initial-viewport-blocked.svg'></body></html>";
+                        + "<body><p id='status' role='status'>waiting</p><img src='/initial-viewport.svg'></body></html>";
                 }
                 else if (path.StartsWith("/occlusion/"))
                 {
@@ -151,7 +146,7 @@ internal sealed class FixtureServer : IAsyncDisposable
                     try { await Task.Delay(12000, lifetime.Token); }
                     finally { if (initial) Interlocked.Decrement(ref startupActive); }
                     headers = "X-Crer-Test-Private: crer-network-header-secret\r\n";
-                    body = "<!doctype html><!-- crer-network-body-secret --><title>crer delayed startup</title><p role='status'>ready</p><img src='/startup-blocked.svg'><script>const token=sessionStorage.token ||= crypto.randomUUID();fetch('/seen?name=" + name + "&token='+token);</script>";
+                    body = "<!doctype html><!-- crer-network-body-secret --><title>crer delayed startup</title><p role='status'>ready</p><img src='/startup.svg'><script>const token=sessionStorage.token ||= crypto.randomUUID();fetch('/seen?name=" + name + "&token='+token);</script>";
                 }
                 else if (path.StartsWith("/reuse/"))
                 {
@@ -164,13 +159,6 @@ internal sealed class FixtureServer : IAsyncDisposable
                     }
                     body = "<!doctype html><title>crer integration reuse</title><p role='status'>ready</p><script>const token=sessionStorage.token ||= crypto.randomUUID();fetch('/seen?name=" + name + "&token='+token);</script>";
                 }
-                else if (path == "/block") body = """
-                    <!doctype html><title>crer integration blocker</title><p id='status' role='status'>loading</p><script>
-                    Promise.all(['ad.svg','logo.svg','redirect'].map(path=>new Promise(resolve=>{
-                    const img=new Image(); img.onload=()=>resolve(path+':loaded'); img.onerror=()=>resolve(path+':blocked');
-                    img.src='/'+path;document.body.append(img);}))).then(items=>document.getElementById('status').textContent=items.join(' '));
-                    </script>
-                    """;
                 else if (path == "/keyboard") body = """
                     <!doctype html><title>crer keyboard regression</title><style>body{margin:0}input,button{display:block;width:240px;height:30px}</style>
                     <form><input id='email' type='email' aria-label='Email'><input id='password' type='password' aria-label='Password'>

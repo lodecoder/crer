@@ -21,10 +21,9 @@ foreach (var url in new[] { "http:example.test", "http:/example.test", "http:///
     Accept("WHATWG http URL " + url, minimal.Replace("https://example.test", url));
 foreach (var url in new[] { "http://999.999.999.999", "http://example.123", "http://[fe80::1%25eth0]", "http://1.2.3.256", "http://4294967296", "http://xn--" })
     Reject("invalid WHATWG http URL " + url, minimal.Replace("https://example.test", url), "valid http or https URL");
-foreach (var blocked in new[] { "[]", "['/images/.*\\.(png|jpg)(\\?.*)?$', '^https://ads\\.']", "['[]','[^]','\\k','(?<$name>x)\\k<$name>','a{2,}']" })
-    Accept("validates URL blocking regex lists: " + blocked, minimal.Replace("initial_url:", "block_urls: " + blocked + ", initial_url:"));
-foreach (var blocked in new[] { "null", "ads", "{}", "[null]", "[42]", "['']", "['  ']", "['[']", "['valid','(']", "['(?i)a']", "['a{3,2}']", "['(?<a>x)(?<a>y)']" })
-    Reject("rejects URL blocking regex: " + blocked, minimal.Replace("initial_url:", "block_urls: " + blocked + ", initial_url:"), "browser.block_urls");
+foreach (var blocked in new[] { "[]", "['/images/.*\\.(png|jpg)(\\?.*)?$', '^https://ads\\.']", "null", "ads", "{}", "[null]", "[42]", "['']", "['[']" })
+    Reject("削除済みのblock_urlsを未対応キーとして拒否する " + blocked,
+        minimal.Replace("initial_url:", "block_urls: " + blocked + ", initial_url:"), "browser.block_urls is not supported");
 GoodStep("validates key_chord keys", "{ do: key_chord, keys: [Control, A] }");
 BadStep("key_chord requires two strings", "{ do: key_chord, keys: [Control] }", "requires at least two strings");
 BadStep("key_chord requires modifiers", "{ do: key_chord, keys: [A, B] }", "must contain modifiers");

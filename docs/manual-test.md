@@ -58,11 +58,11 @@ dotnet run --project tests/Crer.ControlIntegrationTests -c Release -- `
   --exe dist/win-x64/crer.exe --chrome "$env:CRER_CHROME"
 ```
 
-前者は plan の並列性・profile 分離・再利用・worker timeout・fail_fast、URL 遮断の初回/差替え/解除、
+前者は plan の並列性・profile 分離・再利用・worker timeout・fail_fast、
 Tab と Space の旧記録、DPI・viewport、profile 排他、非干渉観測を検証する。
 Windows グループは foreground always/once の優先順位、sleep 中の topmost watchdog、opacity と
 再利用時の変更・解除、終了時の復元を実際の HWND で検証する。
-選択例は `--only plan,blocking`、`--only keyboard,display,profiles`、`--only windows --windows`。
+選択例は `--only plan`、`--only keyboard,display,profiles`、`--only windows --windows`。
 後者は template の単/複数一致、cache、missing、画像保存方針、条件・反復・break・関数、seed/jitter を検証する。
 
 ## 手動 record → normalize → validate → play

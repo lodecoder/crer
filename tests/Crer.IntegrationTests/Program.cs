@@ -17,7 +17,7 @@ var exe = Path.GetFullPath(Option("--exe") ?? Environment.GetEnvironmentVariable
 var chrome = Option("--chrome") ?? Environment.GetEnvironmentVariable("CRER_TEST_CHROME");
 if (!OperatingSystem.IsWindows() || string.IsNullOrEmpty(chrome) || !File.Exists(exe) || !File.Exists(chrome))
 {
-    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,parallel-focus,readiness-redirect,plan,navigation,blocking,keyboard,windows,display,profiles]");
+    Console.Error.WriteLine("Usage: dotnet run --project tests/Crer.IntegrationTests -- --exe <public NativeAOT crer.exe> --chrome <CfT chrome.exe> [--windows] [--only startup,parallel-focus,readiness-redirect,plan,navigation,keyboard,windows,display,profiles]");
     return 2;
 }
 if (args.Contains("--probe-hidden")) return await ProbeTools.Hidden(chrome!);
@@ -184,7 +184,6 @@ await Test("parallel-focus", "公開exeで半透明onceの3並列起動と同じ
             }, Wait("ready"), Idle());
             // 手動フォーカスで救済せず、初回・再利用とも短い起動期限内で完了させる。
             scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 15000 } };
-            if (label != labels[^1]) scenario["browser"]!["block_urls"] = new JsonArray("initial-viewport-blocked\\.svg");
             scenarios.Add(Leaf(Write(name, scenario)));
         }
         groups.Add(Serial(scenarios.ToArray()));
@@ -260,7 +259,6 @@ await Test("startup", "public three-way initial viewport precedes page scripts o
                 ["content"] = new JsonObject { ["width"] = index == 1 ? 600 : 620, ["height"] = index == 1 ? 400 : 420 },
             };
             var scenario = Scenario(name, fixture.Base + "/initial-viewport/" + name, profile, window, Wait("ready"), Idle());
-            if (label != labels[^1]) scenario["browser"]!["block_urls"] = new JsonArray("initial-viewport-blocked\\.svg");
             scenarios.Add(Leaf(Write(name, scenario)));
         }
         groups.Add(Serial(scenarios.ToArray()));
@@ -348,7 +346,6 @@ await Test("startup", "public three-way delayed startup and same-profile navigat
             var name = label + index;
             var scenario = Scenario(name, fixture.Base + "/startup/" + name + "?private=crer-network-query-secret", profile, null, Wait("ready"), Idle());
             scenario["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 0 } };
-            if (label != "startup-c") scenario["browser"]!["block_urls"] = new JsonArray("startup-blocked\\.svg");
             scenarios.Add(Leaf(Write(name, scenario)));
         }
         groups.Add(Serial(scenarios.ToArray()));
@@ -448,7 +445,6 @@ await Test("startup", "public startup worker timeout cancels navigation and repl
     var profile = Profile("startup-cancel");
     var delayed = Scenario("startup-cancel1", fixture.Base + "/startup/startup-cancel1", profile, null, Wait("ready"));
     delayed["playback"] = new JsonObject { ["timeouts"] = new JsonObject { ["startup_ms"] = 0 } };
-    delayed["browser"]!["block_urls"] = new JsonArray("startup-blocked\\.svg");
     var slow = Write("startup-cancel1", delayed);
     var fast = Write("startup-cancel2", Scenario("startup-cancel2", fixture.Base + "/window", profile, null, Wait("ready")));
     var path = Write("startup-cancel-plan", Plan(Serial(Leaf(slow), Leaf(fast)), worker: 4000));
@@ -613,16 +609,15 @@ await Test("navigation", "遷移失敗を終了コード4で報告し navigation
     foreach (var policy in new[] { "abort", "continue" })
     {
         var scenario = Scenario("navigation-" + policy, fixture.Base, null, new() { ["foreground"] = false },
-            new() { ["do"] = "navigate", ["url"] = fixture.Base + "/blocked-step" },
+            new() { ["do"] = "navigate", ["url"] = fixture.Base + "/startup-close/navigation-" + policy },
             new() { ["do"] = "log", ["message"] = "after-navigation" });
-        scenario["browser"]!["block_urls"] = new JsonArray((JsonNode?)JsonValue.Create("/blocked-step$"));
         scenario["playback"] = new JsonObject { ["on_failure"] = new JsonObject { ["navigation"] = policy } };
         var path = Write("navigation-" + policy, scenario);
         var (_, result) = await Run("navigation-" + policy, 4, "play", path);
         var steps = File.ReadAllLines(Path.Combine(RunDirectory(result), "steps.ndjson")).Select(line => JsonNode.Parse(line)!).ToArray();
         Check(Json.Text(steps[0]["status"]) == "failed" && Json.Text(steps[0]["kind"]) == "navigation", "遷移失敗が navigation として記録されない");
         Check(steps.Length == (policy == "continue" ? 2 : 1), "遷移失敗後の続行方針が適用されない");
-        Check(!fixture.Requests.Contains("/blocked-step"), "ブロック対象の遷移先に通信した");
+        Check(fixture.Requests.Contains("/startup-close/navigation-" + policy), "応答を返さず接続を閉じる遷移先に到達しない");
         Cleanup(result);
     }
 });
@@ -664,47 +659,19 @@ await Test("plan", "無制限workerのシナリオ待機失敗に scenario_failu
     }
 });
 
-await Test("blocking", "public URL blocking initial navigation replacement removal and JS regex", async () =>
+await Test("startup", "公開exeが単一のアプリウィンドウとして起動する", async () =>
 {
-    var profile = Profile("blocking"); var files = new List<string>();
-    var expected = new[] { "ad.svg:blocked logo.svg:loaded redirect:blocked", "ad.svg:loaded logo.svg:blocked redirect:loaded", "ad.svg:loaded logo.svg:loaded redirect:loaded", "ad.svg:blocked logo.svg:loaded redirect:blocked" };
-    for (var index = 0; index < expected.Length; index++)
-    {
-        var url = fixture.Base + "/block?case=" + index;
-        var scenario = Scenario("block" + index, url, profile, null, Wait(expected[index]), Idle(), new() { ["do"] = "navigate", ["url"] = url + "&again=1" }, Wait(expected[index]), Idle(), Sleep(3000));
-        if (index < 2) scenario["browser"]!["block_urls"] = new JsonArray((JsonNode?)JsonValue.Create(index == 0 ? @"/ad\.svg(\?.*)?$" : @"/logo\.svg$"));
-        if (index == 3) scenario["browser"]!["block_urls"] = new JsonArray((JsonNode?)JsonValue.Create("[]"), (JsonNode?)JsonValue.Create(@"/(?<$image>ad)\.svg(\?.*)?$"));
-        files.Add(Write("block" + index, scenario));
-    }
-    var path = Write("blocking-plan", Plan(Serial(files.Select(Leaf).ToArray())));
-    using var process = Start("blocking-plan", "run", path);
-    var ready = await Ready("block0"); await using (var cdp = await ObserveCdp(ready.Metadata))
+    var path = Write("app-window", Scenario("app-window", fixture.Base + "/window", null, null, Wait("ready"), Sleep(3000)));
+    using var process = Start("app-window", "play", path);
+    var ready = await Ready("app-window"); await using (var cdp = await ObserveCdp(ready.Metadata))
     {
         var targets = await cdp.Call("Target.getTargets"); Check(targets["targetInfos"]!.AsArray().Count(target => Json.Text(target!["type"]) == "page") == 1, "app launched extra page targets");
         var attached = await cdp.Call("Target.attachToTarget", new() { ["targetId"] = ready.Launch["targetId"]!.DeepClone(), ["flatten"] = true });
         var display = await cdp.Call("Runtime.evaluate", new() { ["expression"] = "matchMedia('(display-mode: standalone)').matches", ["returnByValue"] = true }, Json.Text(attached["sessionId"]));
         Check(display["result"]!["value"]!.GetValue<bool>(), "CfT lost app-window mode");
     }
-    var command = await process.Finish(); Check(command.Code == 0, "blocking plan failed: " + command.Stderr); var results = TrailingJson(command.Stdout).AsArray();
-    Check(results.Count == expected.Length, "blocking continuation results missing");
-    for (var index = 0; index < expected.Length; index++)
-    {
-        var requests = fixture.BlockRequests.Where(item => item.Case == index.ToString()).Select(item => item.Path).ToArray();
-        if (index == 0) Check(!requests.Contains("/ad.svg") && requests.Contains("/logo.svg"), "initial ad blocker failed open");
-        if (index == 1) Check(requests.Contains("/ad.svg") && !requests.Contains("/logo.svg"), "replacement blocker not applied or cache bypass failed");
-        // With blocking disabled, cache use is restored as well. The baseline asserts
-        // the loaded page result here; it does not require a fresh resource request.
-        if (index == 3) Check(!requests.Contains("/ad.svg") && requests.Contains("/logo.svg"), "ECMAScript-only regex syntax changed at runtime");
-    }
-    Cleanup(results.Last()!);
-});
-
-await Test("blocking", "public URL blocker rejects initial main request and cleans up", async () =>
-{
-    var scenario = Scenario("block-main", fixture.Base + "/blocked-initial");
-    scenario["browser"]!["block_urls"] = new JsonArray((JsonNode?)JsonValue.Create("/blocked-initial$"));
-    var path = Write("block-main", scenario); var (_, result) = await Run("block-main", 3, "play", path);
-    Check(!fixture.Requests.Contains("/blocked-initial"), "main navigation escaped interception"); Cleanup(result);
+    var command = await process.Finish(); Check(command.Code == 0, "アプリウィンドウの再生に失敗した: " + command.Stderr);
+    Cleanup(TrailingJson(command.Stdout));
 });
 
 await Test("keyboard", "public raw normalize validate replay retains Tab and both Space recordings", async () =>
@@ -992,7 +959,7 @@ if (args.Contains("--windows")) await Test("windows", "public foreground modes o
     {
         var scenario = Scenario("window-" + name, fixture.Base + "/window", profile, new()
         { ["foreground"] = foreground, ["foreground_mode"] = mode, ["opacity"] = opacity, ["bounds"] = new JsonObject { ["left"] = 30, ["top"] = 30, ["width"] = 400, ["height"] = 300 } }, Sleep(4000), new() { ["do"] = "wait_for", ["state"] = "complete" }, Sleep(1000));
-        scenario["browser"]!["block_urls"] = new JsonArray((JsonNode?)JsonValue.Create("/never-block")); files.Add(Write("window-" + name, scenario));
+        files.Add(Write("window-" + name, scenario));
     }
     var plan = Write("window-plan", Plan(Serial(files.Select(Leaf).ToArray()))); var original = NativeWindows.GetForegroundWindow();
     using var process = Start("window-plan", "run", plan);

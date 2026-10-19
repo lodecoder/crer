@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using Acornima;
 using YamlDotNet.Core;
 using YamlDotNet.RepresentationModel;
 
@@ -71,8 +70,7 @@ public sealed class Scenario
         if (!Number(root["version"], out var version) || version != 1 || !IsString(root["name"]) || root["steps"] is not JsonArray steps)
             throw Invalid("scenario requires version: 1, name, and steps");
         var browser = Mapping(root["browser"], "browser");
-        Keys(browser, "browser", "chrome", "profile", "initial_url", "block_urls", "window", "display");
-        ValidateBlockUrls(browser);
+        Keys(browser, "browser", "chrome", "profile", "initial_url", "window", "display");
         OptionalString(browser, "chrome", "browser");
         if (!IsString(browser["initial_url"])) throw Invalid("browser.initial_url is required");
         HttpUrl(browser["initial_url"], "browser.initial_url");
@@ -484,20 +482,6 @@ public sealed class Scenario
         Keys(point, label, "x", "y");
         foreach (var axis in new[] { "x", "y" })
             if (!Number(point[axis], out _) && !ParameterReference(point[axis], parameters)) throw Invalid($"{label}.{axis} must be a finite number");
-    }
-
-    private static void ValidateBlockUrls(JsonObject browser)
-    {
-        if (!browser.ContainsKey("block_urls")) return;
-        if (browser["block_urls"] is not JsonArray patterns) throw Invalid("browser.block_urls must be an array of regex strings");
-        for (var i = 0; i < patterns.Count; i++)
-        {
-            var label = $"browser.block_urls[{i}]";
-            if (String(patterns[i]) is not { } pattern || string.IsNullOrWhiteSpace(pattern)) throw Invalid($"{label} must be a non-empty regex string");
-            // Validate the ECMAScript source, not a .NET Regex translation. Matching is
-            // performed by the browser's RegExp engine on the intercepted request URL.
-            if (!Tokenizer.ValidateRegExp(pattern, "", out var error)) throw Invalid($"{label} must be a valid regular expression: {error}");
-        }
     }
 
     private static void FailurePolicies(JsonNode? value, string label, params string[] allowed)

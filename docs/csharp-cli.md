@@ -46,11 +46,6 @@ dotnet run --project tests/Crer.WindowsTests -c Release
 
 YamlDotNet は明示的なノード変換で使い、反射 deserialization を使わない。
 JSON も reflection serialization を無効にする。
-ECMAScript 正規表現の構文検証には Acornima を使う。URL 遮断の照合は同じ専用 CfT に所有する
-非表示 target の V8 で行い、表示用 page は一つに保つ。照合用 target も終了時に閉じる。
-遮断・継続の `Fetch.failRequest` / `Fetch.continueRequest` に対して、期限切れの要求IDを示す
-`CDP: Invalid InterceptionId.` が返った場合だけ無視し、CDP接続断として扱わない。
-照合処理の失敗や他のCDPエラーは、引き続き環境エラーとして停止する。
 IANA time zone と Unicode のため globalization を有効にして AOT publish する。
 
 2026-10-16 の構成整理では、`verify.ps1` の13テストプロジェクト（390件と Windows 入力の
@@ -103,7 +98,7 @@ templateのデコードと照合は、専用CfT内に遅延作成する非表示
 ページ遷移や同じbrowser sessionの後続探索で照合環境を再利用して、終了時に閉じる。
 
 plan は共通の同時実行上限、profile ごとの排他、協調停止を持つ。
-same-profile reuse では URL・window・display・遮断を再適用し、plan の最後に全 CfT を閉じる。
+same-profile reuse では URL・window・display を再適用し、plan の最後に全 CfT を閉じる。
 初回・再利用時のページ遷移と初期文書の準備待ちは、起動処理全体の期限（既定60秒）を共有する。
 scenario の `playback.timeouts.startup_ms` で変更できる。値は0〜2147483647の整数ミリ秒で、
 `0` は無制限。利用者の中断と plan の `worker_ms` はこの設定にかかわらず有効で、
@@ -195,7 +190,7 @@ dotnet run --project tests/Crer.IntegrationTests -- --exe dist/win-x64/crer.exe 
 `--only parallel-focus` で独立して確認する。3個の専用の検証用profileを並列に起動し、
 各profileの2シナリオを、手動フォーカスなし・各15秒の起動期限で検証する。
 最初のページスクリプトの表示サイズ、描画フレームの進行、成功後にフォーカスを再取得しない方針、
-URL遮断を併用した再利用と終了時の後始末も確認する。6件すべての終了コード0と `topmostStatus: 0`、
+再利用と終了時の後始末も確認する。6件すべての終了コード0と `topmostStatus: 0`、
 実測の `WS_EX_TOPMOST` 属性を成功条件とし、前景化の許可が拒否されても最前面属性を取得できれば成功とする。
 このケースに `--windows` は不要。
 viewport待機に入った後の追加遷移、初回・再利用時の10秒超の文書読み込み、起動期限とworker取消しは

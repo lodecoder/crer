@@ -33,7 +33,6 @@ public sealed partial class Playback
     private int windowId;
     private string targetId = "";
     private string endpoint = "";
-    private UrlBlocker? blocker;
     private TemplateMatcher? templates;
     private WindowController? windows;
     private readonly Stopwatch startupWatch = new();
@@ -132,7 +131,7 @@ public sealed partial class Playback
                         await ConfigurePage(s, options, retainSession);
                     }
                     else await Launch(s, options, chrome, retainSession);
-                    beforeStep = _ => { blocker?.AssertHealthy(); windows!.BeforeStep(); return Task.CompletedTask; };
+                    beforeStep = _ => { windows!.BeforeStep(); return Task.CompletedTask; };
                     startupDiagnostic["status"] = "ready";
                     SetStartupStage("ready");
                 }
@@ -324,7 +323,6 @@ public sealed partial class Playback
         var window = await Call("Browser.getWindowForTarget", new() { ["targetId"] = targetId }, false);
         windowId = window["windowId"]!.GetValue<int>();
         cdp.Event += OnNetworkEvent;
-        blocker = new UrlBlocker(cdp, session!);
         await ConfigurePage(s, options, retainSession, true);
     }
 
@@ -370,8 +368,6 @@ public sealed partial class Playback
         var remainingStartup = startupTimeoutMs == 0 ? Timeout.InfiniteTimeSpan
             : TimeSpan.FromMilliseconds(Math.Max(0, startupTimeoutMs - startupWatch.Elapsed.TotalMilliseconds));
         await windows!.Configure(process!.Id, s.Window, options, logger, absoluteRunDir, retainSession, FocusPolicy, token, remainingStartup, cdp!.Disconnected);
-        SetStartupStage("url_blocking");
-        await blocker!.Configure(s.Browser["block_urls"] as JsonArray, token);
         SetStartupStage("navigation");
         var navigation = await Call("Page.navigate", new() { ["url"] = s.Browser["initial_url"]!.DeepClone() }, timeout: Timeout.Infinite);
         if (navigation["errorText"] != null) throw new CrerException(3, $"Initial navigation failed: {Json.Text(navigation["errorText"])}");
@@ -388,7 +384,6 @@ public sealed partial class Playback
             if (s.Display["browser_zoom"] != null && Json.Number(s.Display["browser_zoom"]) != 100) Report($"browser_zoom {Json.Number(s.Display["browser_zoom"])} is not supported; v1 strictly supports 100 only");
             if (Json.Number(actual["scale"]) != 1) Report($"Viewport scale mismatch: expected 1, got {Json.Number(actual["scale"])}");
         }
-        blocker.AssertHealthy();
         metadata["cdpEndpoint"] = endpoint;
         Json.Write(Path.Combine(absoluteRunDir, "run.json"), metadata);
         Json.Write(Path.Combine(absoluteRunDir, "launch.json"), new JsonObject { ["stage"] = "ready", ["pid"] = process!.Id, ["targetId"] = targetId, ["sessionId"] = session });
@@ -555,11 +550,6 @@ public sealed partial class Playback
             {
                 try { windows.Dispose(); } catch (Exception e) { cleanupErrors.Add($"window cleanup failed: {e.Message}"); }
                 windows = null;
-            }
-            if (blocker != null)
-            {
-                try { await blocker.DisposeAsync(); } catch (Exception e) { cleanupErrors.Add($"URL blocker cleanup failed: {e.Message}"); }
-                blocker = null;
             }
             if (templates != null)
             {

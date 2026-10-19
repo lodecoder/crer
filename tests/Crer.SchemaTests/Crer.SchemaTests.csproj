@@ -9,6 +9,5 @@
   <ItemGroup>
     <Compile Include="..\..\src\Crer.Cli\Scenario.cs" Link="Scenario.cs" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
-    <PackageReference Include="Acornima" Version="1.8.0" />
   </ItemGroup>
 </Project>

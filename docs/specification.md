@@ -39,7 +39,7 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 | 記録入力    | Windows Raw Input + Low Level Hook  | マウスは Raw Input、キーボードは Low Level Hook で物理入力を取得する。CDP は物理入力を記録する API ではない。 |
 | シナリオ    | YAML + JSON Schema                  | 人間編集、バリデーション、将来の自動補完を両立する。                                                                        |
 
-CLI は BCL の WebSocket と HTTP、YamlDotNet の明示的なノード変換、Acornima の ECMAScript 構文検証を使う。
+CLI は BCL の WebSocket と HTTP、YamlDotNet の明示的なノード変換を使う。
 CLI は `src/Crer.Cli`、Raw Input と HWND 操作は `src/Crer.Windows` の通常の C# ライブラリとする。
 `ProjectReference` によって結合し、Windows 操作も含めて単一の Native AOT `crer.exe` として公開する。
 Windows API は P/Invoke で呼び出す。PowerShell は製品機能の runtime 依存にしない。
@@ -300,36 +300,6 @@ steps:
 keydown・keyup を送信する。入力欄への空白入力と、チェックボックス・ボタンの既定操作を再現する。
 `key: " "` も同じ意味で受け付ける。normalize は Unicode 空白（kind 9、U+0020）と VK_SPACE の両方を
 `{ do: key, key: Space }` に変換し、前後の文字列と分離する。既存の `text` ステップは文字挿入のままとする。
-
-`browser.block_urls` は任意の正規表現文字列配列とする。省略または空配列では無効。
-各要素は空白のみではない文字列で、`new RegExp(pattern)` としてコンパイルできなければ検証エラー。
-JavaScript の正規表現ソースを区切り・フラグなしで指定する。URL 全体（クエリを含む）に対する
-大文字・小文字を区別する部分一致で、いずれかに一致したリクエストを中止する。
-
-```yaml
-browser:
-  initial_url: https://example.test/
-  block_urls:
-    - '^https://ads\.example\.test/'
-    - '/images/(banner|tracking)\.(png|jpg|gif)(\?.*)?$'
-```
-
-`play` / `run` の対象 page session で CDP `Fetch` の Request 段階を捕捉し、一致時は
-`Fetch.failRequest` の `BlockedByClient`、非一致時は `Fetch.continueRequest` を送る。
-有効時は CfT を `--app=data:text/html,` の空文書で起動し、ブロック設定後に `initial_url` へ遷移する。
-`--app=about:blank` は通常のタブ付きウィンドウにフォールバックするため使用しない。
-URL ブロックの有無や session 再利用にかかわらず、タブ追加ボタンのないアプリウィンドウを維持する。
-画像以外のリソースやページ本体、後続の遷移・リダイレクト先にも同じ判定を行う。
-初期ページ本体を遮断した場合は起動失敗とする。遮断したサブリソースは通常の取得失敗として
-扱い、network idle の待機対象から除かれる。
-
-キャッシュおよび Service Worker の応答による迂回を避けるため、有効時は対象 session の
-キャッシュ利用と Service Worker をバイパスする。session 再利用では遷移前に設定を置き換え、
-省略・空配列で interception を無効化しキャッシュ利用と Service Worker を元に戻す。
-interception の CDP 処理に失敗した場合は接続を閉じ、環境エラーとして終了する。
-
-別タブ、別プロセスの iframe、worker 独自の通信、WebSocket、`data:` / `blob:` URL は
-保証対象外とする。`record` はこの設定を受け付けない。
 
 許可する `do` は `navigate`、`wait_for`、`click`、`double_click`、`mouse_move`、`drag`、`scroll`、
 `text`、`key`、`key_chord`、`screenshot`、`assert`、`sleep`、`log`、`fail`、`if`、`repeat`、`repeat_until`、

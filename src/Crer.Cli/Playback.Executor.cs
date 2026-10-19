@@ -284,7 +284,6 @@ public sealed partial class Playback
             if (stepDelay > 0 && !stepDelayHandled) await Delay(stepDelay);
         });
         await executor.ExecuteAsync(scenario.Steps);
-        blocker?.AssertHealthy();
         return failures.Count > 0 ? 4 : 0;
     }
 

@@ -8,7 +8,12 @@ using System.Text.Json.Nodes;
 
 namespace Crer;
 
-public sealed class Cdp : IAsyncDisposable, IUrlBlockerTransport
+public interface ICdpTransport
+{
+    Task<JsonObject> Call(string method, JsonObject? parameters = null, string? session = null, CancellationToken token = default, int timeoutMs = 10000);
+}
+
+public sealed class Cdp : IAsyncDisposable, ICdpTransport
 {
     private readonly WebSocket socket;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonObject>> pending = new();
