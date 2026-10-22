@@ -612,6 +612,23 @@ try
         catch (CrerException error) when (error.Code == 3 && error.Message.Contains("owned cleanup failure")) { }
         Check(closed == 1, "retained session cleanup was not completed exactly once");
     });
+    await Test("runs-dir を並列の葉と再利用する永続セッションの各葉へ引き継ぐ", async () =>
+    {
+        var requested = CliOptions.Parse(["run", Path.Combine(directory, "plan.crer.yaml"), "--runs-dir", directory]);
+        var calls = 0; var retainedCalls = 0;
+        Task<JsonObject> Play(Scenario scenario, CliOptions actual, CancellationToken token, bool retain)
+        {
+            Check(actual.RunsDir == directory, "実行成果物の保存先が葉へ引き継がれなかった");
+            var persistent = scenario.Name is "persistent" or "persistentNext";
+            Check(retain == persistent, "永続セッションの保持指定が葉のプロファイルと一致しない");
+            Interlocked.Increment(ref calls);
+            if (retain) Interlocked.Increment(ref retainedCalls);
+            return Task.FromResult(Result());
+        }
+        var plan = ValidPlan(Parallel(false, Leaf(successFile), Leaf(otherFile), Serial(Leaf(persistentFile), Leaf(persistentNextFile))), reuse: true, maximum: 3);
+        var result = await PlanRunner.Run(plan, requested, "fake", default, () => new FakePlayback(Play));
+        Check(result.Code == 0 && result.Results.Count == 4 && calls == 4 && retainedCalls == 2, "保存先を確認した葉または保持した永続セッションの実行数が一致しない");
+    });
     await Test("run overrides pass through and play position does not leak", async () =>
     {
         var requested = Options() with { BoundsOverride = new() { ["left"] = 10, ["top"] = 20 }, OpacityOverride = 0.4, Position = new() { ["left"] = 99, ["top"] = 99 } };

@@ -576,6 +576,12 @@ front matter を上書きし、実行ログに override を記録する。`--pos
 移動する。`--mute-audio` は再生する CfT プロセスだけへ Chrome の mute 指定を渡すため、Windows 全体や
 通常 Chrome の音量には影響しない。
 
+`play` / `run` / `record --runs-dir <directory>` は、実行 artifacts の保存先の親ディレクトリを指定する。
+既存のディレクトリのみを受け付け、相対パスは実行時の作業ディレクトリを基準に絶対パスへ正規化する。
+出力先は `<directory>/<run-id>` で、`run` では全 leaf scenario に適用する。省略時は従来どおり
+`.crer/runs/<run-id>` とする。存在しないパスやファイルはブラウザの起動前に CLI 検証エラー（終了コード `2`）とする。
+`record` の位置引数で指定する raw 出力先と、永続プロファイルの保存場所は変更しない。
+
 `run --plan-window-bounds-override <left,top[,width,height]>` は plan に含まれる全 scenario の
 `browser.window.bounds` を、その実行に限り**完全に置換**する run 専用 CLI 設定である。YAML の bounds と
 フィールド単位でマージしないため、`play --position` の優先度規則とは意図的に異なる。各値は整数、width と

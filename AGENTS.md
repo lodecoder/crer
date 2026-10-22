@@ -3,6 +3,7 @@
 
 ## Git 操作
 
+- 作業完了後は、自分が実施した変更を必ずコミットする。
 - Git MCP を優先する理由は、Codex の実行環境で `.git/index.lock` への書き込みが権限不足で失敗するバグを回避するためである。
 - 次の操作は、対応する Git MCP ツールを優先して使用する: `git_status`、`git_add`、`git_commit`、`git_reset`、`git_create_branch`、`git_checkout`、`git_branch`。
 - 上記に対応するツールがない操作は、Git コマンドを直接実行する。

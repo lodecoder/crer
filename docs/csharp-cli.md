@@ -68,13 +68,19 @@ file は command の直後。値付き option と値は別の引数とする。
 | --- | --- |
 | doctor | `--chrome` |
 | inspect / validate | なし |
-| play | `--chrome --seed --step-delay-ms --profile-dir --template-screenshots --position`、`--keep-artifacts --ignore-viewport-mismatch --mute-audio` |
-| run | `--chrome --profile-dir --plan-window-bounds-override --plan-window-opacity-override --template-screenshots`、`--ignore-viewport-mismatch --mute-audio` |
-| record | `--chrome --profile-dir --url --content-size --position --duration-ms --stop-file --name` |
+| play | `--chrome --seed --step-delay-ms --profile-dir --runs-dir --template-screenshots --position`、`--keep-artifacts --ignore-viewport-mismatch --mute-audio` |
+| run | `--chrome --profile-dir --runs-dir --plan-window-bounds-override --plan-window-opacity-override --template-screenshots`、`--ignore-viewport-mismatch --mute-audio` |
+| record | `--chrome --profile-dir --runs-dir --url --content-size --position --duration-ms --stop-file --name` |
 | normalize | `--output --url --name --client-origin --client-size --viewport` |
 
 Chrome は `--chrome` > `CRER_CHROME`。通常 Chrome の探索・既存接続は行わない。
 `browser.chrome` は旧形式の型検査専用キー。
+
+`play` / `run` / `record` の `--runs-dir <directory>` は、既存のディレクトリを実行 artifacts の保存先として指定する。
+出力先は `<directory>/<run-id>` となり、`run` では全 leaf scenario に適用する。省略時は従来どおり
+`.crer/runs/<run-id>` に出力する。相対パスは実行時の作業ディレクトリを基準に絶対パスへ正規化する。
+存在しないパスやファイルはブラウザの起動前に CLI 検証エラー（終了コード `2`）とする。
+`record` の位置引数で指定する raw 出力先と、永続プロファイルの保存場所は変更しない。
 相対ファイル・Chrome・profile・artifacts は cwd 基準、plan の scenario は plan 所在基準、
 template は scenario 所在基準。doctor の manifest は `CRER_CHROME_MANIFEST`、cwd、Chrome ancestor の順。
 
@@ -207,6 +213,7 @@ fixture server は BCL 製。サーバーと CfT を同じデスクトップ・�
 任意の比較だけが Deno を使用し、製品と標準検証の依存にはしない。
 
 終了コードは成功 0、CLI/YAML 2、環境 3、step/assert 4、利用者中断 5。
-ログ、診断 JSON、PNG、raw/sidecar と summary は `.crer` 配下に残す。
+ログ、診断 JSON、PNG は既定で `.crer/runs` 配下に残し、`--runs-dir` 指定時は指定先へ出力する。
+raw/sidecar は指定した raw 出力先に残す。
 2026-10-15 の Deno → C# 移行時の win-x64 受入は完了。
 [当時の結果と証跡](csharp-migration-results.md) は、単一 exe 化後の検証結果とは区別する。

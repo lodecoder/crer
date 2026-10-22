@@ -9,6 +9,7 @@ public sealed record CliOptions(string Command, string? File, string? Chrome, bo
     public IReadOnlyDictionary<string, string> Values { get; init; } = new Dictionary<string, string>();
     public bool IgnoreViewportMismatch { get; init; }
     public string? ProfileDir => Value("--profile-dir");
+    public string? RunsDir => Value("--runs-dir");
     public string? TemplateScreenshots => Value("--template-screenshots");
     public JsonObject? BoundsOverride { get; init; }
     public double? OpacityOverride { get; init; }
@@ -19,11 +20,11 @@ public sealed record CliOptions(string Command, string? File, string? Chrome, bo
         ["doctor"] = (["--chrome"], []),
         ["inspect"] = ([], []),
         ["validate"] = ([], []),
-        ["play"] = (["--chrome", "--seed", "--step-delay-ms", "--profile-dir", "--template-screenshots", "--position"],
+        ["play"] = (["--chrome", "--seed", "--step-delay-ms", "--profile-dir", "--runs-dir", "--template-screenshots", "--position"],
             ["--keep-artifacts", "--ignore-viewport-mismatch", "--mute-audio"]),
-        ["run"] = (["--chrome", "--profile-dir", "--plan-window-bounds-override", "--plan-window-opacity-override", "--template-screenshots"],
+        ["run"] = (["--chrome", "--profile-dir", "--runs-dir", "--plan-window-bounds-override", "--plan-window-opacity-override", "--template-screenshots"],
             ["--ignore-viewport-mismatch", "--mute-audio"]),
-        ["record"] = (["--chrome", "--profile-dir", "--url", "--content-size", "--position", "--duration-ms", "--stop-file", "--name"], []),
+        ["record"] = (["--chrome", "--profile-dir", "--runs-dir", "--url", "--content-size", "--position", "--duration-ms", "--stop-file", "--name"], []),
         ["normalize"] = (["--output", "--url", "--name", "--client-origin", "--client-size", "--viewport"], []),
     };
 
@@ -47,6 +48,11 @@ public sealed record CliOptions(string Command, string? File, string? Chrome, bo
         }
         if (takesFile && file == null) throw Invalid(command == "inspect" ? "artifact directory is required" : "scenario or plan path is required immediately after command");
         string? Get(string key) => values.GetValueOrDefault(key);
+        if (Get("--runs-dir") is string runsDir)
+        {
+            if (!Directory.Exists(runsDir)) throw Invalid($"--runs-dir must be an existing directory: {runsDir}");
+            values["--runs-dir"] = Path.GetFullPath(runsDir);
+        }
         double? delay = null;
         if (Get("--step-delay-ms") is string d)
         {

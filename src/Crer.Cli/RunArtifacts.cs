@@ -5,6 +5,12 @@ namespace Crer;
 
 public static class RunArtifacts
 {
+    public static string CreateRunPath(string name, CliOptions options)
+    {
+        var runId = CreateRunId(name);
+        return options.RunsDir is string runsDir ? Path.Combine(runsDir, runId) : $".crer/runs/{runId}";
+    }
+
     public static string CreateRunId(string name, DateTimeOffset? now = null, Guid? id = null)
     {
         var safe = new StringBuilder();

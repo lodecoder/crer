@@ -88,7 +88,7 @@ public sealed partial class Playback
         var reused = cdp != null && !cdp.Disconnected.IsCompleted && process is { HasExited: false };
         if (!reused && (cdp != null || process != null)) await CloseSession();
         if (!reused) { currentPageUrl = null; mainFrameId = ""; }
-        runDir = $".crer/runs/{RunArtifacts.CreateRunId(s.Name)}";
+        runDir = RunArtifacts.CreateRunPath(s.Name, options);
         var nextAbsoluteRunDir = Path.GetFullPath(runDir);
         var configuredProfile = Profiles.Configured(s, options);
         persistent = configuredProfile != null;

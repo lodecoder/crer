@@ -33,6 +33,65 @@ Test("run ID Japanese, NFKC and safe fallback", () =>
     var astral = string.Concat(Enumerable.Repeat("\U00010400", 65));
     Check(RunArtifacts.CreateRunId(astral, date, uuid).Split('-')[1].EnumerateRunes().Count() == 64, "truncate Unicode code points");
 });
+Test("--runs-dir は既存ディレクトリのみ受け付けて絶対パスに解決する", () =>
+{
+    var directory = Path.Combine(root, "実行結果 保存先");
+    Directory.CreateDirectory(directory);
+    var file = Path.Combine(root, "runs-file");
+    File.WriteAllText(file, "ディレクトリではありません");
+    var missing = Path.Combine(root, "missing-runs");
+    foreach (var command in new[] { "play", "run", "record" })
+    {
+        Check(CliOptions.Parse([command, "input.yaml"]).RunsDir == null, "未指定の出力先が変更されました");
+        foreach (var path in new[] { directory, Path.GetRelativePath(Environment.CurrentDirectory, directory) })
+            Check(CliOptions.Parse([command, "input.yaml", "--runs-dir", path]).RunsDir == directory, "出力先が絶対パスに解決されませんでした");
+        foreach (var path in new[] { "", " ", missing, file, "invalid\0path" })
+            Reject(() => CliOptions.Parse([command, "input.yaml", "--runs-dir", path]), "--runs-dir must be an existing directory");
+    }
+    Check(!Directory.Exists(missing), "存在しない指定先が作成されました");
+    foreach (var command in new[] { "doctor", "inspect", "validate", "normalize" })
+    {
+        var prefix = command == "doctor" ? new[] { command } : new[] { command, "input.yaml" };
+        Reject(() => CliOptions.Parse([.. prefix, "--runs-dir", directory]), "unknown option");
+    }
+});
+Test("再生の成果物は指定先へ保存され、省略時は従来の .crer/runs を使う", () =>
+{
+    var working = Path.Combine(root, "runs-working");
+    var destination = Path.Combine(root, "再生結果 保存先");
+    Directory.CreateDirectory(working);
+    Directory.CreateDirectory(destination);
+    var original = Environment.CurrentDirectory;
+    try
+    {
+        Environment.CurrentDirectory = working;
+        var scenario = Scenario.Parse("version: 1\nname: 出力先の確認\nbrowser: { initial_url: 'https://example.test/' }\nsteps: []\n");
+        var missingChrome = Path.Combine(working, "missing-chrome.exe");
+        var directories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var command in new[] { "play", "run" })
+        {
+            foreach (var path in new[] { destination, Path.GetRelativePath(working, destination) })
+            {
+                var options = CliOptions.Parse([command, "scenario.yaml", "--runs-dir", path]);
+                var result = Playback.Run(scenario, options, missingChrome, default).GetAwaiter().GetResult();
+                var directory = Json.Text(result["runDir"]);
+                Check(Json.Number(result["code"]) == 3, "存在しない Chrome が起動されました");
+                Check(Path.GetDirectoryName(directory) == destination && directories.Add(directory), "指定先に一意の実行ディレクトリが作成されませんでした");
+                foreach (var name in new[] { "run.json", "steps.ndjson", "startup.json", "cleanup.json" })
+                    Check(File.Exists(Path.Combine(directory, name)), $"指定先に {name} がありません");
+                var inspected = Diagnostics.Inspect(directory);
+                Check(Json.Number(inspected["run"]?["code"]) == 3, "指定先の成果物を inspect で確認できませんでした");
+                Check(Json.Text(inspected["run"]?["profile"]) == Path.Combine(directory, "profile"), "一時プロファイルが指定先に追従しませんでした");
+            }
+        }
+        Check(!Directory.Exists(Path.Combine(working, ".crer")), "指定時に従来の出力先が作成されました");
+        var fallback = Playback.Run(scenario, CliOptions.Parse(["play", "scenario.yaml"]), missingChrome, default).GetAwaiter().GetResult();
+        var fallbackDirectory = Json.Text(fallback["runDir"]);
+        Check(fallbackDirectory.StartsWith(".crer/runs/", StringComparison.Ordinal), "未指定時の相対出力先が変更されました");
+        Check(File.Exists(Path.Combine(fallbackDirectory, "run.json")), "未指定時の成果物が保存されませんでした");
+    }
+    finally { Environment.CurrentDirectory = original; }
+});
 Test("logger per-line prefix and ANSI reset", () =>
 {
     Check(ScenarioLogger.Format("login\nnext", "one\r\ntwo", "red", false) == "[login next] one\n[login next] two");
@@ -97,12 +156,12 @@ Test("CLI full command-specific value/switch inventory", () =>
     var specifications = new Dictionary<string, (string[] values, string[] switches)>
     {
         ["doctor"] = (["--chrome"], []), ["inspect"] = ([], []), ["validate"] = ([], []),
-        ["play"] = (["--chrome", "--seed", "--step-delay-ms", "--profile-dir", "--template-screenshots", "--position"], ["--keep-artifacts", "--ignore-viewport-mismatch", "--mute-audio"]),
-        ["run"] = (["--chrome", "--profile-dir", "--plan-window-bounds-override", "--plan-window-opacity-override", "--template-screenshots"], ["--ignore-viewport-mismatch", "--mute-audio"]),
-        ["record"] = (["--chrome", "--profile-dir", "--url", "--content-size", "--position", "--duration-ms", "--stop-file", "--name"], []),
+        ["play"] = (["--chrome", "--seed", "--step-delay-ms", "--profile-dir", "--runs-dir", "--template-screenshots", "--position"], ["--keep-artifacts", "--ignore-viewport-mismatch", "--mute-audio"]),
+        ["run"] = (["--chrome", "--profile-dir", "--runs-dir", "--plan-window-bounds-override", "--plan-window-opacity-override", "--template-screenshots"], ["--ignore-viewport-mismatch", "--mute-audio"]),
+        ["record"] = (["--chrome", "--profile-dir", "--runs-dir", "--url", "--content-size", "--position", "--duration-ms", "--stop-file", "--name"], []),
         ["normalize"] = (["--output", "--url", "--name", "--client-origin", "--client-size", "--viewport"], []),
     };
-    string Sample(string key) => key switch { "--seed" => "42", "--step-delay-ms" or "--duration-ms" => "0", "--template-screenshots" => "failure-only", "--position" or "--client-origin" => "-10,20", "--client-size" or "--viewport" or "--content-size" => "800,600", "--plan-window-bounds-override" => "10,20,800,600", "--plan-window-opacity-override" => "0", _ => "sample" };
+    string Sample(string key) => key switch { "--runs-dir" => root, "--seed" => "42", "--step-delay-ms" or "--duration-ms" => "0", "--template-screenshots" => "failure-only", "--position" or "--client-origin" => "-10,20", "--client-size" or "--viewport" or "--content-size" => "800,600", "--plan-window-bounds-override" => "10,20,800,600", "--plan-window-opacity-override" => "0", _ => "sample" };
     foreach (var (command, spec) in specifications)
     {
         var prefix = command == "doctor" ? new[] { command } : new[] { command, "test.yaml" };

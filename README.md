@@ -225,6 +225,7 @@ $profile = "$PWD\.crer\profiles\yahoo"
   正規化します。
 - `--position <left>,<top>` — CfT ウィンドウの画面上の位置。負の座標も指定可能。
 - `--profile-dir <directory>` — CfT の専用プロファイルを再利用する。`record` / `play` / `run` で使用可能。
+- `--runs-dir <directory>` — 実行 artifacts の保存先の親ディレクトリ。既存のディレクトリを `record` / `play` / `run` で指定可能。省略時は `.crer/runs`。
 - `--mute-audio` — `play` / `run` 時の CfT だけをミュートする。Windows 全体および通常 Chrome の音量には影響しない。
 
 正規化後の YAML には、実測した値が次のように保存されるため、再生時も同じ viewport と位置を使う。
@@ -695,7 +696,11 @@ repomix
 設定は [repomix.config.json](repomix.config.json) にあり、secret scanは有効です。生成された
 `repomix-output.md` はGit管理対象外です。
 
-実行 artifacts は `.crer/runs/<run-id>` に出力されます。run ID は
+実行 artifacts は既定で `.crer/runs/<run-id>` に出力されます。`play` / `run` / `record` に
+`--runs-dir <directory>` を指定すると、既存のディレクトリの `<directory>/<run-id>` に出力します。
+相対パスは実行時の作業ディレクトリを基準に絶対パスへ正規化します。存在しないパスやファイルを指定すると、
+ブラウザの起動前に CLI 検証エラー（終了コード `2`）になります。`run` では全 scenario に適用します。
+`record` の位置引数で指定する raw 出力先と、永続プロファイルの保存場所は変わりません。run ID は
 `<UTC YYYYMMDDTHHmmssSSSZ>-<name>-<UUIDv4>` 形式で、シナリオ名を含み、ディレクトリ名の文字列ソートが実行日時順になります。
 同一ミリ秒内の順序はUUID部分によって決まり、生成順は保証しません。`steps.ndjson` には各ステップの時刻、実効座標、
 jitter offset、URL、成否が追記され、`crer inspect` で件数と失敗数を確認できます。

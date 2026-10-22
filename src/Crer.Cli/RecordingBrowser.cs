@@ -18,7 +18,7 @@ public static partial class Recorder
         var size = options.Value("--content-size") is { } sizeOption ? CliOptions.Point(sizeOption, "--content-size") : (860d, 560d);
         var content = new NormalizePoint(size.Item1, size.Item2);
         var position = options.Position is { } p ? new NormalizeWindowBounds(Json.Number(p["left"]), Json.Number(p["top"])) : null;
-        var runDir = Path.GetFullPath(Path.Combine(".crer", "runs", RunArtifacts.CreateRunId(options.Value("--name") ?? "record")));
+        var runDir = Path.GetFullPath(RunArtifacts.CreateRunPath(options.Value("--name") ?? "record", options));
         Directory.CreateDirectory(runDir);
         var configuredProfile = options.ProfileDir;
         var profile = configuredProfile is null ? Path.Combine(runDir, "profile") : Profiles.PersistentDirectory(configuredProfile);
