@@ -12,7 +12,8 @@ CLI から Windows 実装を通常の `ProjectReference` で参照し、公開�
 
 ## ビルドと検証
 
-Windows、.NET 10 SDK、Visual Studio の C++ x64 build tools と Windows SDK が必要。
+Windows、runtime / Native AOT pack 10.0.14 以降を含む .NET 10 SDK、
+Visual Studio の C++ x64 build tools と Windows SDK が必要。
 リポジトリルートから実行する。
 
 ```powershell
@@ -53,6 +54,17 @@ IANA time zone と Unicode のため globalization を有効にして AOT publis
 外部入力 DLL を同梱しない exe で、検索・キーボード・ドラッグ・plan・session reuse、時間指定／stop-file 記録と
 normalize、前面化・透明度・watchdog・終了時復元を実 CfT で確認した。
 カーソル不変の観測は外部操作により判定不能であり、機能テストの成功とは区別する。ARM64 は今回未検証。
+
+2026-10-26 のセキュリティ更新では、SDK 10.0.403 で win-x64 を再 publish した。
+ILCompiler / ILLink / Native AOT pack と exe 内の runtime 版が 10.0.14 であることを確認した。
+`dist/win-x64/crer.exe` の SHA-256 は
+`055dce625892612bb2bf8492f2f376c7324f3cd5e5822e7e05d2df44fa779522`。
+`verify.ps1` の14テストプロジェクト、生成した exe の `help` と検索 fixture YAML の `validate` が成功した。
+実 CfT の検索再生は2回とも初期遷移で `net::ERR_ABORTED` となり、ブラウザ受入は未完了。
+CfT のログには実行ファイルへのアクセス拒否と Network Service の異常終了があり、比較した旧 C# 成果物でも
+同じブラウザエラーと起動タイムアウトを確認した。キーボード・ドラッグ・plan・session reuse の実機検証は未実施。
+ログは `.crer/dotnet-10.0.14-rebuild/` に保存した。CfT の設定やアクセス権は変更していない。
+不要な旧 Node 版の `dist/nodejs-win-x64` は削除した。未公開のため ZIP 作成・リリース・再配布は行っていない。
 
 ## CLI 契約
 
