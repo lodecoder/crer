@@ -155,6 +155,18 @@ await Test("static template iteration visits two rectangles and expands numeric 
     var loop = run.Steps.Single(step => Text(step, "index") == "0"); Check(loop["matches"]!.GetValue<int>() == 2, "did not find both exact patterns");
     Check(run.Steps.Any(step => Text(step, "message") == "match:80,100:16x16") && run.Steps.Any(step => Text(step, "message") == "match:160,100:16x16"), "match arguments changed type or position");
 });
+await Test("テンプレート列挙が0件なら子を実行せず正常に後続へ進む", async () =>
+{
+    var run = await Play("foreach-empty", new JsonArray(
+        new JsonObject { ["do"] = "for_each_template", ["template"] = T(true, "fail"), ["max_matches"] = 2,
+            ["steps"] = new JsonArray(Fail()) }, Log("一致0件の後続"), Assert("status", "Count", "0")));
+    var loop = run.Steps.Single(step => Text(step, "index") == "0");
+    Check(Text(loop, "status") == "skipped" && loop["matches"]!.GetValue<int>() == 0 && loop["templateMatches"]!.AsArray().Count == 0,
+        "一致0件のスキップ記録が不正です");
+    Check(run.Steps.All(step => !Text(step, "index").StartsWith("0.", StringComparison.Ordinal)), "一致0件で子を実行しました");
+    Check(run.Steps.Any(step => Text(step, "message") == "一致0件の後続"), "一致0件で後続を実行しませんでした");
+    Check(run.Steps.All(step => Text(step, "status") != "failed"), "一致0件に失敗記録を残しました");
+});
 await Test("break exits only the closest template iteration through nested conditions", async () =>
 {
     var inner = new JsonObject { ["do"] = "for_each_template", ["template"] = T(), ["max_matches"] = 2, ["steps"] = new JsonArray(Click(),

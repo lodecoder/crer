@@ -64,6 +64,55 @@ await Test("repeat の count 0 と有限の空反復は後続 step へ進む", a
     Check(code == 0 && run.Records.Any(record => Json.Text(record["message"]) == "finished"), "通常の反復を変更しました");
 });
 
+foreach (var (name, globalOnMissing, localOnMissing) in new (string, string?, string?)[]
+{
+    ("既定", null, null), ("全体で fail", "fail", null), ("個別に fail", null, "fail"),
+})
+{
+    await Test($"for_each_template は一致0件なら子を実行せず後続へ進む（{name}）", async () =>
+    {
+        var socket = new ControlledSocket();
+        await using var run = await ExecutorRun.Create(evidence, socket);
+        var templatePath = Path.Combine(evidence, Guid.NewGuid().ToString("N") + ".png");
+        await File.WriteAllBytesAsync(templatePath, Convert.FromBase64String(ControlledSocket.Screenshot));
+        var template = new JsonObject { ["path"] = templatePath };
+        if (localOnMissing != null) template["on_missing"] = localOnMissing;
+        var scenario = ScenarioFor(new JsonArray(
+            new JsonObject { ["do"] = "for_each_template", ["template"] = template, ["max_matches"] = 2,
+                ["steps"] = new JsonArray(new JsonObject { ["do"] = "fail", ["message"] = "子を実行してはいけません" }) },
+            Log("一致0件の後続")));
+        if (globalOnMissing != null) scenario.Playback["template"] = new JsonObject { ["on_missing"] = globalOnMissing };
+        var code = await run.Execute(scenario, default);
+        var records = run.Records;
+        var loop = records.Single(record => Json.Text(record["index"]) == "0");
+        Check(code == 0 && run.Failures.Count == 0, "一致0件を失敗として扱いました");
+        Check(socket.TemplateCalls == 1, "テンプレートの複数照合を実行していません");
+        Check(Json.Text(loop["status"]) == "skipped" && loop["matches"]!.GetValue<int>() == 0
+            && loop["templateMatches"]!.AsArray().Count == 0, "一致0件のスキップ記録が不正です");
+        Check(records.All(record => !Json.Text(record["index"]).StartsWith("0.", StringComparison.Ordinal)), "一致0件で子を実行しました");
+        Check(records.Any(record => Json.Text(record["message"]) == "一致0件の後続"), "一致0件で後続を実行しませんでした");
+        Check(records.All(record => Json.Text(record["status"]) != "failed"), "一致0件に失敗記録を残しました");
+    });
+}
+
+await Test("for_each_template の照合評価失敗は一致0件と区別して失敗する", async () =>
+{
+    await using var run = await ExecutorRun.Create(evidence, new ControlledSocket { TemplateError = "Error: image decode failed" });
+    var templatePath = Path.Combine(evidence, Guid.NewGuid().ToString("N") + ".png");
+    await File.WriteAllBytesAsync(templatePath, Convert.FromBase64String(ControlledSocket.Screenshot));
+    var scenario = ScenarioFor(new JsonArray(
+        new JsonObject { ["do"] = "for_each_template",
+            ["template"] = new JsonObject { ["path"] = templatePath, ["on_missing"] = "skip" },
+            ["max_matches"] = 2, ["steps"] = new JsonArray(Log("子を実行してはいけません")) },
+        Log("失敗後の後続")));
+    var code = await run.Execute(scenario, default);
+    var records = run.Records;
+    Check(code == 4 && run.Failures.Count == 1, "照合評価失敗を正常な0件として扱いました");
+    Check(records.Length == 1 && Json.Text(records[0]["status"]) == "failed" && Json.Text(records[0]["kind"]) == "template"
+        && Json.Text(records[0]["error"]).Contains("image decode failed", StringComparison.Ordinal),
+        "照合評価失敗後に子や後続を実行したか、テンプレート失敗の記録がありません");
+});
+
 await Test("条件が期限後に成立しても timeout になり続行方針を適用する", async () =>
 {
     var socket = new ControlledSocket { ConditionDelay = TimeSpan.FromSeconds(3) };
@@ -227,11 +276,20 @@ sealed class ExecutorRun : IAsyncDisposable
         return (Task<int>)typeof(Playback).GetMethod("ExecuteSteps", BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(playback, [scenario, CliOptions.Parse(["play", "unused.yaml"]), Failures])!;
     }
-    public ValueTask DisposeAsync() => Cdp.DisposeAsync();
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (typeof(Playback).GetField("templates", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(playback) is TemplateMatcher matcher)
+                await matcher.DisposeAsync();
+        }
+        finally { await Cdp.DisposeAsync(); }
+    }
 }
 
 sealed class ControlledSocket : WebSocket
 {
+    public const string Screenshot = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==";
     private readonly Channel<(byte[] Data, WebSocketMessageType Type)> replies = Channel.CreateUnbounded<(byte[], WebSocketMessageType)>();
     private readonly CancellationTokenSource lifetime = new();
     private WebSocketState state = WebSocketState.Open;
@@ -239,10 +297,11 @@ sealed class ControlledSocket : WebSocket
     public TimeSpan ConditionDelay { get; init; }
     public bool DisconnectCondition { get; init; }
     public string? ContextError { get; init; }
+    public string? TemplateError { get; init; }
     public int ContextFailures { get; init; }
     public TimeSpan ScreenshotDelay { get; init; }
     public TimeSpan UrlDelay { get; init; }
-    public int ScreenshotCalls, UrlCalls;
+    public int ScreenshotCalls, UrlCalls, TemplateCalls;
     public int ConditionCalls => Volatile.Read(ref conditionCalls);
     public TaskCompletionSource ConditionRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public TaskCompletionSource ConditionReplied { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -288,15 +347,22 @@ sealed class ControlledSocket : WebSocket
             JsonObject result;
             if (method == "Runtime.evaluate")
             {
-                if (!condition) { Interlocked.Increment(ref UrlCalls); await Task.Delay(UrlDelay, token); }
-                JsonNode value = condition ? new JsonObject { ["url"] = "http://127.0.0.1/", ["state"] = "complete", ["found"] = true, ["urlMatches"] = true }
+                var template = Json.Text(request["sessionId"]) == "template-session";
+                if (template) Interlocked.Increment(ref TemplateCalls);
+                else if (!condition) { Interlocked.Increment(ref UrlCalls); await Task.Delay(UrlDelay, token); }
+                JsonNode value = template ? new JsonArray()
+                    : condition ? new JsonObject { ["url"] = "http://127.0.0.1/", ["state"] = "complete", ["found"] = true, ["urlMatches"] = true }
                     : JsonValue.Create("http://127.0.0.1/")!;
-                result = new JsonObject { ["result"] = new JsonObject { ["value"] = value } };
+                result = template && TemplateError != null
+                    ? new JsonObject { ["exceptionDetails"] = new JsonObject { ["text"] = TemplateError } }
+                    : new JsonObject { ["result"] = new JsonObject { ["value"] = value } };
             }
+            else if (method == "Target.createTarget") result = new JsonObject { ["targetId"] = "template-target" };
+            else if (method == "Target.attachToTarget") result = new JsonObject { ["sessionId"] = "template-session" };
             else if (method == "Page.captureScreenshot")
             {
                 Interlocked.Increment(ref ScreenshotCalls); await Task.Delay(ScreenshotDelay, token);
-                result = new JsonObject { ["data"] = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==" };
+                result = new JsonObject { ["data"] = Screenshot };
             }
             else result = new JsonObject { ["method"] = method };
             var bytes = Encoding.UTF8.GetBytes(new JsonObject { ["id"] = request["id"]!.DeepClone(), ["result"] = result }.ToJsonString());

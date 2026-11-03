@@ -139,10 +139,8 @@ public sealed partial class Playback
                         logger.Log($"template: {path}, matches: {found.Matches.Count}, threshold: {threshold.ToString("R", CultureInfo.InvariantCulture)}");
                         if (found.Matches.Count == 0)
                         {
-                            var error = $"template match failed: {path} has no matches at threshold {threshold.ToString("R", CultureInfo.InvariantCulture)}";
-                            if (Json.Text(template["on_missing"], Json.Text(defaults?["on_missing"], "fail")) != "skip")
-                            { failedScreenshot = found.Screenshot; throw new InvalidOperationException(error); }
-                            var record = Record("skipped"); record["kind"] = "template"; record["reason"] = error; record["matches"] = 0; record["templateMatches"] = new JsonArray(); await Write(record);
+                            var reason = $"template has no matches: {path} at threshold {threshold.ToString("R", CultureInfo.InvariantCulture)}";
+                            var record = Record("skipped"); record["kind"] = "template"; record["reason"] = reason; record["matches"] = 0; record["templateMatches"] = new JsonArray(); await Write(record);
                         }
                         else
                         {

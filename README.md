@@ -554,14 +554,17 @@ IoU 0.5 以上で一つにまとめます。
 
 ```yaml
 - do: for_each_template
-  template: { path: templates/item.png, min_similarity: 0.9, on_missing: fail }
+  template: { path: templates/item.png, min_similarity: 0.9 }
   max_matches: 50
   steps:
     - { do: click, at: { x: "${match_center_x}", y: "${match_center_y}" }, delay_ms: 500 }
     - { do: log, message: "item (${match_left}, ${match_top}) を処理しました" }
 ```
 
-一致がないときは `template.on_missing` に従います。検出件数・各矩形・similarity は `steps.ndjson` に残ります。
+一致が0件なら子ステップを実行せず、正常なスキップとして次のステップへ進みます。
+この場合は `template.on_missing` と `playback.template.on_missing` を適用しません。
+画像ファイルの読み込みや照合処理自体のエラーは失敗として扱います。
+検出件数・各矩形・similarity は `steps.ndjson` に残ります。
 探索画像の保存は `playback.artifacts.template_screenshots` に従います。ページを変える子操作があっても、列挙対象は
 開始時のインメモリ screenshot に固定されます。
 

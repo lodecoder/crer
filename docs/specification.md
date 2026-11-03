@@ -374,8 +374,10 @@ screenshot を `template-<step-index>.attempt-<試行回数>.png` として arti
 screenshot 内で similarity が閾値以上の template 矩形を類似度降順に最大 `max_matches` 件列挙し、各矩形に
 対して `steps` を実行する。IoU が 0.5 以上の候補は同一矩形として最高 similarity の一件へ抑制する。
 子ステップの `${match_left}`、`${match_top}`、`${match_width}`、`${match_height}`、`${match_center_x}`、
-`${match_center_y}`、`${match_similarity}` はそれぞれ当該一致の数値へ展開される。一致がない場合は
-`template.on_missing` の `fail`／`skip` に従う。検出件数と矩形は `steps.ndjson` に保存し、探索画像は
+`${match_center_y}`、`${match_similarity}` はそれぞれ当該一致の数値へ展開される。一致がない場合は子ステップを
+実行せず、`status: skipped`、`matches: 0`、空の `templateMatches` を記録して、失敗にせず次の兄弟ステップへ進む。
+`for_each_template` の一致0件には `template.on_missing` と `playback.template.on_missing` を適用しない。
+画像ファイルの読み込みや照合処理自体のエラーは従来どおり失敗として扱う。検出件数と矩形は `steps.ndjson` に保存し、探索画像は
 `playback.artifacts.template_screenshots` に従って保存する。子ステップによるページ変化後に再探索はせず、
 列挙対象は最初のインメモリ screenshot へ固定する。
 `for_each_template.steps` 内の `break` は成功した制御ステップとして `steps.ndjson` に記録し、現在の一致に対する
@@ -416,7 +418,7 @@ threshold を出力する。`on_missing` は step 直下ではなく `template` 
 
 `playback.artifacts.template_screenshots` は `all` または `failure-only` とし、既定は後方互換のため `all` とする。
 `all` は各探索元を従来の `template-*.png` として保存する。`failure-only` は CDP screenshot と template を
-メモリ上で照合し、成功、正常な条件不一致、`on_missing: skip`、`on_limit: continue` ではPNGをディスクへ
+メモリ上で照合し、成功、正常な条件不一致、`for_each_template` の一致0件、`on_missing: skip`、`on_limit: continue` ではPNGをディスクへ
 書き込まない。template失敗時は追加キャプチャをせず、当該照合に用いたPNGを
 `failure-<step-index>.png` として一度だけ保存する。照合処理自体に失敗して画像を保持できなかった場合だけ、
 通常の失敗キャプチャを試みる。`repeat_until` の `on_limit: fail` では最後の判定画像だけを保存する。
