@@ -82,8 +82,13 @@ CfT のログには実行ファイルへのアクセス拒否と Network Service
 開発用 exe の `doctor`、`help`、検索 fixture YAML の `validate` は成功した。
 `verify.ps1` の14テストプロジェクトのうち13プロジェクトは連続実行で成功し、
 Windows 入力テストは記録開始時に183で失敗した後、単独での再実行に成功した。
-Native AOT の再 publish は MSVC と Windows SDK が不足しており未完了。
-既存の `dist/win-x64/crer.exe` は `doctor` で修正済み runtime 10.0.14 と確認した。
+MSVC x64/x86 build tools と Windows SDK を追加し、Native AOT の再 publish も完了した。
+ILCompiler / ILLink / Native AOT pack と `dist/win-x64/crer.exe` の runtime 版は 10.0.15。
+exe の SHA-256 は `befe1da3a657b3cc0c024d343e1929173a36d63a3ff26bef4bf18f10767f5c51`。
+生成した exe の `doctor`、`help`、検索 fixture YAML の `validate` が成功した。
+Chrome for Testing 157.0.8103.78 で検索 fixture を再生し、終了コード0、検索結果とスクリーンショット、
+Chrome 終了・CDP 要求の排出などの後始末まで確認した。
+証跡は `.crer/fixture/364f88dc147e4e128ba41e708bb71d9c/` に保存した。
 ログは `.crer/sdk-10.0.404-rebuild/` に保存した。
 
 ## CLI 契約
