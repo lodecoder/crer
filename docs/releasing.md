@@ -8,7 +8,8 @@ ARM64 は今回の対象外。
 リリースのビルド・fixture検証は **PowerShell 7.2 以降**で、リポジトリルートから実行する。
 Windows PowerShell 5.1 では、fixtureスクリプトは実行開始時に必要なバージョンを表示して停止する。
 配布物のインストール・更新・削除と `package-release.ps1` は、引き続き Windows PowerShell 5.1 に対応する。
-ビルドには .NET 10 SDK、MSVC x64 build tools、Windows SDK が必要。
+ビルドには `global.json` で固定した .NET SDK 10.0.404（runtime / Native AOT pack 10.0.15）、
+MSVC x64 build tools、Windows SDK が必要。
 
 ```powershell
 .\scripts\verify.ps1

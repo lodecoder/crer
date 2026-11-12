@@ -12,9 +12,9 @@ CLI から Windows 実装を通常の `ProjectReference` で参照し、公開�
 
 ## ビルドと検証
 
-Windows、runtime / Native AOT pack 10.0.14 以降を含む .NET 10 SDK、
+Windows、.NET SDK 10.0.404（runtime / Native AOT pack 10.0.15）、
 Visual Studio の C++ x64 build tools と Windows SDK が必要。
-リポジトリルートから実行する。
+SDK はルートの `global.json` で固定する。リポジトリルートから実行する。
 
 ```powershell
 .\scripts\verify.ps1 -Configuration Release
@@ -32,6 +32,15 @@ Visual Studio の C++ x64 build tools と Windows SDK が必要。
 `build-csharp.ps1` の既定出力先は Native AOT ビルドでは `dist/<Runtime>`、
 開発用の `-NoAot` では `dist/development/<Runtime>` とする。これにより標準配布先の AOT exe を
 開発用ビルドで上書きしない。`-OutputDirectory` を明示した場合は、その指定先を使う。
+
+[CVE-2026-111497 の公式勧告](https://github.com/dotnet/runtime/security/advisories/GHSA-p3jp-9v83-76w9)
+では .NET 10.0.14 以降に Brotli デコーダーの修正が含まれる。SDK 更新時は Native AOT の
+再 publish に加え、作成済みの開発用配布物も次のように更新し、同梱 DLL の製品版を確認する。
+
+```powershell
+.\scripts\build-csharp.ps1 -NoAot
+(Get-Item .\dist\development\win-x64\System.IO.Compression.Brotli.dll).VersionInfo.ProductVersion
+```
 
 `verify.ps1` は `tests/` の C# テストプロジェクトを検出し、Windows 入力の lifecycle も実行する。
 実機用 IntegrationTests は別途実行する。個別の再実行例:
@@ -66,6 +75,17 @@ CfT のログには実行ファイルへのアクセス拒否と Network Service
 ログは `.crer/dotnet-10.0.14-rebuild/` に保存した。CfT の設定やアクセス権は変更していない。
 不要な旧 Node 版の `dist/nodejs-win-x64` は削除した。未公開のため ZIP 作成・リリース・再配布は行っていない。
 
+2026-11-13 の更新では SDK を `global.json` で 10.0.404 に固定し、開発用 self-contained 配布物を
+再 publish した。`dist/development/win-x64/System.IO.Compression.Brotli.dll` の製品版は
+10.0.11 から 10.0.15、ファイル版は `10.0.1526.53008` に更新された。
+同梱の `System.IO.Compression.Native.dll` と runtime pack も 10.0.15 であることを確認した。
+開発用 exe の `doctor`、`help`、検索 fixture YAML の `validate` は成功した。
+`verify.ps1` の14テストプロジェクトのうち13プロジェクトは連続実行で成功し、
+Windows 入力テストは記録開始時に183で失敗した後、単独での再実行に成功した。
+Native AOT の再 publish は MSVC と Windows SDK が不足しており未完了。
+既存の `dist/win-x64/crer.exe` は `doctor` で修正済み runtime 10.0.14 と確認した。
+ログは `.crer/sdk-10.0.404-rebuild/` に保存した。
+
 ## CLI 契約
 
 ```text
@@ -76,14 +96,14 @@ file は command の直後。値付き option と値は別の引数とする。
 未知・重複 option、値不足（次の引数が `--...` の場合も含む）を拒否する。
 引数なしと `help` は help を表示する。doctor は file を取らない。
 
-| command | option |
-| --- | --- |
-| doctor | `--chrome` |
-| inspect / validate | なし |
-| play | `--chrome --seed --step-delay-ms --profile-dir --runs-dir --template-screenshots --position`、`--keep-artifacts --ignore-viewport-mismatch --mute-audio` |
-| run | `--chrome --profile-dir --runs-dir --plan-window-bounds-override --plan-window-opacity-override --template-screenshots`、`--ignore-viewport-mismatch --mute-audio` |
-| record | `--chrome --profile-dir --runs-dir --url --content-size --position --duration-ms --stop-file --name` |
-| normalize | `--output --url --name --client-origin --client-size --viewport` |
+| command            | option                                                                                                                                                             |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| doctor             | `--chrome`                                                                                                                                                         |
+| inspect / validate | なし                                                                                                                                                               |
+| play               | `--chrome --seed --step-delay-ms --profile-dir --runs-dir --template-screenshots --position`、`--keep-artifacts --ignore-viewport-mismatch --mute-audio`           |
+| run                | `--chrome --profile-dir --runs-dir --plan-window-bounds-override --plan-window-opacity-override --template-screenshots`、`--ignore-viewport-mismatch --mute-audio` |
+| record             | `--chrome --profile-dir --runs-dir --url --content-size --position --duration-ms --stop-file --name`                                                               |
+| normalize          | `--output --url --name --client-origin --client-size --viewport`                                                                                                   |
 
 Chrome は `--chrome` > `CRER_CHROME`。通常 Chrome の探索・既存接続は行わない。
 `browser.chrome` は旧形式の型検査専用キー。
