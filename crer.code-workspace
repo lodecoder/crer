@@ -1,0 +1,61 @@
+{
+    "folders": [
+        {
+            "path": "./"
+        },
+    ],
+    "settings": {
+        "editor.formatOnSave": false,
+        "editor.defaultFormatter": null,
+        "[javascript]": {
+            "editor.defaultFormatter": "dprint.dprint",
+            "editor.formatOnSave": false
+        },
+        "[json]": {
+            "editor.defaultFormatter": "vscode.json-language-features",
+            "editor.formatOnSave": false
+        },
+        "[jsonc]": {
+            "editor.defaultFormatter": "dprint.dprint",
+            "editor.formatOnSave": false
+        },
+        "[markdown]": {
+            "editor.defaultFormatter": "dprint.dprint",
+            "editor.formatOnSave": false
+        },
+        "[typescript]": {
+            "editor.defaultFormatter": "dprint.dprint",
+            "editor.formatOnSave": false
+        },
+        "workbench.colorCustomizations": {
+            "activityBar.activeBackground": "#e26dea",
+            "activityBar.activeBorder": "#15202b",
+            "activityBar.background": "#e26dea",
+            "activityBar.foreground": "#15202b",
+            "activityBar.inactiveForeground": "#15202b99",
+            "activityBarBadge.background": "#6f6910",
+            "activityBarBadge.foreground": "#e7e7e7",
+            "activityBarTop.activeBackground": "#e26dea",
+            "activityBarTop.activeBorder": "#15202b",
+            "activityBarTop.background": "#e26dea",
+            "activityBarTop.foreground": "#15202b",
+            "activityBarTop.inactiveForeground": "#15202b99",
+            "commandCenter.border": "#15202b99",
+            "commandCenter.foreground": "#15202b",
+            "sash.hoverBorder": "#e26dea",
+            "statusBar.background": "#d940e4",
+            "statusBar.debuggingBackground": "#d940e4",
+            "statusBar.debuggingForeground": "#15202b",
+            "statusBar.foreground": "#15202b",
+            "statusBar.inactiveBackground": "#d940e4",
+            "statusBarItem.hoverBackground": "#c71ed3",
+            "statusBarItem.remoteBackground": "#544f0c",
+            "statusBarItem.remoteForeground": "#15202b",
+            "titleBar.activeBackground": "#d940e4",
+            "titleBar.activeForeground": "#15202b",
+            "titleBar.inactiveBackground": "#d940e499",
+            "titleBar.inactiveForeground": "#15202b99"
+        },
+        "peacock.color": "#d940e4"
+    }
+}
