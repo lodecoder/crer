@@ -127,7 +127,7 @@ internal sealed class RecordingBrowser(string chrome, string profile) : IAsyncDi
             $"--remote-debugging-port={port}", "--remote-debugging-address=127.0.0.1", $"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check", "--disable-sync", "--disable-infobars", "--disable-save-password-bubble",
             "--force-device-scale-factor=1", "--disable-backgrounding-occluded-windows",
-            "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding", "--app=data:text/html,",
+            "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding,OmniboxEverywhere,IPH_OmniboxEverywhereLensPromo", "--app=data:text/html,",
         }) start.ArgumentList.Add(argument);
         ChromeEnvironment.Apply(start);
         try

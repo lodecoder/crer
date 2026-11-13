@@ -104,6 +104,22 @@ IME の確定文字列は元から観測対象外。mock や hook packet の成�
 自動の停止経路検査は `scripts/test-csharp-record.ps1`、hook の overflow/再開始は
 `dotnet run --project tests/Crer.WindowsTests -c Release` と `tests/Crer.RecordTests` に分ける。
 
+## Chromium の浮動検索 UI と通知領域
+
+`play`、`run`、`record` で起動した CfT の通知領域を、常時表示部分と
+「隠れているインジケーターを表示」の両方で確認する。虫眼鏡の検索アイコンが表示されず、
+各 Chromium プロセスの `--disable-features` に
+`OmniboxEverywhere,IPH_OmniboxEverywhereLensPromo` が含まれることを確認する。
+表示の確認後は各コマンドを正常終了させ、再生・plan の終了コードと後始末、記録 metadata を検査する。
+
+2026-11-13 は Native AOT 配布物で3コマンドを同時起動し、利用者が虫眼鏡の非表示を目視確認した。
+全3プロセスの起動引数と終了コード0、再生・plan の assertion・画像・Chrome/CDP の後始末、
+記録の完全な metadata を確認した。既存 CfT には AppContainer の読み取り・実行権限が不足していたため、
+同じ SHA-256 の CfT 157.0.8103.78 の検証用コピーに必要な権限を付与して使用した。
+Chromium のサンドボックスは有効のまま検証した。
+証跡は `.crer/omnibox-everywhere-disabled/live-281960c4a6bb42d1ba94498e437f011c/` の
+`live-state.json`、`tray-inspection.json`、各コマンドのログと実行 artifacts に保存した。
+
 ## 配布物
 
 ```powershell

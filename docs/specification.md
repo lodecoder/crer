@@ -30,14 +30,14 @@ CAPTCHA の突破、Chrome 外のアプリ操作は v1 の対象外とする。
 
 ### 3.1 技術選定
 
-| 層          | 採用                                | 理由                                                                                                                        |
-| ----------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| CLI・実行系 | C# / .NET 10 Native AOT              | SDK / 共有 runtime 不要の単一 exe 配布。BCL の WebSocket、YAML／並行制御と Windows 操作を同じ言語で実装する。                   |
-| ブラウザ    | 固定バージョンの Chrome for Testing | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                                                                |
-| 再生入力    | CDP の `Input` ドメイン             | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                                                                     |
-| ウィンドウ  | CDP `Browser.setWindowBounds`       | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                                                                   |
+| 層          | 採用                                | 理由                                                                                                          |
+| ----------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| CLI・実行系 | C# / .NET 10 Native AOT             | SDK / 共有 runtime 不要の単一 exe 配布。BCL の WebSocket、YAML／並行制御と Windows 操作を同じ言語で実装する。 |
+| ブラウザ    | 固定バージョンの Chrome for Testing | 自動更新する通常 Chrome と分離し、再現可能なバイナリを使う。                                                  |
+| 再生入力    | CDP の `Input` ドメイン             | OS 入力を発生させず、ブラウザに低レベル入力を配送する。                                                       |
+| ウィンドウ  | CDP `Browser.setWindowBounds`       | CfT の対象ウィンドウだけを DIP 単位で移動・リサイズする。                                                     |
 | 記録入力    | Windows Raw Input + Low Level Hook  | マウスは Raw Input、キーボードは Low Level Hook で物理入力を取得する。CDP は物理入力を記録する API ではない。 |
-| シナリオ    | YAML + JSON Schema                  | 人間編集、バリデーション、将来の自動補完を両立する。                                                                        |
+| シナリオ    | YAML + JSON Schema                  | 人間編集、バリデーション、将来の自動補完を両立する。                                                          |
 
 CLI は BCL の WebSocket と HTTP、YamlDotNet の明示的なノード変換を使う。
 CLI は `src/Crer.Cli`、Raw Input と HWND 操作は `src/Crer.Windows` の通常の C# ライブラリとする。
@@ -230,6 +230,8 @@ Per-Monitor DPI awareness を維持し、Windows によるウィンドウ全体�
 親プロセスの環境と DPI 以外の互換設定は変更しない。DPR だけでは bitmap 拡大を検出できないため、
 実機テストは物理ウィンドウ矩形と CDP の bounds の一致、記録の物理座標と CSS 座標の一致も確認する。
 さらに `--disable-features=Translate,TranslateUI` を指定し、翻訳ポップアップがページを覆わないようにする。
+同じ `--disable-features` に `OmniboxEverywhere,IPH_OmniboxEverywhereLensPromo` も指定し、
+再生・plan 実行・記録で浮動検索 UI「どこからでも Chromium で検索」と通知領域の検索アイコンを抑止する。
 `--disable-save-password-bubble` と password manager の専用プロファイル設定により、ログイン後の
 パスワード保存・漏えい検出ポップアップも抑止する。既存の永続プロファイルには他の設定を残したまま
 この設定を反映する。プロファイルは必ず絶対パスで渡す。再生・記録ともに空文書を使う同じ CfT アプリ

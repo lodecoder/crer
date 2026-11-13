@@ -286,7 +286,7 @@ public sealed partial class Playback
             "--disable-backgrounding-occluded-windows",
             // サイトのスクリプトが viewport を参照する前に実ウィンドウを設定する。
             // 並列ブラウザーの起動中の不透明ウィンドウに覆われる前にも設定を済ませる。
-            "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding", "--app=data:text/html," }) start.ArgumentList.Add(argument);
+            "--disable-features=Translate,TranslateUI,PasswordManagerOnboarding,OmniboxEverywhere,IPH_OmniboxEverywhereLensPromo", "--app=data:text/html," }) start.ArgumentList.Add(argument);
         if (options.MuteAudio) start.ArgumentList.Add("--mute-audio");
         ChromeEnvironment.Apply(start);
         metadata["chrome"] = chrome;
