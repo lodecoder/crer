@@ -686,6 +686,16 @@ CfT を使う配布物の smoke test は次です。これは `crer.exe` で fix
 .\scripts\test-release.ps1
 ```
 
+### ドキュメントの整形
+
+dprint CLI は `.prototools` で **0.64.3** に固定しています。整形する場合は proto から実行します。
+
+```powershell
+proto install dprint
+proto run dprint -- check
+proto run dprint -- fmt README.md
+```
+
 ### 全体コードレビュー用bundle
 
 インストール済みの Repomix で、ソース、テスト、仕様書、fixture、スクリプトをまとめたレビュー用Markdownを
